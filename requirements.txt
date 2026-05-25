@@ -1,0 +1,14 @@
+playwright>=1.40
+paramiko>=3.0
+openpyxl>=3.1
+psutil>=5.9
+fastapi>=0.100
+uvicorn[standard]>=0.23
+textual>=0.40
+rich>=13.0
+pyyaml>=6.0
+pydantic>=2.0
+python-multipart>=0.0.6
+aiofiles>=23.0
+Pillow>=10.0
+telnetlib3>=2.0

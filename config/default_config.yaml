@@ -1,0 +1,35 @@
+# BMC Auto-Capture v2.0 — Default Configuration
+# All values can be overridden per deployment.
+
+# --- Worker pool sizing ---
+max_bmc_workers: 4
+max_ssh_workers: 8
+base_bmc_workers: 2
+base_ssh_workers: 4
+
+# --- Resource thresholds for dynamic scaling ---
+cpu_scale_down_pct: 90.0
+mem_scale_down_pct: 85.0
+cpu_scale_up_pct: 60.0
+mem_scale_up_pct: 50.0
+cpu_emergency_pct: 95.0
+mem_emergency_pct: 92.0
+resource_check_interval: 5.0
+
+# --- Browser lifecycle ---
+browser_max_tasks_before_recycle: 50
+browser_max_age_seconds: 1800
+browser_headless: true
+
+# --- Connectivity preflight ---
+tcp_connect_timeout: 5.0
+preflight_enabled: true
+route_guard_enabled: true
+route_guard_check_interval: 30.0
+
+# --- Output ---
+output_root: "./output"
+
+# --- API ---
+api_host: "0.0.0.0"
+api_port: 8080

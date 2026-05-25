@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bmc-auto-capture"
+version = "2.0.0"
+description = "智算项目 BMC/SSH 自动化测试证据采集平台"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.40",
+    "paramiko>=3.0",
+    "openpyxl>=3.1",
+    "psutil>=5.9",
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.23",
+    "textual>=0.40",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "python-multipart>=0.0.6",
+    "aiofiles>=23.0",
+    "Pillow>=10.0",
+    "telnetlib3>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pyinstaller>=5.13",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
