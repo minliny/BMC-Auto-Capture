@@ -4,7 +4,7 @@ title BMC Auto-Capture v2.0
 setlocal
 
 set "EXCEL=examples\任务模板.xlsx"
-set "ENGINE=bmc-auto-capture.exe"
+set "ENGINE=bmc-engine.exe"
 
 :check_files
 if not exist "%ENGINE%" (

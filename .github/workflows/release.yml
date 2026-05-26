@@ -28,7 +28,7 @@ jobs:
       - name: Build PyInstaller (runtime only, no src/config)
         run: |
           python -m PyInstaller \
-            --onedir --name bmc-auto-capture \
+            --onedir --name bmc-engine \
             --hidden-import paramiko \
             --hidden-import playwright \
             --hidden-import openpyxl \
@@ -52,14 +52,14 @@ jobs:
 
       - name: Copy Chromium into dist
         run: |
-          mkdir -p dist/bmc-auto-capture/playwright_browsers
-          cp -r ~/Library/Caches/ms-playwright/chromium-* dist/bmc-auto-capture/playwright_browsers/
-          cp -r ~/Library/Caches/ms-playwright/chromium_headless_shell-* dist/bmc-auto-capture/playwright_browsers/ 2>/dev/null || true
+          mkdir -p dist/bmc-engine/playwright_browsers
+          cp -r ~/Library/Caches/ms-playwright/chromium-* dist/bmc-engine/playwright_browsers/
+          cp -r ~/Library/Caches/ms-playwright/chromium_headless_shell-* dist/bmc-engine/playwright_browsers/ 2>/dev/null || true
 
       - name: Package runtime
         run: |
           cd dist
-          tar -czf bmc-runtime-${{ github.ref_name }}-macos-arm64.tar.gz bmc-auto-capture
+          tar -czf bmc-runtime-${{ github.ref_name }}-macos-arm64.tar.gz bmc-engine
 
       - name: Upload runtime artifact
         uses: actions/upload-artifact@v4
@@ -89,7 +89,7 @@ jobs:
       - name: Build PyInstaller (runtime only, no src/config)
         run: |
           python -m PyInstaller `
-            --onedir --name bmc-auto-capture `
+            --onedir --name bmc-engine `
             --hidden-import paramiko `
             --hidden-import playwright `
             --hidden-import openpyxl `
@@ -114,17 +114,17 @@ jobs:
       - name: Copy Chromium into dist
         shell: cmd
         run: |
-          if not exist dist\bmc-auto-capture\playwright_browsers mkdir dist\bmc-auto-capture\playwright_browsers
+          if not exist dist\bmc-engine\playwright_browsers mkdir dist\bmc-engine\playwright_browsers
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\chromium-*") do (
-            robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+            robocopy "%%i" "dist\bmc-engine\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
             if %%ERRORLEVEL%% LEQ 1 (echo   OK) else (exit /b %%ERRORLEVEL%%)
           )
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\chromium_headless_shell-*") do (
-            robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+            robocopy "%%i" "dist\bmc-engine\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
             if %%ERRORLEVEL%% LEQ 1 (echo   OK) else (exit /b %%ERRORLEVEL%%)
           )
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\ffmpeg-*") do (
-            robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+            robocopy "%%i" "dist\bmc-engine\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
             if %%ERRORLEVEL%% LEQ 1 (echo   OK) else (exit /b %%ERRORLEVEL%%)
           )
           exit /b 0
@@ -132,7 +132,7 @@ jobs:
       - name: Package runtime
         run: |
           cd dist
-          7z a bmc-runtime-${{ github.ref_name }}-win-x64.7z bmc-auto-capture
+          7z a bmc-runtime-${{ github.ref_name }}-win-x64.7z bmc-engine
 
       - name: Upload runtime artifact
         uses: actions/upload-artifact@v4
@@ -148,9 +148,10 @@ jobs:
 
       - name: Package app
         run: |
+          cp scripts/启动.bat 启动.bat
           zip -r bmc-app-${{ github.ref_name }}.zip \
             src/ config/ examples/ run.py tasks.json README.md \
-            scripts/启动.bat \
+            启动.bat \
             -x "*.pyc" "__pycache__/*"
 
       - name: Upload app artifact
