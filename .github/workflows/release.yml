@@ -58,15 +58,20 @@ jobs:
           cp -r examples dist/bmc-auto-capture/examples
           cp run.py dist/bmc-auto-capture/
 
+      - name: Copy Playwright Chromium into dist
+        run: |
+          mkdir -p dist/bmc-auto-capture/playwright_browsers
+          cp -r ~/Library/Caches/ms-playwright/chromium-* dist/bmc-auto-capture/playwright_browsers/
+          cp -r ~/Library/Caches/ms-playwright/chromium_headless_shell-* dist/bmc-auto-capture/playwright_browsers/ 2>/dev/null || true
+          echo "Browser size in package:"
+          du -sh dist/bmc-auto-capture/playwright_browsers/
+
       - name: Create launcher
         run: |
           cat > dist/bmc-auto-capture/run.sh << 'SH'
           #!/bin/bash
           DIR="$(cd "$(dirname "$0")" && pwd)"
-          export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$DIR/playwright_browsers}"
-          if [ ! -d "$PLAYWRIGHT_BROWSERS_PATH" ]; then
-            [ -d "$HOME/Library/Caches/ms-playwright" ] && export PLAYWRIGHT_BROWSERS_PATH="$HOME/Library/Caches/ms-playwright"
-          fi
+          export PLAYWRIGHT_BROWSERS_PATH="$DIR/playwright_browsers"
           exec "$DIR/bmc-auto-capture" "$@"
           SH
           chmod +x dist/bmc-auto-capture/run.sh
@@ -133,6 +138,14 @@ jobs:
           xcopy /E /I /Y config dist\bmc-auto-capture\config
           xcopy /E /I /Y examples dist\bmc-auto-capture\examples
           copy run.py dist\bmc-auto-capture\
+
+      - name: Copy Playwright Chromium into dist
+        shell: cmd
+        run: |
+          mkdir dist\bmc-auto-capture\playwright_browsers
+          xcopy /E /I /Y "%USERPROFILE%\AppData\Local\ms-playwright\chromium-*" dist\bmc-auto-capture\playwright_browsers\
+          xcopy /E /I /Y "%USERPROFILE%\AppData\Local\ms-playwright\chromium_headless_shell-*" dist\bmc-auto-capture\playwright_browsers\ 2>nul
+          dir /s dist\bmc-auto-capture\playwright_browsers\
 
       - name: Create batch launcher
         shell: cmd
