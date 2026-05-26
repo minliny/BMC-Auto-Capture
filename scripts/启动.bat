@@ -1,28 +1,41 @@
 @echo off
 REM Force UTF-8 codepage (must be before any non-ASCII output)
-chcp 65001 >nul 2>&1
+chcp 65001 >nul 2>nul
 if errorlevel 1 (
-    REM If chcp fails, try to detect and warn
-    echo [WARNING] UTF-8 not supported by this terminal
-    echo [WARNING] Chinese characters may display incorrectly
-    echo [WARNING] Please use Windows Terminal or set code page manually
+    echo [WARNING] UTF-8 codepage not available, Chinese may display incorrectly
+    echo [WARNING] Recommend using Windows Terminal
 )
 
-setlocal enabledelayedexpansion
+setlocal
 title BMC Auto-Capture v2.0
 
 set "ROOT=%~dp0"
-set "RUNTIME=%ROOT%runtime"
-set "APP=%ROOT%app"
+REM Remove trailing backslash for clean path joining
+if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
+set "RUNTIME=%ROOT%\runtime"
+set "APP=%ROOT%\app"
 set "ENGINE=%RUNTIME%\bmc-engine.exe"
 set "EXCEL=%APP%\examples\任務模板.xlsx"
 
 :check_files
 if not exist "%ENGINE%" (
     echo [ERROR] Engine not found: %ENGINE%
-    echo Please ensure runtime\bmc-engine.exe exists.
+    echo Please ensure runtime\bmc-engine.exe exists and re-extract the runtime package.
     pause
     exit /b 1
+)
+
+if not exist "%APP%\src" (
+    echo [ERROR] App directory incomplete: %APP%
+    echo Please re-extract bmc-app-*.zip to this folder.
+    pause
+    exit /b 1
+)
+
+if not exist "%EXCEL%" (
+    echo [WARNING] Default Excel not found: %EXCEL%
+    echo You can specify one via menu option [4].
+    timeout /t 3 >nul
 )
 
 :menu
