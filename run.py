@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Standalone entry point for PyInstaller bundling.
-Works both in dev mode and frozen (PyInstaller) mode.
+Entry point for PyInstaller bundling. Works in dev and frozen modes.
+
+Directory layout:
+  runtime/           ← bmc-engine(.exe), _internal/, playwright_browsers/
+  app/               ← src/, config/, examples/, tasks.json  (--app-dir)
+  启动.bat           ← calls: runtime\bmc-engine --app-dir app --excel ...
 """
 
 from __future__ import annotations
@@ -14,29 +18,31 @@ from pathlib import Path
 
 
 def _bundle_dir() -> Path:
-    """PyInstaller's _internal directory (Python stdlib + pip deps)."""
+    """PyInstaller _internal directory (Python stdlib + pip deps)."""
     if getattr(sys, "frozen", False):
         return Path(sys._MEIPASS)
     return Path(__file__).resolve().parent
 
 
-def _app_dir() -> Path:
-    """Directory containing src/, config/, examples/ — next to exe or project root."""
+def _exe_dir() -> Path:
+    """Directory containing the executable."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
 
 
 def _setup_browser_path():
-    """Set PLAYWRIGHT_BROWSERS_PATH so Playwright finds bundled Chromium."""
+    """Set PLAYWRIGHT_BROWSERS_PATH. Browsers are next to the exe (in runtime/)."""
     if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
         return
 
-    bundled = _app_dir() / "playwright_browsers"
+    # Frozen: browsers are next to exe (runtime/playwright_browsers/)
+    bundled = _exe_dir() / "playwright_browsers"
     if bundled.is_dir():
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
         return
 
+    # Fallback: system cache
     for cache in [
         Path.home() / "AppData" / "Local" / "ms-playwright",
         Path.home() / "Library" / "Caches" / "ms-playwright",
@@ -50,26 +56,34 @@ def _setup_browser_path():
 def main():
     _setup_browser_path()
 
-    # App code (src/) lives next to the exe, not inside _internal
-    app_root = str(_app_dir())
-    if app_root not in sys.path:
-        sys.path.insert(0, app_root)
-
-    from src.models.app_config import AppConfig
-    from src.app import App as PipelineApp
-
     parser = argparse.ArgumentParser(
         description="BMC Auto-Capture v2.0 - Automated Test Evidence Collection",
     )
     parser.add_argument("--excel", "-e", default=None, help="Path to Excel V2 config (.xlsx)")
     parser.add_argument("--config", "-c", default=None, help="Path to YAML config")
+    parser.add_argument("--app-dir", default=None, help="App directory containing src/, config/, tasks.json")
     parser.add_argument("--mode", "-m", choices=["sequential", "full"], default="sequential")
-    parser.add_argument("--preflight-only", action="store_true", help="Only run connectivity preflight, no task execution")
+    parser.add_argument("--preflight-only", action="store_true", help="Connectivity preflight only, no execution")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
-    # Config: look next to exe first, then in _internal
-    config_path = args.config or _app_dir() / "config" / "default_config.yaml"
+    # Resolve app directory
+    if args.app_dir:
+        app_dir = Path(args.app_dir).resolve()
+    elif getattr(sys, "frozen", False):
+        # Frozen: app/ is ../app relative to exe (exe is in runtime/)
+        app_dir = (_exe_dir().parent / "app").resolve()
+    else:
+        app_dir = Path(__file__).resolve().parent
+
+    if str(app_dir) not in sys.path:
+        sys.path.insert(0, str(app_dir))
+
+    from src.models.app_config import AppConfig
+    from src.app import App as PipelineApp
+
+    # Config
+    config_path = args.config or app_dir / "config" / "default_config.yaml"
     if not Path(config_path).exists():
         config_path = _bundle_dir() / "config" / "default_config.yaml"
     if Path(config_path).exists():
@@ -87,12 +101,10 @@ def main():
     )
 
     # Auto-find Excel
-    app_dir = _app_dir()
     excel_path = None
     if args.excel:
         excel_path = Path(args.excel)
     else:
-        # Try default locations
         candidates = [
             app_dir / "examples" / "任务模板.xlsx",
             app_dir / "任务模板.xlsx",
@@ -107,8 +119,8 @@ def main():
 
     if excel_path is None:
         print("ERROR: 未指定 Excel 配置文件。", file=sys.stderr)
-        print("用法: bmc-auto-capture --excel <路径>", file=sys.stderr)
-        print("或将 任务模板.xlsx 放在当前目录或 examples/ 下", file=sys.stderr)
+        print("用法: bmc-engine --app-dir <app目录> --excel <Excel路径>", file=sys.stderr)
+        print("或将 任务模板.xlsx 放在 app/examples/ 或当前目录下", file=sys.stderr)
         sys.exit(1)
 
     if not excel_path.exists():

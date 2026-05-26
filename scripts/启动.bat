@@ -3,13 +3,16 @@ chcp 65001 >nul
 title BMC Auto-Capture v2.0
 setlocal
 
-set "EXCEL=examples\任务模板.xlsx"
-set "ENGINE=bmc-engine.exe"
+set "ROOT=%~dp0"
+set "RUNTIME=%ROOT%runtime"
+set "APP=%ROOT%app"
+set "ENGINE=%RUNTIME%\bmc-engine.exe"
+set "EXCEL=%APP%\examples\任务模板.xlsx"
 
 :check_files
 if not exist "%ENGINE%" (
-    echo [错误] 找不到引擎文件: %ENGINE%
-    echo 请确保 bmc-auto-capture.exe 在当前目录。
+    echo [错误] 找不到引擎: %ENGINE%
+    echo 请确保 runtime\bmc-engine.exe 存在。
     pause
     exit /b 1
 )
@@ -20,7 +23,8 @@ echo ============================================================
 echo    BMC/SSH 自动化测试证据采集平台 v2.0
 echo ============================================================
 echo.
-echo    当前配置文件: %EXCEL%
+echo    配置文件: %EXCEL%
+echo    引擎位置: %ENGINE%
 echo.
 echo    [1] 开始执行（顺序模式，稳定）
 echo    [2] 开始执行（并发模式，高效）
@@ -52,9 +56,8 @@ if not exist "%EXCEL%" (
     goto menu
 )
 echo    执行中... 请勿关闭此窗口。
-echo    结果将保存到 output\ 目录。
 echo.
-"%ENGINE%" --excel "%EXCEL%" --mode sequential
+"%ENGINE%" --app-dir "%APP%" --excel "%EXCEL%" --mode sequential
 echo.
 echo    执行完成。按任意键返回菜单...
 pause >nul
@@ -73,7 +76,7 @@ if not exist "%EXCEL%" (
 )
 echo    执行中... 请勿关闭此窗口。
 echo.
-"%ENGINE%" --excel "%EXCEL%" --mode full
+"%ENGINE%" --app-dir "%APP%" --excel "%EXCEL%" --mode full
 echo.
 echo    执行完成。按任意键返回菜单...
 pause >nul
@@ -92,7 +95,7 @@ if not exist "%EXCEL%" (
 )
 echo    正在检测设备网络连通性 (TCP 443/22)...
 echo.
-"%ENGINE%" --excel "%EXCEL%" --preflight-only
+"%ENGINE%" --app-dir "%APP%" --excel "%EXCEL%" --preflight-only
 echo.
 echo    预检完成。按任意键返回菜单...
 pause >nul
@@ -117,7 +120,7 @@ echo    最近执行结果
 echo ============================================================
 echo.
 if exist "output\result.csv" (
-    echo    output\result.csv  (%date% %time%)
+    echo    output\result.csv
     echo    ----------------------------------------
     type "output\result.csv"
 ) else (
