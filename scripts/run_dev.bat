@@ -14,4 +14,4 @@ python -m playwright install chromium
 
 echo.
 echo Dev environment ready.
-echo Run with: python -m src --excel path\to\任务模板.xlsx
+echo Run with: python -m src --excel path\to\task_template.xlsx

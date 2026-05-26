@@ -24,13 +24,13 @@ C:\bmc-auto-capture\
 ├── bmc-auto-capture.exe    ← 引擎（不要直接双击）
 ├── config\                 ← 全局配置
 ├── examples\
-│   └── 任务模板.xlsx        ← 修改设备信息
+│   └── task_template.xlsx        ← 修改设备信息
 └── tasks.json              ← 任务执行定义
 ```
 
 ### 配置设备
 
-打开 `examples/任务模板.xlsx` → 「设备信息」sheet，填入你的设备：
+打开 `examples/task_template.xlsx` → 「设备信息」sheet，填入你的设备：
 
 | 设备分类 | 设备名称 | 带外管理IP | 是否启用 | 带外管理用户名 | 带外管理密码 | 带内管理IP | 带内管理用户名 | 带内管理密码 | 标签 |
 |----------|----------|-----------|---------|--------------|-------------|-----------|--------------|-------------|------|
@@ -167,19 +167,19 @@ Agent 可远程推送更新此文件，无需修改 Excel：
 
 ```batch
 # 顺序执行（默认）
-bmc-auto-capture.exe --excel 任务模板.xlsx
+bmc-auto-capture.exe --excel task_template.xlsx
 
 # 动态并发
-bmc-auto-capture.exe --excel 任务模板.xlsx --mode full
+bmc-auto-capture.exe --excel task_template.xlsx --mode full
 
 # 仅网络预检
-bmc-auto-capture.exe --excel 任务模板.xlsx --preflight-only
+bmc-auto-capture.exe --excel task_template.xlsx --preflight-only
 
 # 详细日志
-bmc-auto-capture.exe --excel 任务模板.xlsx --verbose
+bmc-auto-capture.exe --excel task_template.xlsx --verbose
 
 # 使用自定义配置
-bmc-auto-capture.exe --excel 任务模板.xlsx --config my_config.yaml
+bmc-auto-capture.exe --excel task_template.xlsx --config my_config.yaml
 ```
 
 Excel 文件放在当前目录或 `examples/` 下时可省略 `--excel` 参数。

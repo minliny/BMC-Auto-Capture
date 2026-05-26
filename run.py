@@ -106,10 +106,10 @@ def main():
         excel_path = Path(args.excel)
     else:
         candidates = [
-            app_dir / "examples" / "任务模板.xlsx",
-            app_dir / "任务模板.xlsx",
-            Path("examples/任务模板.xlsx"),
-            Path("任务模板.xlsx"),
+            app_dir / "examples" / "task_template.xlsx",
+            app_dir / "task_template.xlsx",
+            Path("examples/task_template.xlsx"),
+            Path("task_template.xlsx"),
         ]
         for c in candidates:
             if c.exists():
@@ -120,7 +120,7 @@ def main():
     if excel_path is None:
         print("ERROR: 未指定 Excel 配置文件。", file=sys.stderr)
         print("用法: bmc-engine --app-dir <app目录> --excel <Excel路径>", file=sys.stderr)
-        print("或将 任务模板.xlsx 放在 app/examples/ 或当前目录下", file=sys.stderr)
+        print("或将 task_template.xlsx 放在 app/examples/ 或当前目录下", file=sys.stderr)
         sys.exit(1)
 
     if not excel_path.exists():

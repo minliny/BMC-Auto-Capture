@@ -15,7 +15,7 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "RUNTIME=%ROOT%\runtime"
 set "APP=%ROOT%\app"
 set "ENGINE=%RUNTIME%\bmc-engine.exe"
-set "EXCEL=%APP%\examples\任務模板.xlsx"
+set "EXCEL=%APP%\examples\task_template.xlsx"
 
 :check_files
 if not exist "%ENGINE%" (

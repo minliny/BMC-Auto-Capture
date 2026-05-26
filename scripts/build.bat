@@ -87,10 +87,10 @@ echo Automated test evidence collection platform for BMC/SSH devices.
 echo.
 echo Quick start:
 echo   1. Double-click run.bat or run in terminal:
-echo      run.bat --excel path\to\任务模板.xlsx
+echo      run.bat --excel path\to\task_template.xlsx
 echo.
 echo   2. Optional config:
-echo      run.bat --excel path\to\任务模板.xlsx --config path\to\config.yaml
+echo      run.bat --excel path\to\task_template.xlsx --config path\to\config.yaml
 echo.
 echo   3. For API server mode:
 echo      bmc-auto-capture.exe --mode api --port 8080

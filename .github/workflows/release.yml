@@ -96,7 +96,7 @@ jobs:
         shell: cmd
         run: |
           cd dist\staging
-          runtime\bmc-engine.exe --app-dir app --excel app\examples\任務模板.xlsx --preflight-only
+          runtime\bmc-engine.exe --app-dir app --excel app\examples\task_template.xlsx --preflight-only
           if %ERRORLEVEL% NEQ 0 exit /b 1
 
       # ── Package ──────────────────────────────────────────
