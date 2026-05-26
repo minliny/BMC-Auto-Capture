@@ -80,7 +80,17 @@
       "command_or_url": "/UI/Static/#/navigate/home",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [
+        {
+          "rule_name": "bmc_page_no_alarm",
+          "rule_type": "advanced",
+          "enabled": false,
+          "actions": [
+            {"action_type": "assert_text", "value": "正常", "_note": "BMC 页面不应包含告警关键字。需在真实设备上确认 BMC 正常状态下的文本特征。"}
+          ],
+          "_note": "通用 BMC 页面无告警检查。需在真实设备验证后启用。"
+        }
+      ]
     },
     "操作系统安装测试": {
       "task_type": "SSH",
@@ -128,7 +138,17 @@
       "command_or_url": "screen-length 0 temporary\ndisplay interface brief\ndisplay interface 200GHL1/2/48",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [
+        {
+          "rule_name": "check_no_interface_down",
+          "rule_type": "advanced",
+          "enabled": false,
+          "actions": [
+            {"action_type": "assert_text", "value": "up", "_note": "接口状态应包含 up，如果接口 down 则规则 FAIL"}
+          ],
+          "_note": "需在真实设备验证后启用。预期端口清单待业务方确认。"
+        }
+      ]
     },
     "计算节点光模块信息查询测试": {
       "task_type": "SSH",
@@ -152,7 +172,17 @@
       "command_or_url": "display interface brief | include up",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [
+        {
+          "rule_name": "check_output_not_empty",
+          "rule_type": "advanced",
+          "enabled": false,
+          "actions": [
+            {"action_type": "assert_text", "value": "up", "_note": "输出应包含 up 状态的端口"}
+          ],
+          "_note": "需在真实设备验证后启用。预期端口清单待业务方确认。"
+        }
+      ]
     },
     "模块拔插告警上报测试": {
       "task_type": "SSH",
@@ -160,88 +190,125 @@
       "command_or_url": "display interface brief",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [
+        {
+          "rule_name": "check_no_error_down",
+          "rule_type": "advanced",
+          "enabled": false,
+          "actions": [
+            {"action_type": "assert_text", "value": "up", "_note": "接口应处于 up 状态，如存在 down/error-down 则规则 FAIL"}
+          ],
+          "_note": "需在真实设备验证后启用。拔插场景和目标端口未定义前不启用。"
+        }
+      ]
     },
     "计算节点上电测试-内存": {
       "task_type": "BMC",
-      "execution_mode": "CUSTOM_SCRIPT",
-      "command_or_url": "",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/info/memory",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "_legacy": "BMC 上电测试-内存证据采集，待迁移为 BMC_ACTIONS"
+      "_migrated_from": "CUSTOM_SCRIPT (bmc_page_capture wrapper, PAGE_MAP 映射缺失)",
+      "_migrated_to": "BMC_URL — 旧版本仅打开 memory 页面截图，无点击交互"
     },
     "计算节点上电测试-CPU": {
       "task_type": "BMC",
-      "execution_mode": "CUSTOM_SCRIPT",
-      "command_or_url": "",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/info/processor",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "_legacy": "BMC 上电测试-CPU 证据采集，待迁移为 BMC_ACTIONS"
+      "_migrated_from": "CUSTOM_SCRIPT (bmc_page_capture wrapper, PAGE_MAP 映射缺失)",
+      "_migrated_to": "BMC_URL — 旧版本仅打开 processor 页面截图，无点击交互"
     },
     "计算节点iBMC IP查询和设置测试": {
       "task_type": "BMC",
-      "execution_mode": "CUSTOM_SCRIPT",
-      "command_or_url": "",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/manager/network",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "_legacy": "iBMC IP/网络设置类证据，待迁移为 BMC_ACTIONS"
+      "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_2_ibmc_ip_network_test)",
+      "_migrated_to": "BMC_URL — 旧版本源码仅打开 network 页面截图，无实际 IP 设置动作"
     },
     "计算节点部件信息查询测试-CPU": {
       "task_type": "BMC",
-      "execution_mode": "CUSTOM_SCRIPT",
+      "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
+      "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/system/info/processor\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"click\",\"selector\":\"#tab-0\",\"_note\":\"CPU tab\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"click\",\"selector\":\"xpath=(//i[contains(@class,'el-icon')][.//*[local-name()='path' and starts-with(@d,'M340.864')]])[1]\",\"_note\":\"展开箭头\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\"},{\"action\":\"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "_legacy": "CPU 部件信息采集，待迁移为 BMC_ACTIONS"
+      "enabled": false,
+      "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_processor_cpu_test)",
+      "_migrated_to": "BMC_ACTIONS — goto processor → click CPU tab → click expand → screenshot",
+      "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。"
     },
     "计算节点部件信息查询测试-NPU": {
       "task_type": "BMC",
-      "execution_mode": "CUSTOM_SCRIPT",
+      "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
+      "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/system/info/processor\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"click\",\"selector\":\"#tab-1\",\"_note\":\"NPU tab\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"click\",\"selector\":\"xpath=(//i[contains(@class,'el-icon')][.//*[local-name()='path' and starts-with(@d,'M340.864')]])[1]\",\"_note\":\"展开箭头\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\"},{\"action\":\"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "_legacy": "NPU 部件信息采集，待迁移为 BMC_ACTIONS"
+      "enabled": false,
+      "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_processor_npu_test)",
+      "_migrated_to": "BMC_ACTIONS — goto processor → click NPU tab → click expand → screenshot",
+      "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。"
     },
     "计算节点部件信息查询测试-内存": {
       "task_type": "BMC",
-      "execution_mode": "CUSTOM_SCRIPT",
+      "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
+      "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/system/info/memory\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"click\",\"selector\":\"xpath=(//i[contains(@class,'el-icon')][.//*[local-name()='path' and starts-with(@d,'M340.864')]])[1]\",\"_note\":\"展开箭头\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\"},{\"action\":\"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "_legacy": "内存部件信息采集，待迁移为 BMC_ACTIONS"
+      "enabled": false,
+      "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_memory_info_test)",
+      "_migrated_to": "BMC_ACTIONS — goto memory → click expand → screenshot",
+      "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。"
     },
     "电源冗余测试": {
       "task_type": "BMC",
-      "execution_mode": "CUSTOM_SCRIPT",
+      "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
+      "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/maintance/alarm\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"screenshot\",\"value\":\"before_system_event\"},{\"action\":\"click\",\"selector\":\"span:has-text('系统事件')\",\"_note\":\"系统事件 tab\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"screenshot\",\"value\":\"system_event\"},{\"action\":\"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "_legacy": "RM211 电源冗余/系统事件证据，待迁移为 BMC_ACTIONS"
+      "enabled": false,
+      "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_2_rm211_power_redundancy_system_event)",
+      "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
+      "_note": "未在真实设备验证，默认禁用。旧版同一脚本同时用于电源冗余和硬盘冗余-系统日志。"
     },
     "硬盘冗余测试-系统日志": {
       "task_type": "BMC",
-      "execution_mode": "CUSTOM_SCRIPT",
+      "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
+      "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/maintance/alarm\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"screenshot\",\"value\":\"before_system_event\"},{\"action\":\"click\",\"selector\":\"span:has-text('系统事件')\",\"_note\":\"系统事件 tab\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"screenshot\",\"value\":\"system_event\"},{\"action\":\"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "_legacy": "系统日志证据，待迁移为 BMC_ACTIONS"
+      "enabled": false,
+      "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_2_rm211_power_redundancy_system_event — 同脚本)",
+      "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
+      "_note": "未在真实设备验证，默认禁用。与电源冗余测试使用相同脚本。"
     },
     "硬盘冗余测试": {
       "task_type": "BMC",
-      "execution_mode": "CUSTOM_SCRIPT",
+      "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
+      "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/system/storage\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"screenshot\",\"value\":\"before_expand\"},{\"action\":\"click\",\"selector\":\"i.el-tree-node__expand-icon:not(.is-leaf)\",\"_note\":\"展开存储树（如已展开则跳过，selector 只匹配可展开节点）\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\",\"value\":\"after_expand\"},{\"action\":\"click\",\"selector\":\"#LogicalDrive0\",\"_note\":\"点击 Logical Drive 0\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\",\"value\":\"logical_drive_0\"},{\"action\":\"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "_legacy": "A3 硬盘冗余/logical drive 证据，待迁移为 BMC_ACTIONS"
+      "enabled": false,
+      "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_4_a3_disk_redundancy_logical_drive)",
+      "_migrated_to": "BMC_ACTIONS — goto storage → expand tree → click Logical Drive 0 → screenshot",
+      "_note": "未在真实设备验证，默认禁用。只读查看，不涉及 RAID 配置变更。UI 控件可能因 BMC 版本不同而异。"
     },
     "拔插硬盘后清除Foreign配置": {
       "task_type": "BMC",
@@ -250,8 +317,9 @@
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
+      "enabled": false,
       "_high_risk": true,
-      "_legacy": "ClearForeign 配置类高风险任务，必须保持禁用除非明确授权"
+      "_legacy": "ClearForeign 配置类高风险任务。执行真实的 RAID 配置清除操作。必须保持禁用，除非用户明确授权、二次确认、记录审计日志。禁止 Agent 静默下发执行。"
     }
   }
 }

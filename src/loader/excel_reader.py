@@ -134,6 +134,7 @@ def load_tasks(
         task_type = tdef.get("task_type") or (vals[2] if len(vals) > 2 else "")
         execution_mode = tdef.get("execution_mode") or ""
         command_or_url = tdef.get("command_or_url") or ""
+        actions_json = tdef.get("actions_json") or ""
         timeout_seconds = tdef.get("timeout_seconds", 60)
         retry_count = tdef.get("retry_count", 0)
         rules_json = json.dumps(tdef.get("rules", [])) if tdef.get("rules") else ""
@@ -149,9 +150,12 @@ def load_tasks(
             output_dir_template = vals[5] if len(vals) > 5 else "{device_group}/{device_name}/{task_name}"
             image_name_template = vals[6] if len(vals) > 6 else "{device_name}_{task_name}_{timestamp}"
             enabled = _bool(vals[7]) if len(vals) > 7 else True
-            # If task_def found, it provides everything; if not, these are fallbacks
+            # Task definition overrides: actions_json, enabled (from JSON)
+            actions_json = tdef.get("actions_json") or ""
+            if "enabled" in tdef:
+                enabled = bool(tdef["enabled"])
             if not tdef:
-                execution_mode = vals[1]  # Can't do much without a def
+                execution_mode = vals[1]
                 logger.warning("No tasks.json definition for '%s', task may not execute", task_name)
         else:
             # Legacy full-column format — Excel provides everything as before
@@ -182,7 +186,7 @@ def load_tasks(
             match_tags=match_tags,
             execution_mode=execution_mode,
             command_or_url=command_or_url,
-            actions_json=vals[7] if not is_simplified and len(vals) > 7 else "",
+            actions_json=actions_json,
             output_dir_template=output_dir_template,
             image_name_template=image_name_template,
             timeout_seconds=timeout_seconds,
