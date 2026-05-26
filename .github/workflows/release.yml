@@ -142,10 +142,21 @@ jobs:
       - name: Copy Playwright Chromium into dist
         shell: cmd
         run: |
-          mkdir dist\bmc-auto-capture\playwright_browsers
-          xcopy /E /I /Y "%USERPROFILE%\AppData\Local\ms-playwright\chromium-*" dist\bmc-auto-capture\playwright_browsers\
-          xcopy /E /I /Y "%USERPROFILE%\AppData\Local\ms-playwright\chromium_headless_shell-*" dist\bmc-auto-capture\playwright_browsers\ 2>nul
-          dir /s dist\bmc-auto-capture\playwright_browsers\
+          if not exist dist\bmc-auto-capture\playwright_browsers mkdir dist\bmc-auto-capture\playwright_browsers
+          for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\chromium-*") do (
+            echo Copying %%i...
+            robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+          )
+          for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\chromium_headless_shell-*") do (
+            echo Copying %%i...
+            robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+          )
+          for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\ffmpeg-*") do (
+            echo Copying %%i...
+            robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+          )
+          echo --- Browser files ---
+          dir /s dist\bmc-auto-capture\playwright_browsers\*.exe 2>nul
 
       - name: Create batch launcher
         shell: cmd
