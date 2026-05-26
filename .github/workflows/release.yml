@@ -127,6 +127,7 @@ jobs:
             robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
             if %%ERRORLEVEL%% LEQ 1 (echo   OK) else (exit /b %%ERRORLEVEL%%)
           )
+          exit /b 0
 
       - name: Package runtime
         run: |
