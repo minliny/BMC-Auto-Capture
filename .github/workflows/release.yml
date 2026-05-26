@@ -135,8 +135,9 @@ jobs:
           copy run.py dist\bmc-auto-capture\
 
       - name: Create batch launcher
+        shell: cmd
         run: |
-          @echo off > dist\bmc-auto-capture\run.bat
+          echo @echo off > dist\bmc-auto-capture\run.bat
           echo set PLAYWRIGHT_BROWSERS_PATH=%%~dp0playwright_browsers >> dist\bmc-auto-capture\run.bat
           echo set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 >> dist\bmc-auto-capture\run.bat
           echo bmc-auto-capture.exe %%* >> dist\bmc-auto-capture\run.bat
