@@ -61,9 +61,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="BMC Auto-Capture v2.0 - Automated Test Evidence Collection",
     )
-    parser.add_argument("--excel", "-e", required=True, help="Path to Excel V2 config (.xlsx)")
+    parser.add_argument("--excel", "-e", default=None, help="Path to Excel V2 config (.xlsx)")
     parser.add_argument("--config", "-c", default=None, help="Path to YAML config")
     parser.add_argument("--mode", "-m", choices=["sequential", "full"], default="sequential")
+    parser.add_argument("--preflight-only", action="store_true", help="Only run connectivity preflight, no task execution")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -85,11 +86,49 @@ def main():
         datefmt="%H:%M:%S",
     )
 
-    # Validate Excel
-    excel_path = Path(args.excel)
+    # Auto-find Excel
+    app_dir = _app_dir()
+    excel_path = None
+    if args.excel:
+        excel_path = Path(args.excel)
+    else:
+        # Try default locations
+        candidates = [
+            app_dir / "examples" / "任务模板.xlsx",
+            app_dir / "任务模板.xlsx",
+            Path("examples/任务模板.xlsx"),
+            Path("任务模板.xlsx"),
+        ]
+        for c in candidates:
+            if c.exists():
+                excel_path = c
+                print(f"使用默认配置: {c}")
+                break
+
+    if excel_path is None:
+        print("ERROR: 未指定 Excel 配置文件。", file=sys.stderr)
+        print("用法: bmc-auto-capture --excel <路径>", file=sys.stderr)
+        print("或将 任务模板.xlsx 放在当前目录或 examples/ 下", file=sys.stderr)
+        sys.exit(1)
+
     if not excel_path.exists():
         print(f"ERROR: Excel file not found: {excel_path}", file=sys.stderr)
         sys.exit(1)
+
+    # Preflight-only mode
+    if args.preflight_only:
+        from src.loader.excel_reader import load_all as _load
+        from src.connectivity.preflight import check_all as _preflight_all, PreflightStatus
+        devices, tasks = _load(str(excel_path))
+        enabled = [d for d in devices if d.enabled]
+        print(f"\n预检 {len(enabled)} 台设备 (TCP 443/22)...\n")
+        report = _preflight_all(enabled, timeout=config.tcp_connect_timeout)
+        for r in report.results:
+            bmc = "OK" if r.bmc_status == "OK" else f"FAIL({r.bmc_status})"
+            ssh = "OK" if r.ssh_status == "OK" else f"FAIL({r.ssh_status})"
+            print(f"  {r.device_name:<25s}  BMC: {bmc:<20s}  SSH: {ssh:<20s}")
+        print(f"\nBMC: {report.bmc_ok}/{report.bmc_ok+report.bmc_fail}  SSH: {report.ssh_ok}/{report.ssh_ok+report.ssh_fail}")
+        sys.exit(0)
 
     # Run
     app = PipelineApp(config)
