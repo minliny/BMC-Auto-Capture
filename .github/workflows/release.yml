@@ -6,69 +6,7 @@ on:
       - "v*"
 
 jobs:
-  # ── macOS Runtime ────────────────────────────────────────
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Install Playwright Chromium
-        run: python -m playwright install chromium
-
-      - name: Build PyInstaller (runtime only, no src/config)
-        run: |
-          python -m PyInstaller \
-            --onedir --name bmc-engine \
-            --hidden-import paramiko \
-            --hidden-import playwright \
-            --hidden-import openpyxl \
-            --hidden-import psutil \
-            --hidden-import yaml \
-            --hidden-import PIL \
-            --hidden-import textual \
-            --hidden-import rich \
-            --hidden-import fastapi \
-            --hidden-import uvicorn \
-            --hidden-import pydantic \
-            --hidden-import aiofiles \
-            --hidden-import python_multipart \
-            --exclude-module tkinter \
-            --exclude-module matplotlib \
-            --exclude-module numpy \
-            --exclude-module pandas \
-            --console \
-            --noconfirm \
-            run.py
-
-      - name: Copy Chromium into dist
-        run: |
-          mkdir -p dist/bmc-engine/playwright_browsers
-          cp -r ~/Library/Caches/ms-playwright/chromium-* dist/bmc-engine/playwright_browsers/
-          cp -r ~/Library/Caches/ms-playwright/chromium_headless_shell-* dist/bmc-engine/playwright_browsers/ 2>/dev/null || true
-
-      - name: Package runtime
-        run: |
-          mv dist/bmc-engine dist/runtime
-          cd dist
-          tar -czf bmc-runtime-${{ github.ref_name }}-macos-arm64.tar.gz runtime
-
-      - name: Upload runtime artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-macos-arm64
-          path: dist/bmc-runtime-${{ github.ref_name }}-macos-arm64.tar.gz
-
-  # ── Windows Runtime ──────────────────────────────────────
+  # ── Windows Build + Smoke Test ───────────────────────────
   build-windows:
     runs-on: windows-latest
     steps:
@@ -130,17 +68,49 @@ jobs:
           )
           exit /b 0
 
+      # ── Smoke test: verify the built exe can start ─────────
+      - name: Prepare smoke test layout
+        shell: cmd
+        run: |
+          REM Simulate user directory: runtime/ + app/
+          mkdir dist\staging\runtime
+          mkdir dist\staging\app
+          REM Move PyInstaller output INTO runtime/ (bmc-engine.exe at runtime\)
+          xcopy /E /I /Y dist\bmc-engine dist\staging\runtime >nul
+          rd /s /q dist\bmc-engine
+          REM Copy app files
+          xcopy /E /I /Y src dist\staging\app\src >nul
+          xcopy /E /I /Y config dist\staging\app\config >nul
+          xcopy /E /I /Y examples dist\staging\app\examples >nul
+          copy tasks.json dist\staging\app\ >nul
+          echo Smoke test layout ready
+
+      - name: Smoke test — engine help
+        shell: cmd
+        run: |
+          cd dist\staging
+          runtime\bmc-engine.exe --help
+          if %ERRORLEVEL% NEQ 0 exit /b 1
+
+      - name: Smoke test — preflight with bundled Excel
+        shell: cmd
+        run: |
+          cd dist\staging
+          runtime\bmc-engine.exe --app-dir app --excel app\examples\任務模板.xlsx --preflight-only
+          if %ERRORLEVEL% NEQ 0 exit /b 1
+
+      # ── Package ──────────────────────────────────────────
       - name: Package runtime
         run: |
-          ren dist\bmc-engine runtime
-          cd dist
-          7z a bmc-runtime-${{ github.ref_name }}-win-x64.7z runtime
+          cd dist\staging
+          7z a ..\bmc-runtime-${{ github.ref_name }}-win-x64.7z runtime
 
       - name: Upload runtime artifact
         uses: actions/upload-artifact@v4
         with:
           name: runtime-win-x64
           path: dist/bmc-runtime-${{ github.ref_name }}-win-x64.7z
+          if-no-files-found: error
 
   # ── App package (cross-platform, lightweight) ────────────
   build-app:
@@ -152,9 +122,9 @@ jobs:
         run: |
           mkdir -p dist/app
           cp -r src/ config/ examples/ tasks.json README.md dist/app/
-          cp scripts/启动.bat dist/
+          cp scripts/啟動.bat dist/
           cd dist
-          zip -r ../bmc-app-${{ github.ref_name }}.zip app/ 启动.bat -x "*.pyc" "__pycache__/*"
+          zip -r ../bmc-app-${{ github.ref_name }}.zip app/ 啟動.bat -x "*.pyc" "__pycache__/*"
 
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
@@ -164,7 +134,7 @@ jobs:
 
   # ── Release ──────────────────────────────────────────────
   release:
-    needs: [build-macos, build-windows, build-app]
+    needs: [build-windows, build-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -172,7 +142,7 @@ jobs:
       - uses: actions/download-artifact@v4
 
       - name: List downloaded artifacts
-        run: find . -type f -name "*.tar.gz" -o -name "*.7z" -o -name "*.zip" | sort
+        run: find . -type f \( -name "*.7z" -o -name "*.zip" \) | sort
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
@@ -180,6 +150,5 @@ jobs:
           name: "${{ github.ref_name }}"
           generate_release_notes: true
           files: |
-            runtime-macos-arm64/*
             runtime-win-x64/*
             app/*
