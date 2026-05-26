@@ -23,8 +23,8 @@ from .browser_manager import BrowserManager
 from .captcha_handler import detect_captcha, handle_captcha, CaptchaDetected
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult, StepResult
-from ..output.file_writer import write_html_file, write_log_file
-from ..output.screenshot import overlay_device_info
+from ..out.file_writer import write_html_file, write_log_file
+from ..out.screenshot import overlay_device_info
 
 logger = logging.getLogger("bmc_auto_capture.bmc")
 

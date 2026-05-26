@@ -24,8 +24,8 @@ from .connectivity.route_guard import RouteGuard
 from .executor.ssh_executor import SSHExecutor
 from .executor.bmc_executor import BMCExecutor
 from .executor.browser_manager import BrowserManager
-from .output.collector import write_result_csv, write_final_result_csv, compute_summary
-from .output.summary import build_pivot_csv, print_terminal_summary
+from .out.collector import write_result_csv, write_final_result_csv, compute_summary
+from .out.summary import build_pivot_csv, print_terminal_summary
 
 logger = logging.getLogger("bmc_auto_capture.app")
 
