@@ -1,0 +1,174 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # ── macOS arm64 ──────────────────────────────────────────
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install chromium
+
+      - name: Build with PyInstaller
+        run: |
+          python -m PyInstaller \
+            --onedir --name bmc-auto-capture \
+            --add-data "src:src" \
+            --add-data "config:config" \
+            --hidden-import paramiko \
+            --hidden-import playwright \
+            --hidden-import openpyxl \
+            --hidden-import psutil \
+            --hidden-import yaml \
+            --hidden-import PIL \
+            --hidden-import textual \
+            --hidden-import rich \
+            --hidden-import fastapi \
+            --hidden-import uvicorn \
+            --hidden-import pydantic \
+            --hidden-import aiofiles \
+            --hidden-import python_multipart \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --exclude-module numpy \
+            --exclude-module pandas \
+            --console \
+            --noconfirm \
+            run.py
+
+      - name: Copy extras into dist
+        run: |
+          cp -r config dist/bmc-auto-capture/config
+          cp -r examples dist/bmc-auto-capture/examples
+          cp run.py dist/bmc-auto-capture/
+
+      - name: Create launcher
+        run: |
+          cat > dist/bmc-auto-capture/run.sh << 'SH'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$DIR/playwright_browsers}"
+          if [ ! -d "$PLAYWRIGHT_BROWSERS_PATH" ]; then
+            [ -d "$HOME/Library/Caches/ms-playwright" ] && export PLAYWRIGHT_BROWSERS_PATH="$HOME/Library/Caches/ms-playwright"
+          fi
+          exec "$DIR/bmc-auto-capture" "$@"
+          SH
+          chmod +x dist/bmc-auto-capture/run.sh
+
+      - name: Package
+        run: |
+          cd dist
+          tar -czf bmc-auto-capture-${{ github.ref_name }}-macos-arm64.tar.gz bmc-auto-capture
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/bmc-auto-capture-${{ github.ref_name }}-macos-arm64.tar.gz
+
+  # ── Windows x64 ──────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install chromium
+
+      - name: Build with PyInstaller
+        run: |
+          python -m PyInstaller `
+            --onedir --name bmc-auto-capture `
+            --add-data "src;src" `
+            --add-data "config;config" `
+            --hidden-import paramiko `
+            --hidden-import playwright `
+            --hidden-import openpyxl `
+            --hidden-import psutil `
+            --hidden-import yaml `
+            --hidden-import PIL `
+            --hidden-import textual `
+            --hidden-import rich `
+            --hidden-import fastapi `
+            --hidden-import uvicorn `
+            --hidden-import pydantic `
+            --hidden-import aiofiles `
+            --hidden-import python_multipart `
+            --exclude-module tkinter `
+            --exclude-module matplotlib `
+            --exclude-module numpy `
+            --exclude-module pandas `
+            --console `
+            --noconfirm `
+            run.py
+
+      - name: Copy extras into dist
+        run: |
+          xcopy /E /I /Y config dist\bmc-auto-capture\config
+          xcopy /E /I /Y examples dist\bmc-auto-capture\examples
+          copy run.py dist\bmc-auto-capture\
+
+      - name: Create batch launcher
+        run: |
+          @echo off > dist\bmc-auto-capture\run.bat
+          echo set PLAYWRIGHT_BROWSERS_PATH=%%~dp0playwright_browsers >> dist\bmc-auto-capture\run.bat
+          echo set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 >> dist\bmc-auto-capture\run.bat
+          echo bmc-auto-capture.exe %%* >> dist\bmc-auto-capture\run.bat
+
+      - name: Package
+        run: |
+          cd dist
+          7z a bmc-auto-capture-${{ github.ref_name }}-win-x64.7z bmc-auto-capture
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-x64
+          path: dist/bmc-auto-capture-${{ github.ref_name }}-win-x64.7z
+
+  # ── Release ──────────────────────────────────────────────
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: List artifacts
+        run: ls -laR
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ github.ref_name }}"
+          generate_release_notes: true
+          files: |
+            macos-arm64/*.tar.gz
+            win-x64/*.7z
