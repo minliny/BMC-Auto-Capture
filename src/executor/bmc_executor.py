@@ -95,9 +95,16 @@ class BMCExecutor(AbstractExecutor):
         self._bm = browser_manager
         self._connect_timeout = connect_timeout
         self._page_timeout = page_timeout
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
-        return asyncio.run(self._execute_async(plan, output_root))
+        loop = self._loop or asyncio.new_event_loop()
+        self._loop = loop
+        try:
+            return loop.run_until_complete(self._execute_async(plan, output_root))
+        finally:
+            if self._loop is None:
+                loop.close()
 
     async def _execute_async(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         device = plan.device
@@ -375,11 +382,10 @@ class BMCExecutor(AbstractExecutor):
     def _resolve_url(self, raw: str, bmc_ip: str) -> str:
         raw = raw.strip()
         if not raw:
-            return ""
-        # Replace template variables
+            # For BMC_ACTIONS tasks with no URL, use the BMC root
+            return f"https://{bmc_ip}"
         raw = raw.replace("{带外管理IP}", bmc_ip)
         raw = raw.replace("{bmc_ip}", bmc_ip)
-        # If it's a relative path, prepend https://IP
         if raw.startswith("/"):
             return f"https://{bmc_ip}{raw}"
         if not raw.startswith("http"):

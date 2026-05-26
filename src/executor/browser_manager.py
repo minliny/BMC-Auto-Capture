@@ -1,16 +1,13 @@
 """
 Playwright browser lifecycle manager.
 Handles launch, headless/headed toggle, context creation, and automatic recycling.
-
-Each BMC worker gets its own BrowserManager instance so a browser crash
-in one worker does not affect others.
+Detects event loop changes (asyncio.run creating new loops) and resets accordingly.
 """
 
-
 from __future__ import annotations
+import asyncio
 import logging
 import time
-from typing import Optional
 
 logger = logging.getLogger("bmc_auto_capture.browser")
 
@@ -36,6 +33,7 @@ class BrowserManager:
         self._context = None
         self._task_count = 0
         self._born_at: float = 0.0
+        self._loop_id: int = 0
 
     @property
     def headless(self) -> bool:
@@ -45,30 +43,32 @@ class BrowserManager:
     def headless(self, value: bool):
         if value != self._headless:
             self._headless = value
-            # Force recycle on next get_context
             self._task_count = self._max_tasks + 1
 
     async def start(self):
-        """Lazy init — called on first get_context()."""
         from playwright.async_api import async_playwright
 
         if self._playwright is None:
             self._playwright = await async_playwright().start()
 
     async def get_context(self):
-        """Return a fresh or recycled BrowserContext."""
+        """Return a fresh or recycled BrowserContext.
+        Detects event loop changes and forces a full reset when needed."""
+        current_loop = id(asyncio.get_event_loop())
+
+        if current_loop != self._loop_id and self._playwright is not None:
+            logger.debug("Event loop changed, recreating browser")
+            await self._force_reset()
+
         if self._playwright is None:
             await self.start()
+            self._loop_id = current_loop
 
         if self._should_recycle():
             await self._teardown_browser()
 
         if self._browser is None:
-            logger.info(
-                "Launching browser (headless=%s, viewport=%s)",
-                self._headless,
-                self._viewport,
-            )
+            logger.info("Launching browser (headless=%s)", self._headless)
             self._browser = await self._playwright.chromium.launch(
                 headless=self._headless,
                 args=[
@@ -88,13 +88,23 @@ class BrowserManager:
         return self._context
 
     async def teardown(self):
-        """Full teardown — call when worker shuts down."""
-        await self._teardown_browser()
-        if self._playwright:
-            await self._playwright.stop()
-            self._playwright = None
+        await self._force_reset()
 
-    # ------------------------------------------------------------------
+    async def _force_reset(self):
+        """Tear down everything. Handles closed-loop case by dropping refs."""
+        try:
+            await self._teardown_browser()
+        except Exception:
+            self._context = None
+            self._browser = None
+        if self._playwright:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None
+        self._loop_id = 0
+
     def _should_recycle(self) -> bool:
         if self._browser is None:
             return False
@@ -111,12 +121,12 @@ class BrowserManager:
         try:
             if self._context:
                 await self._context.close()
-        except Exception:
+        except (RuntimeError, Exception):
             pass
         try:
             if self._browser:
                 await self._browser.close()
-        except Exception:
+        except (RuntimeError, Exception):
             pass
         self._context = None
         self._browser = None
