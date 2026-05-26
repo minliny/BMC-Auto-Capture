@@ -148,7 +148,9 @@ jobs:
       - name: Package app
         run: |
           zip -r bmc-app-${{ github.ref_name }}.zip \
-            src/ config/ examples/ run.py -x "*.pyc" "__pycache__/*"
+            src/ config/ examples/ run.py tasks.json README.md \
+            scripts/启动.bat \
+            -x "*.pyc" "__pycache__/*"
 
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
