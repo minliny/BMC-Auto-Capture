@@ -71,7 +71,6 @@ jobs:
           cat > dist/bmc-auto-capture/run.sh << 'SH'
           #!/bin/bash
           DIR="$(cd "$(dirname "$0")" && pwd)"
-          export PLAYWRIGHT_BROWSERS_PATH="$DIR/playwright_browsers"
           exec "$DIR/bmc-auto-capture" "$@"
           SH
           chmod +x dist/bmc-auto-capture/run.sh
@@ -162,8 +161,6 @@ jobs:
         shell: cmd
         run: |
           echo @echo off > dist\bmc-auto-capture\run.bat
-          echo set PLAYWRIGHT_BROWSERS_PATH=%%~dp0playwright_browsers >> dist\bmc-auto-capture\run.bat
-          echo set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 >> dist\bmc-auto-capture\run.bat
           echo bmc-auto-capture.exe %%* >> dist\bmc-auto-capture\run.bat
 
       - name: Package

@@ -19,7 +19,37 @@ def _bundle_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _exe_dir() -> Path:
+    """Directory containing the executable (frozen) or project root (dev)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _setup_browser_path():
+    """Set PLAYWRIGHT_BROWSERS_PATH so Playwright finds bundled Chromium."""
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return  # Already set externally
+
+    bundled = _exe_dir() / "playwright_browsers"
+    if bundled.is_dir():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
+        return
+
+    # Fallback: system cache
+    for cache in [
+        Path.home() / "AppData" / "Local" / "ms-playwright",       # Windows
+        Path.home() / "Library" / "Caches" / "ms-playwright",     # macOS
+        Path.home() / ".cache" / "ms-playwright",                 # Linux
+    ]:
+        if cache.is_dir():
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(cache)
+            return
+
+
 def main():
+    _setup_browser_path()
+
     # Ensure the project root is on sys.path so "src" package is findable
     proj_root = str(_bundle_dir())
     if proj_root not in sys.path:
