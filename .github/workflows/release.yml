@@ -6,7 +6,7 @@ on:
       - "v*"
 
 jobs:
-  # ── macOS arm64 ──────────────────────────────────────────
+  # ── macOS Runtime ────────────────────────────────────────
   build-macos:
     runs-on: macos-latest
     steps:
@@ -25,12 +25,10 @@ jobs:
       - name: Install Playwright Chromium
         run: python -m playwright install chromium
 
-      - name: Build with PyInstaller
+      - name: Build PyInstaller (runtime only, no src/config)
         run: |
           python -m PyInstaller \
             --onedir --name bmc-auto-capture \
-            --add-data "src:src" \
-            --add-data "config:config" \
             --hidden-import paramiko \
             --hidden-import playwright \
             --hidden-import openpyxl \
@@ -52,41 +50,24 @@ jobs:
             --noconfirm \
             run.py
 
-      - name: Copy extras into dist
-        run: |
-          cp -r config dist/bmc-auto-capture/config
-          cp -r examples dist/bmc-auto-capture/examples
-          cp run.py dist/bmc-auto-capture/
-
-      - name: Copy Playwright Chromium into dist
+      - name: Copy Chromium into dist
         run: |
           mkdir -p dist/bmc-auto-capture/playwright_browsers
           cp -r ~/Library/Caches/ms-playwright/chromium-* dist/bmc-auto-capture/playwright_browsers/
           cp -r ~/Library/Caches/ms-playwright/chromium_headless_shell-* dist/bmc-auto-capture/playwright_browsers/ 2>/dev/null || true
-          echo "Browser size in package:"
-          du -sh dist/bmc-auto-capture/playwright_browsers/
 
-      - name: Create launcher
-        run: |
-          cat > dist/bmc-auto-capture/run.sh << 'SH'
-          #!/bin/bash
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          exec "$DIR/bmc-auto-capture" "$@"
-          SH
-          chmod +x dist/bmc-auto-capture/run.sh
-
-      - name: Package
+      - name: Package runtime
         run: |
           cd dist
-          tar -czf bmc-auto-capture-${{ github.ref_name }}-macos-arm64.tar.gz bmc-auto-capture
+          tar -czf bmc-runtime-${{ github.ref_name }}-macos-arm64.tar.gz bmc-auto-capture
 
-      - name: Upload artifact
+      - name: Upload runtime artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-arm64
-          path: dist/bmc-auto-capture-${{ github.ref_name }}-macos-arm64.tar.gz
+          name: runtime-macos-arm64
+          path: dist/bmc-runtime-${{ github.ref_name }}-macos-arm64.tar.gz
 
-  # ── Windows x64 ──────────────────────────────────────────
+  # ── Windows Runtime ──────────────────────────────────────
   build-windows:
     runs-on: windows-latest
     steps:
@@ -105,12 +86,10 @@ jobs:
       - name: Install Playwright Chromium
         run: python -m playwright install chromium
 
-      - name: Build with PyInstaller
+      - name: Build PyInstaller (runtime only, no src/config)
         run: |
           python -m PyInstaller `
             --onedir --name bmc-auto-capture `
-            --add-data "src;src" `
-            --add-data "config;config" `
             --hidden-import paramiko `
             --hidden-import playwright `
             --hidden-import openpyxl `
@@ -132,59 +111,56 @@ jobs:
             --noconfirm `
             run.py
 
-      - name: Copy extras into dist
-        run: |
-          xcopy /E /I /Y config dist\bmc-auto-capture\config
-          xcopy /E /I /Y examples dist\bmc-auto-capture\examples
-          copy run.py dist\bmc-auto-capture\
-
-      - name: Copy Playwright Chromium into dist
+      - name: Copy Chromium into dist
         shell: cmd
         run: |
           if not exist dist\bmc-auto-capture\playwright_browsers mkdir dist\bmc-auto-capture\playwright_browsers
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\chromium-*") do (
-            echo Copying %%i...
             robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
           )
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\chromium_headless_shell-*") do (
-            echo Copying %%i...
             robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
           )
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\ffmpeg-*") do (
-            echo Copying %%i...
             robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
           )
-          echo --- Browser files ---
-          dir /s dist\bmc-auto-capture\playwright_browsers\*.exe 2>nul
 
-      - name: Create batch launcher
-        shell: cmd
-        run: |
-          echo @echo off > dist\bmc-auto-capture\run.bat
-          echo bmc-auto-capture.exe %%* >> dist\bmc-auto-capture\run.bat
-
-      - name: Package
+      - name: Package runtime
         run: |
           cd dist
-          7z a bmc-auto-capture-${{ github.ref_name }}-win-x64.7z bmc-auto-capture
+          7z a bmc-runtime-${{ github.ref_name }}-win-x64.7z bmc-auto-capture
 
-      - name: Upload artifact
+      - name: Upload runtime artifact
         uses: actions/upload-artifact@v4
         with:
-          name: win-x64
-          path: dist/bmc-auto-capture-${{ github.ref_name }}-win-x64.7z
+          name: runtime-win-x64
+          path: dist/bmc-runtime-${{ github.ref_name }}-win-x64.7z
+
+  # ── App package (cross-platform, lightweight) ────────────
+  build-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package app
+        run: |
+          zip -r bmc-app-${{ github.ref_name }}.zip \
+            src/ config/ examples/ run.py -x "*.pyc" "__pycache__/*"
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app
+          path: bmc-app-${{ github.ref_name }}.zip
 
   # ── Release ──────────────────────────────────────────────
   release:
-    needs: [build-macos, build-windows]
+    needs: [build-macos, build-windows, build-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
-
-      - name: List artifacts
-        run: ls -laR
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
@@ -192,5 +168,6 @@ jobs:
           name: "${{ github.ref_name }}"
           generate_release_notes: true
           files: |
-            macos-arm64/*.tar.gz
-            win-x64/*.7z
+            runtime-macos-arm64/*.tar.gz
+            runtime-win-x64/*.7z
+            app/*.zip

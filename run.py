@@ -14,13 +14,14 @@ from pathlib import Path
 
 
 def _bundle_dir() -> Path:
+    """PyInstaller's _internal directory (Python stdlib + pip deps)."""
     if getattr(sys, "frozen", False):
         return Path(sys._MEIPASS)
     return Path(__file__).resolve().parent
 
 
-def _exe_dir() -> Path:
-    """Directory containing the executable (frozen) or project root (dev)."""
+def _app_dir() -> Path:
+    """Directory containing src/, config/, examples/ — next to exe or project root."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
@@ -29,18 +30,17 @@ def _exe_dir() -> Path:
 def _setup_browser_path():
     """Set PLAYWRIGHT_BROWSERS_PATH so Playwright finds bundled Chromium."""
     if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
-        return  # Already set externally
+        return
 
-    bundled = _exe_dir() / "playwright_browsers"
+    bundled = _app_dir() / "playwright_browsers"
     if bundled.is_dir():
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
         return
 
-    # Fallback: system cache
     for cache in [
-        Path.home() / "AppData" / "Local" / "ms-playwright",       # Windows
-        Path.home() / "Library" / "Caches" / "ms-playwright",     # macOS
-        Path.home() / ".cache" / "ms-playwright",                 # Linux
+        Path.home() / "AppData" / "Local" / "ms-playwright",
+        Path.home() / "Library" / "Caches" / "ms-playwright",
+        Path.home() / ".cache" / "ms-playwright",
     ]:
         if cache.is_dir():
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(cache)
@@ -50,10 +50,10 @@ def _setup_browser_path():
 def main():
     _setup_browser_path()
 
-    # Ensure the project root is on sys.path so "src" package is findable
-    proj_root = str(_bundle_dir())
-    if proj_root not in sys.path:
-        sys.path.insert(0, proj_root)
+    # App code (src/) lives next to the exe, not inside _internal
+    app_root = str(_app_dir())
+    if app_root not in sys.path:
+        sys.path.insert(0, app_root)
 
     from src.models.app_config import AppConfig
     from src.app import App as PipelineApp
@@ -67,9 +67,10 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
-    # Config
-    base = _bundle_dir()
-    config_path = args.config or base / "config" / "default_config.yaml"
+    # Config: look next to exe first, then in _internal
+    config_path = args.config or _app_dir() / "config" / "default_config.yaml"
+    if not Path(config_path).exists():
+        config_path = _bundle_dir() / "config" / "default_config.yaml"
     if Path(config_path).exists():
         config = AppConfig.from_yaml(config_path)
     else:
