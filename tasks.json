@@ -1,0 +1,257 @@
+{
+  "_schema": "1.0",
+  "_description": "任务执行定义文件。Excel 通过任务名称匹配此文件获取具体执行参数。支持 Agent 远程推送更新。",
+  "tasks": {
+    "RAID配置测试": {
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/storage",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "机柜RM211的管理iBMC IP查询和设置测试": {
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/manager/network",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点远程上电和下电测试": {
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/power/control",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点部件信息查询测试-资产摘要": {
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/info/product",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点部件信息查询测试-网络适配器": {
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/info/net",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点部件信息查询测试-门限传感器": {
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/info/sensor",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点部件信息查询测试-电源信息": {
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/power/converter",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点部件信息查询测试-风扇信息": {
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/fans/fans-info",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "风扇冗余测试": {
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/power/converter",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "A3 BMC首页截图": {
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/home",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "操作系统安装测试": {
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "uname -a",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "NPU驱动和固件安装测试": {
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "npu-smi info\n/usr/local/Ascend/driver/tools/upgrade-tool --device_index -1 --component -1 --version",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "灵衢网络管理网口IP查询和设置测试": {
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "system-view\ninterface MEth0/0/0\ndisplay this",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点电子标签查询测试": {
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "display device elabel",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点灵衢总线板与灵衢总线和以太板CPLD版本信息查询测试": {
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "display device card\ndisplay version",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点光口状态查询测试": {
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "screen-length 0 temporary\ndisplay interface brief\ndisplay interface 200GHL1/2/48",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点光模块信息查询测试": {
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "display interface transceiver",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点温度管理测试": {
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "display device temperature",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点L1交换网络端口查询测试": {
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "display interface brief | include up",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "模块拔插告警上报测试": {
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "display interface brief",
+      "timeout_seconds": 60,
+      "retry_count": 0,
+      "rules": []
+    },
+    "计算节点上电测试-内存": {
+      "task_type": "BMC",
+      "execution_mode": "CUSTOM_SCRIPT",
+      "command_or_url": "",
+      "timeout_seconds": 120,
+      "retry_count": 0,
+      "rules": [],
+      "_legacy": "BMC 上电测试-内存证据采集，待迁移为 BMC_ACTIONS"
+    },
+    "计算节点上电测试-CPU": {
+      "task_type": "BMC",
+      "execution_mode": "CUSTOM_SCRIPT",
+      "command_or_url": "",
+      "timeout_seconds": 120,
+      "retry_count": 0,
+      "rules": [],
+      "_legacy": "BMC 上电测试-CPU 证据采集，待迁移为 BMC_ACTIONS"
+    },
+    "计算节点iBMC IP查询和设置测试": {
+      "task_type": "BMC",
+      "execution_mode": "CUSTOM_SCRIPT",
+      "command_or_url": "",
+      "timeout_seconds": 120,
+      "retry_count": 0,
+      "rules": [],
+      "_legacy": "iBMC IP/网络设置类证据，待迁移为 BMC_ACTIONS"
+    },
+    "计算节点部件信息查询测试-CPU": {
+      "task_type": "BMC",
+      "execution_mode": "CUSTOM_SCRIPT",
+      "command_or_url": "",
+      "timeout_seconds": 120,
+      "retry_count": 0,
+      "rules": [],
+      "_legacy": "CPU 部件信息采集，待迁移为 BMC_ACTIONS"
+    },
+    "计算节点部件信息查询测试-NPU": {
+      "task_type": "BMC",
+      "execution_mode": "CUSTOM_SCRIPT",
+      "command_or_url": "",
+      "timeout_seconds": 120,
+      "retry_count": 0,
+      "rules": [],
+      "_legacy": "NPU 部件信息采集，待迁移为 BMC_ACTIONS"
+    },
+    "计算节点部件信息查询测试-内存": {
+      "task_type": "BMC",
+      "execution_mode": "CUSTOM_SCRIPT",
+      "command_or_url": "",
+      "timeout_seconds": 120,
+      "retry_count": 0,
+      "rules": [],
+      "_legacy": "内存部件信息采集，待迁移为 BMC_ACTIONS"
+    },
+    "电源冗余测试": {
+      "task_type": "BMC",
+      "execution_mode": "CUSTOM_SCRIPT",
+      "command_or_url": "",
+      "timeout_seconds": 120,
+      "retry_count": 0,
+      "rules": [],
+      "_legacy": "RM211 电源冗余/系统事件证据，待迁移为 BMC_ACTIONS"
+    },
+    "硬盘冗余测试-系统日志": {
+      "task_type": "BMC",
+      "execution_mode": "CUSTOM_SCRIPT",
+      "command_or_url": "",
+      "timeout_seconds": 120,
+      "retry_count": 0,
+      "rules": [],
+      "_legacy": "系统日志证据，待迁移为 BMC_ACTIONS"
+    },
+    "硬盘冗余测试": {
+      "task_type": "BMC",
+      "execution_mode": "CUSTOM_SCRIPT",
+      "command_or_url": "",
+      "timeout_seconds": 120,
+      "retry_count": 0,
+      "rules": [],
+      "_legacy": "A3 硬盘冗余/logical drive 证据，待迁移为 BMC_ACTIONS"
+    },
+    "拔插硬盘后清除Foreign配置": {
+      "task_type": "BMC",
+      "execution_mode": "CUSTOM_SCRIPT",
+      "command_or_url": "",
+      "timeout_seconds": 120,
+      "retry_count": 0,
+      "rules": [],
+      "_high_risk": true,
+      "_legacy": "ClearForeign 配置类高风险任务，必须保持禁用除非明确授权"
+    }
+  }
+}

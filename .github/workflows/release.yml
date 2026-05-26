@@ -117,12 +117,15 @@ jobs:
           if not exist dist\bmc-auto-capture\playwright_browsers mkdir dist\bmc-auto-capture\playwright_browsers
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\chromium-*") do (
             robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+            if %%ERRORLEVEL%% LEQ 1 (echo   OK) else (exit /b %%ERRORLEVEL%%)
           )
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\chromium_headless_shell-*") do (
             robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+            if %%ERRORLEVEL%% LEQ 1 (echo   OK) else (exit /b %%ERRORLEVEL%%)
           )
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\ffmpeg-*") do (
             robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+            if %%ERRORLEVEL%% LEQ 1 (echo   OK) else (exit /b %%ERRORLEVEL%%)
           )
 
       - name: Package runtime
