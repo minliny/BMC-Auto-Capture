@@ -312,14 +312,15 @@
     },
     "拔插硬盘后清除Foreign配置": {
       "task_type": "BMC",
-      "execution_mode": "CUSTOM_SCRIPT",
+      "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
+      "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/system/storage\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"screenshot\",\"value\":\"before_operation\"},{\"action\":\"click\",\"selector\":\"button:has-text('设置')\",\"_note\":\"打开设置菜单\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\",\"value\":\"after_setting\"},{\"action\":\"click\",\"selector\":\"#foreignConfig\",\"_note\":\"点击清除Foreign配置。如果按钮 disabled 则此步失败，任务报错但不执行清除。\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\",\"value\":\"after_foreign_click\"},{\"action\":\"click\",\"selector\":\"button:has-text('确定')\",\"_note\":\"确认清除操作\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"click\",\"selector\":\"#secondConfirm_ok_btn\",\"_note\":\"二次确认（如有）。若不存在则此步静默失败。\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\",\"value\":\"after_confirm\"},{\"action\":\"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
       "enabled": false,
       "_high_risk": true,
-      "_legacy": "ClearForeign 配置类高风险任务。执行真实的 RAID 配置清除操作。必须保持禁用，除非用户明确授权、二次确认、记录审计日志。禁止 Agent 静默下发执行。"
+      "_warning": "高风险写操作：执行 RAID ClearForeign 配置清除。误执行会导致数据丢失。仅在以下条件全部满足时才可启用：(1) 用户明确了解操作后果 (2) 已确认目标设备状态 (3) 非批量执行 (4) 有操作审计记录。禁止 Agent 自动下发此任务。"
     }
   }
 }
