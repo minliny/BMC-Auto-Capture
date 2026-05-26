@@ -6,11 +6,19 @@ CLI entry point: python -m bmc_auto_capture --excel <path> [--config <path>]
 from __future__ import annotations
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
 from .models.app_config import AppConfig
 from .app import App
+
+
+def _bundle_dir() -> Path:
+    """Return the base directory, works in dev and frozen (PyInstaller) modes."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent.parent
 
 
 def main():
@@ -40,12 +48,14 @@ def main():
     )
     args = parser.parse_args()
 
-    # Load config
-    config_path = args.config or Path(__file__).parent.parent / "config" / "default_config.yaml"
+    # Load config — resolve bundled path if no explicit config given
+    base = _bundle_dir()
+    config_path = args.config or base / "config" / "default_config.yaml"
     if Path(config_path).exists():
         config = AppConfig.from_yaml(config_path)
     else:
         config = AppConfig()
+        print(f"WARNING: Config not found at {config_path}, using defaults")
 
     # Setup logging
     level = logging.DEBUG if args.verbose else logging.INFO

@@ -1,7 +1,7 @@
 # Build artifacts
 build/
 dist/
-*.spec
+/*.spec
 __pycache__/
 *.pyc
 *.pyo
