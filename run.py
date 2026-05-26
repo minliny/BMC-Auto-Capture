@@ -56,6 +56,13 @@ def _setup_browser_path():
 def main():
     _setup_browser_path()
 
+    # Force UTF-8 output (fixes UnicodeEncodeError on Windows CMD)
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(
         description="BMC Auto-Capture v2.0 - Automated Test Evidence Collection",
     )
@@ -114,13 +121,13 @@ def main():
         for c in candidates:
             if c.exists():
                 excel_path = c
-                print(f"使用默认配置: {c}")
+                print(f"Using default config: {c}")
                 break
 
     if excel_path is None:
-        print("ERROR: 未指定 Excel 配置文件。", file=sys.stderr)
-        print("用法: bmc-engine --app-dir <app目录> --excel <Excel路径>", file=sys.stderr)
-        print("或将 task_template.xlsx 放在 app/examples/ 或当前目录下", file=sys.stderr)
+        print("ERROR: No Excel config specified.", file=sys.stderr)
+        print("Usage: bmc-engine --app-dir <app_dir> --excel <path>", file=sys.stderr)
+        print("Or place task_template.xlsx in app/examples/ or current directory", file=sys.stderr)
         sys.exit(1)
 
     if not excel_path.exists():
@@ -133,7 +140,7 @@ def main():
         from src.connectivity.preflight import check_all as _preflight_all, PreflightStatus
         devices, tasks = _load(str(excel_path))
         enabled = [d for d in devices if d.enabled]
-        print(f"\n预检 {len(enabled)} 台设备 (TCP 443/22)...\n")
+        print(f"\nPreflight check: {len(enabled)} devices (TCP 443/22)...\n")
         report = _preflight_all(enabled, timeout=config.tcp_connect_timeout)
         for r in report.results:
             bmc = "OK" if r.bmc_status == "OK" else f"FAIL({r.bmc_status})"
