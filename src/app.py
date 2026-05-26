@@ -5,13 +5,11 @@ All three interfaces (API, TUI, GUI) call App.run().
 No interface reimplements execution logic.
 """
 
-
 from __future__ import annotations
+import asyncio
 import logging
 import threading
 import time
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
@@ -21,7 +19,8 @@ from .models.execution_result import ExecutionResult
 from .loader.excel_reader import load_all
 from .loader.schema_validator import validate, ValidationReport
 from .scheduler.plan_generator import generate_plans
-from .executor.base import AbstractExecutor
+from .connectivity.preflight import check_all as preflight_check_all, apply_preflight
+from .connectivity.route_guard import RouteGuard
 from .executor.ssh_executor import SSHExecutor
 from .executor.bmc_executor import BMCExecutor
 from .executor.browser_manager import BrowserManager
@@ -57,13 +56,13 @@ class App:
         self._results: list[ExecutionResult] = []
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
-        self._pause_event.set()  # Not paused by default
+        self._pause_event.set()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def run(self, excel_path: str | Path) -> list[ExecutionResult]:
-        """Full pipeline: load → validate → plan → execute → collect. Synchronous."""
+    def run(self, excel_path: str | Path, mode: str = "sequential") -> list[ExecutionResult]:
+        """Full pipeline: load → validate → plan → preflight → routeguard → execute → collect."""
         excel_path = Path(excel_path)
 
         # 1. Load
@@ -86,10 +85,52 @@ class App:
 
         self.event_bus.emit("plans_generated", count=len(plans))
 
-        # 4. Execute (simple sequential scheduler for P4; P5 upgrades to dynamic)
-        self._execute_sequential(plans)
+        # 4. Connectivity preflight
+        if self.config.preflight_enabled:
+            logger.info("Running connectivity preflight...")
+            pr = preflight_check_all(devices, timeout=self.config.tcp_connect_timeout)
+            plans = apply_preflight(plans, pr)
+            preflight_skipped = sum(1 for p in plans if p.status.startswith("EXEC_SKIPPED"))
+            # Add skipped plans to results
+            for p in plans:
+                if p.status == "EXEC_SKIPPED_PRECHECK_FAILED":
+                    self._results.append(ExecutionResult(
+                        plan_id=p.plan_id,
+                        device_name=p.device.device_name,
+                        device_group=p.device.device_group,
+                        bmc_ip=p.device.bmc_ip,
+                        inband_ip=p.device.inband_ip,
+                        task_name=p.task.task_name,
+                        task_type=p.task.task_type,
+                        execution_mode=p.task.execution_mode,
+                        execution_status="EXEC_SKIPPED_PRECHECK_FAILED",
+                        execution_failure_reason="网络预检不通",
+                        started_at=time.time(),
+                        ended_at=time.time(),
+                    ))
+            logger.info("Preflight: %d plans skipped (unreachable)", preflight_skipped)
 
-        # 5. Collect
+        # 5. Route guard
+        route_guard = None
+        if self.config.route_guard_enabled:
+            route_guard = RouteGuard(check_interval=self.config.route_guard_check_interval)
+            route_guard.on_change = self._on_route_change
+            route_guard.start()
+
+        # 6. Execute
+        ready_plans = [p for p in plans if not p.status.startswith("EXEC_SKIPPED")]
+        logger.info("Executing %d plans (%d skipped by preflight)", len(ready_plans), len(plans) - len(ready_plans))
+
+        if mode == "full":
+            self._execute_dynamic(ready_plans)
+        else:
+            self._execute_sequential(ready_plans)
+
+        # 7. Route guard cleanup
+        if route_guard:
+            route_guard.stop()
+
+        # 8. Collect
         output_dir = Path(self.config.output_root)
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -101,6 +142,8 @@ class App:
         except Exception as e:
             logger.warning("Failed to build pivot table: %s", e)
 
+        summary = compute_summary(self._results)
+        logger.info("Summary: %s", summary)
         print_terminal_summary(self._results)
 
         return self._results
@@ -115,29 +158,32 @@ class App:
         self._pause_event.set()
 
     # ------------------------------------------------------------------
-    # Sequential executor (P4 — replaced by DynamicScheduler in P5)
+    # Route guard callback
+    # ------------------------------------------------------------------
+    def _on_route_change(self, changes: list[str]):
+        logger.warning("RouteGuard: %d route changes detected — pausing dispatch", len(changes))
+        self._stop_event.set()
+        self.event_bus.emit("route_changed", changes=changes)
+
+    # ------------------------------------------------------------------
+    # Sequential executor
     # ------------------------------------------------------------------
     def _execute_sequential(self, plans: list[TaskPlan]):
-        """Simple sequential executor: each plan runs one at a time.
-
-        P5 (DynamicScheduler) will replace this with device-serialized,
-        protocol-split, dynamically-sized worker pools.
-        """
         ssh_exec = SSHExecutor(connect_timeout=self.config.tcp_connect_timeout)
         bm = BrowserManager(headless=self.config.browser_headless)
         bmc_exec = BMCExecutor(bm, connect_timeout=self.config.tcp_connect_timeout)
 
         total = len(plans)
-        logger.info("Starting execution of %d plans", total)
+        logger.info("Sequential execution of %d plans", total)
 
         for i, plan in enumerate(plans):
             if self._stop_event.is_set():
                 logger.info("Stop requested — %d plans remaining", total - i)
                 for remaining in plans[i:]:
-                    remaining.status = "SKIPPED"
+                    remaining.status = "EXEC_SKIPPED_ROUTE_CHANGED"
                 break
 
-            self._pause_event.wait()  # Block if paused
+            self._pause_event.wait()
 
             plan.status = "RUNNING"
             plan.started_at = time.time()
@@ -155,6 +201,8 @@ class App:
                         task_name=plan.task.task_name,
                         execution_status="EXEC_FAILED",
                         execution_failure_reason=f"Unsupported protocol: {plan.protocol}",
+                        started_at=time.time(),
+                        ended_at=time.time(),
                     )
 
                 plan.completed_at = time.time()
@@ -171,13 +219,22 @@ class App:
                 plan.status = "EXEC_ERROR"
                 plan.completed_at = time.time()
 
-        # Cleanup browser
-        import asyncio
         try:
             asyncio.run(bm.teardown())
         except Exception:
             pass
 
+    # ------------------------------------------------------------------
+    # Dynamic scheduler
+    # ------------------------------------------------------------------
+    def _execute_dynamic(self, plans: list[TaskPlan]):
+        from .scheduler.dynamic_scheduler import DynamicScheduler
+
+        scheduler = DynamicScheduler(self.config, event_bus=self.event_bus)
+        results = scheduler.run(plans)
+        self._results.extend(results)
+
+    # ------------------------------------------------------------------
     def _print_validation(self, report: ValidationReport):
         for msg in report.warnings[:10]:
             logger.warning("[%s row %d] %s: %s", msg.source, msg.row, msg.field, msg.message)

@@ -93,7 +93,7 @@ def main():
 
     # Run
     app = PipelineApp(config)
-    results = app.run(str(excel_path))
+    results = app.run(str(excel_path), mode=args.mode)
 
     if not results:
         sys.exit(1)
