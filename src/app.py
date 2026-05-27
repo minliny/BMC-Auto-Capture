@@ -65,6 +65,11 @@ class App:
         """Full pipeline: load → validate → plan → preflight → routeguard → execute → collect."""
         excel_path = Path(excel_path)
 
+        # 0. Set up timestamped output root to avoid cross-run overwrites
+        run_ts = time.strftime("%Y%m%d_%H%M%S")
+        self.config.output_root = str(Path(self.config.output_root) / run_ts)
+        logger.info("Output directory: %s", self.config.output_root)
+
         # 1. Load
         logger.info("Loading Excel: %s", excel_path)
         devices, tasks = load_all(str(excel_path))
