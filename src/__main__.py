@@ -23,7 +23,7 @@ def _bundle_dir() -> Path:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="BMC Auto-Capture v2.0 — 自动化测试证据采集平台",
+        description="BMC Auto-Capture v0.2.1 — 自动化测试证据采集平台",
     )
     parser.add_argument(
         "--excel", "-e",

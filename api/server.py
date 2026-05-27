@@ -22,9 +22,9 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     _app = FastAPI(
-        title="BMC Auto-Capture v2.0",
+        title="BMC Auto-Capture v0.2.1",
         description="智算项目 BMC/SSH 自动化测试证据采集平台 API",
-        version="2.0.0",
+        version="0.2.1",
         lifespan=lifespan,
     )
 

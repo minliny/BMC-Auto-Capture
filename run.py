@@ -87,7 +87,7 @@ def main():
             pass
 
     parser = argparse.ArgumentParser(
-        description="BMC Auto-Capture v2.0 - Automated Test Evidence Collection",
+        description="BMC Auto-Capture v0.2.1 - Automated Test Evidence Collection",
     )
     parser.add_argument("--excel", "-e", default=None, help="Path to Excel V2 config (.xlsx)")
     parser.add_argument("--config", "-c", default=None, help="Path to YAML config")

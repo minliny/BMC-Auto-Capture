@@ -66,7 +66,7 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
     total = s["total"] or 1
 
     print("\n" + "=" * 60)
-    print("  BMC Auto-Capture v2.0 — Execution Summary")
+    print("  BMC Auto-Capture v0.2.1 — Execution Summary")
     print("=" * 60)
     print(f"  Total plans:    {s['total']:>6}")
     print(f"  Success:        {s['success']:>6}  ({s['success'] / total * 100:.1f}%)")

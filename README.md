@@ -1,4 +1,4 @@
-# BMC Auto-Capture v2.0
+# BMC Auto-Capture v0.2.1
 
 面向服务器、BMC/iBMC、交换设备、SSH 命令采集场景的自动化测试证据采集平台。
 

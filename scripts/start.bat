@@ -7,7 +7,7 @@ if errorlevel 1 (
 )
 
 setlocal
-title BMC Auto-Capture v2.0
+title BMC Auto-Capture v0.2.1
 
 set "ROOT=%~dp0"
 REM Remove trailing backslash for clean path joining
@@ -41,7 +41,7 @@ if not exist "%EXCEL%" (
 :menu
 cls
 echo ============================================================
-echo    BMC/SSH Automated Test Evidence Capture v2.0
+echo    BMC/SSH Automated Test Evidence Capture v0.2.1
 echo ============================================================
 echo.
 echo    Config: %EXCEL%
