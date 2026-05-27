@@ -23,7 +23,6 @@ from .captcha_handler import detect_captcha, handle_captcha, CaptchaDetected
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult, StepResult
 from ..out.file_writer import write_html_file, write_log_file
-from ..out.screenshot import overlay_device_info
 
 logger = logging.getLogger("bmc_auto_capture.bmc")
 
@@ -393,25 +392,13 @@ class BMCExecutor(AbstractExecutor):
         ss_path = os.path.join(output_dir, ss_filename)
         await page.screenshot(path=ss_path, full_page=True)
 
-        # Add overlay
-        page_url = page.url
-        page_title = await page.title()
-        annotated = overlay_device_info(
-            ss_path,
-            device_name=result.device_name,
-            device_ip=result.bmc_ip,
-            task_name=result.task_name,
-            page_url=page_url,
-            page_title=page_title,
-        )
-
-        result.screenshots = (annotated,)
+        result.screenshots = (ss_path,)
         result.step_results.append(StepResult(
             step_index=0,
             step_name="bmc_url_screenshot",
             status="SUCCESS",
-            screenshot=annotated,
-            details=f"URL: {page_url}",
+            screenshot=ss_path,
+            details=f"URL: {page.url}",
         ))
 
         # Save HTML
