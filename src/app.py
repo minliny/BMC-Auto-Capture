@@ -130,9 +130,8 @@ class App:
         if route_guard:
             route_guard.stop()
 
-        # 8. Collect
-        output_dir = Path(self.config.output_root)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # 8. Collect — with fallback if output dir is not writable
+        output_dir = self._ensure_writable_output_dir()
 
         write_result_csv(self._results, str(output_dir))
         write_final_result_csv(self._results, str(output_dir))
@@ -147,6 +146,33 @@ class App:
         print_terminal_summary(self._results)
 
         return self._results
+
+    def _ensure_writable_output_dir(self) -> Path:
+        """Try configured output_root, fall back to home/temp if not writable."""
+        import tempfile
+
+        candidates = [
+            Path(self.config.output_root),
+            Path.home() / "bmc-auto-capture" / "output",
+            Path(tempfile.gettempdir()) / "bmc-auto-capture" / "output",
+        ]
+
+        for d in candidates:
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+                # Test write
+                test_file = d / ".write_test"
+                test_file.touch()
+                test_file.unlink()
+                if d != candidates[0]:
+                    logger.warning("Output dir '%s' not writable, using '%s'", candidates[0], d)
+                    print(f"WARNING: Cannot write to {candidates[0]}, output: {d}")
+                return d
+            except (OSError, PermissionError):
+                continue
+
+        # Last resort
+        raise OSError("No writable output directory found")
 
     def stop(self):
         self._stop_event.set()
