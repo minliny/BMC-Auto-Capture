@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from typing import Optional
 
@@ -84,7 +85,15 @@ class BMCLoginError(Exception):
 
 
 class BMCExecutor(AbstractExecutor):
-    """Execute BMC_URL and BMC_ACTIONS tasks."""
+    """Execute BMC_URL and BMC_ACTIONS tasks.
+
+    Uses thread-local persistent event loops so all BMC tasks on the
+    same worker thread share one loop.  This eliminates loop-change
+    browser recreation and Chromium process leaks.
+    """
+
+    _thread_loops: dict[int, asyncio.AbstractEventLoop] = {}
+    _thread_loops_lock = threading.Lock()
 
     def __init__(
         self,
@@ -95,21 +104,32 @@ class BMCExecutor(AbstractExecutor):
         self._bm = browser_manager
         self._connect_timeout = connect_timeout
         self._page_timeout = page_timeout
-        self._loop: asyncio.AbstractEventLoop | None = None
+
+    @classmethod
+    def _get_loop(cls) -> asyncio.AbstractEventLoop:
+        tid = threading.get_ident()
+        with cls._thread_loops_lock:
+            loop = cls._thread_loops.get(tid)
+            if loop is None or loop.is_closed():
+                loop = asyncio.new_event_loop()
+                cls._thread_loops[tid] = loop
+            return loop
+
+    @classmethod
+    def cleanup_thread_loop(cls):
+        """Close and remove the event loop for the current thread."""
+        tid = threading.get_ident()
+        with cls._thread_loops_lock:
+            loop = cls._thread_loops.pop(tid, None)
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.close()
+            except Exception:
+                pass
 
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
-        own_loop = self._loop is None
-        loop = self._loop or asyncio.new_event_loop()
-        self._loop = loop
-        try:
-            return loop.run_until_complete(self._execute_async(plan, output_root))
-        finally:
-            if own_loop:
-                try:
-                    loop.close()
-                except Exception:
-                    pass
-                self._loop = None
+        loop = self._get_loop()
+        return loop.run_until_complete(self._execute_async(plan, output_root))
 
     async def _execute_async(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         device = plan.device
