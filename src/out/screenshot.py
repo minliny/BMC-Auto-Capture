@@ -31,49 +31,108 @@ def overlay_device_info(
     page_url: str = "",
     page_title: str = "",
 ) -> str:
-    """Add a Chrome-style taskbar + device info bar to the screenshot."""
+    """Add a realistic Windows Chrome browser frame to the screenshot."""
     img = Image.open(image_path)
     width, height = img.size
 
-    font = _default_font(13)
-    font_small = _default_font(11)
+    font = _default_font(12)
+    font_sm = _default_font(11)
+    font_bold = _default_font(13)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # --- Chrome taskbar (top) ---
+    # Chrome color scheme (Windows dark theme)
+    TITLE_BG = (53, 54, 58)       # Windows title bar
+    TAB_BG = (60, 64, 67)         # Tab strip background
+    TAB_ACTIVE = (50, 52, 55)     # Active tab
+    NAV_BG = (53, 54, 58)         # Nav bar background
+    URL_BG = (60, 64, 67)         # URL bar
+    TEXT_PRIMARY = (232, 234, 237)
+    TEXT_SECONDARY = (154, 160, 166)
+    BORDER_COLOR = (40, 40, 42)
+
+    # Layout heights
+    title_bar_h = 30
     tab_bar_h = 36
-    url_bar_h = 32
-    device_bar_h = 22
-    chrome_h = tab_bar_h + url_bar_h + device_bar_h
+    nav_bar_h = 42
+    device_bar_h = 24
+    chrome_total_h = title_bar_h + tab_bar_h + nav_bar_h + device_bar_h
 
-    canvas = Image.new("RGBA", (width, height + chrome_h), (40, 40, 40, 255))
-
-    # Tab bar background
+    canvas = Image.new("RGBA", (width, height + chrome_total_h), TITLE_BG)
     draw = ImageDraw.Draw(canvas)
-    draw.rectangle([(0, 0), (width, tab_bar_h)], fill=(50, 50, 50))
+
+    # ====== Title bar ======
+    draw.rectangle([(0, 0), (width, title_bar_h)], fill=TITLE_BG)
+    # Chrome icon (colored circle)
+    draw.ellipse([(10, 6), (24, 20)], fill=(66, 133, 244))
+    draw.text((30, 7), "Google Chrome", fill=TEXT_PRIMARY, font=font_sm)
+
+    # Window controls (Windows 10 style)
+    btn_area = width - 140
+    for bx, symbol, hover in [
+        (btn_area, "—", (80, 80, 80)),
+        (btn_area + 46, "□", (80, 80, 80)),
+        (btn_area + 92, "✕", (232, 17, 35)),
+    ]:
+        draw.rectangle([(bx, 0), (bx + 46, title_bar_h)], fill=TITLE_BG)
+        draw.text((bx + 16, 6), symbol, fill=TEXT_PRIMARY, font=font_bold)
+
+    # ====== Tab strip ======
+    y_tab = title_bar_h
+    draw.rectangle([(0, y_tab), (width, y_tab + tab_bar_h)], fill=TAB_BG)
+
     # Active tab
-    tab_w = min(width - 100, 280)
-    draw.rectangle([(8, 6), (tab_w, tab_bar_h)], fill=(60, 60, 60))
-    tab_title = page_title[:50] if page_title else "BMC Management"
-    draw.text((16, 10), tab_title, fill=(220, 220, 220), font=font_small)
-    # Window controls (red/yellow/green dots)
-    for cx, color in [(width - 60, (235, 95, 92)), (width - 40, (245, 190, 40)), (width - 20, (100, 200, 80))]:
-        draw.ellipse([(cx, 13), (cx + 11, 24)], fill=color)
+    tab_left = 4
+    tab_w = min(width - 180, 260)
+    # Tab shape with rounded top
+    draw.rectangle([(tab_left, y_tab + 2), (tab_left + tab_w, y_tab + tab_bar_h)], fill=TAB_ACTIVE)
+    draw.line([(tab_left, y_tab + 2), (tab_left, y_tab + tab_bar_h)], fill=TAB_ACTIVE, width=1)
+    # Top colored accent line for active tab
+    draw.line([(tab_left, y_tab), (tab_left + tab_w, y_tab)], fill=(66, 133, 244), width=3)
 
-    # URL bar
-    draw.rectangle([(0, tab_bar_h), (width, tab_bar_h + url_bar_h)], fill=(70, 70, 70))
-    url_display = page_url[:120] if page_url else "about:blank"
-    url_box_w = width - 120
-    draw.rectangle([(8, tab_bar_h + 5), (url_box_w, tab_bar_h + url_bar_h - 5)], fill=(55, 55, 55))
-    draw.text((16, tab_bar_h + 10), url_display, fill=(200, 200, 200), font=font_small)
+    tab_text = page_title[:60] if page_title else "BMC Management"
+    draw.text((tab_left + 24, y_tab + 10), tab_text, fill=TEXT_PRIMARY, font=font_sm)
+    # Favicon-like dot
+    draw.ellipse([(tab_left + 8, y_tab + 13), (tab_left + 17, y_tab + 22)], fill=(100, 180, 100))
 
-    # Device info bar
-    draw.rectangle([(0, tab_bar_h + url_bar_h), (width, chrome_h)], fill=(30, 30, 30))
-    info = f"Device: {device_name} | IP: {device_ip} | Task: {task_name}"
-    draw.text((10, tab_bar_h + url_bar_h + 3), info, fill=(180, 180, 180), font=font_small)
-    draw.text((width - 180, tab_bar_h + url_bar_h + 3), timestamp, fill=(150, 150, 150), font=font_small)
+    # New tab button (+)
+    ntx = tab_left + tab_w + 8
+    draw.rectangle([(ntx, y_tab + 6), (ntx + 24, y_tab + tab_bar_h - 6)], fill=TAB_BG)
+    draw.text((ntx + 7, y_tab + 8), "+", fill=TEXT_SECONDARY, font=font_bold)
 
-    # Paste page screenshot below chrome
-    canvas.paste(img, (0, chrome_h))
+    # ====== Navigation bar ======
+    y_nav = y_tab + tab_bar_h
+    draw.rectangle([(0, y_nav), (width, y_nav + nav_bar_h)], fill=NAV_BG)
+
+    # Navigation buttons (text-based symbols)
+    for symbol, nx in [("<", 12), (">", 42), ("↻", 72)]:
+        draw.text((nx + 4, y_nav + 13), symbol, fill=TEXT_SECONDARY, font=font_bold)
+
+    # URL bar (rounded rectangle look)
+    url_left = 100
+    url_right = width - 60
+    url_h = 28
+    url_y = y_nav + 7
+    draw.rectangle([(url_left, url_y), (url_right, url_y + url_h)], fill=URL_BG)
+    # Lock text
+    draw.text((url_left + 10, y_nav + 12), "SSL", fill=(100, 180, 100), font=font_sm)
+    # URL text
+    url_display = page_url[:100] if page_url else "about:blank"
+    draw.text((url_left + 40, y_nav + 13), url_display, fill=TEXT_PRIMARY, font=font_sm)
+    # Star (bookmark)
+    draw.text((url_right - 28, y_nav + 12), "*", fill=TEXT_SECONDARY, font=font_bold)
+
+    # Chrome menu
+    draw.text((width - 44, y_nav + 13), "...", fill=TEXT_SECONDARY, font=font_bold)
+
+    # ====== Device info bar ======
+    y_dev = y_nav + nav_bar_h
+    draw.rectangle([(0, y_dev), (width, y_dev + device_bar_h)], fill=(40, 42, 45))
+    info = f"Device: {device_name}  |  IP: {device_ip}  |  Task: {task_name}"
+    draw.text((12, y_dev + 4), info, fill=TEXT_SECONDARY, font=font_sm)
+    draw.text((width - 195, y_dev + 4), timestamp, fill=(120, 125, 130), font=font_sm)
+
+    # ====== Paste page screenshot ======
+    canvas.paste(img, (0, chrome_total_h))
 
     out_path = image_path.replace(".png", "_annotated.png")
     canvas.save(out_path, "PNG")
