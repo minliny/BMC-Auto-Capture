@@ -18,6 +18,7 @@ class TaskPlan:
     task: Task
     plan_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     status: str = "PENDING"
+    skip_reason: str = ""
     retry_attempt: int = 0
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None

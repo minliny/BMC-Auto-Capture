@@ -1,7 +1,7 @@
 """
 Playwright browser lifecycle manager.
-Handles launch, headless/headed toggle, context creation, and automatic recycling.
-Detects event loop changes (asyncio.run creating new loops) and resets accordingly.
+Each worker thread gets its own Playwright + browser instance (thread-local).
+No cross-thread sharing — eliminates event-loop deadlocks entirely.
 """
 
 from __future__ import annotations
@@ -14,10 +14,11 @@ logger = logging.getLogger("bmc_auto_capture.browser")
 
 
 class BrowserManager:
-    """Manages a single Playwright browser instance with recycling thresholds.
+    """Thread-local browser pool — each worker thread owns its own browser.
 
-    Thread-safe: serializes get_context() and teardown() with a lock.
-    Event-loop aware: detects loop changes and resets without blocking.
+    ThreadPoolExecutor reuses threads, so a thread's browser lives across
+    multiple sequential BMC tasks on the same thread.  Recycling is per-thread
+    based on task count and age thresholds.
     """
 
     def __init__(
@@ -32,14 +33,8 @@ class BrowserManager:
         self._max_tasks = max_tasks
         self._max_age = max_age_seconds
         self._viewport = {"width": viewport_width, "height": viewport_height}
-
-        self._playwright = None
-        self._browser = None
-        self._context = None
-        self._task_count = 0
-        self._born_at: float = 0.0
-        self._loop_id: int = 0
-        self._lock = threading.Lock()
+        self._tls: dict[int, _ThreadLocalBrowser] = {}
+        self._tls_lock = threading.Lock()
 
     @property
     def headless(self) -> bool:
@@ -47,83 +42,95 @@ class BrowserManager:
 
     @headless.setter
     def headless(self, value: bool):
-        if value != self._headless:
-            self._headless = value
-            self._task_count = self._max_tasks + 1
+        self._headless = value
 
-    async def start(self):
+    async def get_context(self):
+        """Return a browser context for the current thread.
+
+        Creates a new Playwright + browser + context on first call per thread.
+        Recycles the browser after max_tasks or max_age_seconds.
+        """
+        tid = threading.get_ident()
+
+        with self._tls_lock:
+            tb = self._tls.get(tid)
+
+        if tb is None:
+            tb = _ThreadLocalBrowser(
+                headless=self._headless,
+                max_tasks=self._max_tasks,
+                max_age_seconds=self._max_age,
+                viewport=self._viewport,
+            )
+            with self._tls_lock:
+                self._tls[tid] = tb
+
+        return await tb.get_context()
+
+    async def teardown(self):
+        """Close all thread-local browsers. Called from main thread on shutdown."""
+        with self._tls_lock:
+            tbs = list(self._tls.values())
+            self._tls.clear()
+
+        for tb in tbs:
+            try:
+                await tb.close()
+            except Exception:
+                pass
+
+
+class _ThreadLocalBrowser:
+    """Per-thread Playwright browser with recycling."""
+
+    def __init__(self, headless, max_tasks, max_age_seconds, viewport):
+        self._headless = headless
+        self._max_tasks = max_tasks
+        self._max_age = max_age_seconds
+        self._viewport = viewport
+        self._playwright = None
+        self._browser = None
+        self._context = None
+        self._task_count = 0
+        self._born_at: float = 0.0
+
+    async def get_context(self):
         from playwright.async_api import async_playwright
 
         if self._playwright is None:
             self._playwright = await async_playwright().start()
 
-    async def get_context(self):
-        """Return a fresh or recycled BrowserContext.
-
-        Serialized by a threading lock so concurrent BMC workers don't
-        race on browser creation / reset.  Loop-change detection resets
-        WITHOUT awaiting cleanup on the wrong loop, which would deadlock.
-        """
-        with self._lock:
-            current_loop = id(asyncio.get_event_loop())
-
-            if current_loop != self._loop_id and self._playwright is not None:
-                logger.debug("Event loop changed, dropping old browser refs")
-                self._drop_refs()
-
-            if self._playwright is None:
-                await self.start()
-                self._loop_id = current_loop
-
-            if self._should_recycle():
-                await self._teardown_browser()
-
-            if self._browser is None:
-                logger.info("Launching browser (headless=%s)", self._headless)
-                self._browser = await self._playwright.chromium.launch(
-                    headless=self._headless,
-                    args=[
-                        "--ignore-certificate-errors",
-                        "--disable-blink-features=AutomationControlled",
-                    ],
-                )
-                self._context = await self._browser.new_context(
-                    viewport=self._viewport,
-                    ignore_https_errors=True,
-                    locale="zh-CN",
-                )
-                self._task_count = 0
-                self._born_at = time.time()
-
-            self._task_count += 1
-            return self._context
-
-    async def teardown(self):
-        with self._lock:
+        if self._should_recycle():
             await self._teardown_browser()
-            if self._playwright:
-                try:
-                    await self._playwright.stop()
-                except Exception:
-                    pass
-            self._drop_refs()
 
-    def _drop_refs(self):
-        """Drop references without awaiting close on potentially wrong loop."""
-        self._context = None
-        self._browser = None
-        self._playwright = None
-        self._loop_id = 0
+        if self._browser is None:
+            logger.info("Launching browser (headless=%s)", self._headless)
+            self._browser = await self._playwright.chromium.launch(
+                headless=self._headless,
+                args=[
+                    "--ignore-certificate-errors",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+            )
+            self._context = await self._browser.new_context(
+                viewport=self._viewport,
+                ignore_https_errors=True,
+                locale="zh-CN",
+            )
+            self._task_count = 0
+            self._born_at = time.time()
 
-    async def _force_reset(self):
-        """Full teardown + reset. Caller must hold self._lock."""
+        self._task_count += 1
+        return self._context
+
+    async def close(self):
         await self._teardown_browser()
         if self._playwright:
             try:
                 await self._playwright.stop()
             except Exception:
                 pass
-        self._drop_refs()
+            self._playwright = None
 
     def _should_recycle(self) -> bool:
         if self._browser is None:
@@ -131,23 +138,22 @@ class BrowserManager:
         if self._task_count >= self._max_tasks:
             logger.info("Browser recycling: reached %d tasks", self._task_count)
             return True
-        age = time.time() - self._born_at
-        if age >= self._max_age:
-            logger.info("Browser recycling: age %.0fs exceeds limit", age)
+        if time.time() - self._born_at >= self._max_age:
+            logger.info("Browser recycling: age exceeded limit")
             return True
         return False
 
     async def _teardown_browser(self):
-        try:
-            if self._context:
+        if self._context:
+            try:
                 await self._context.close()
-        except (RuntimeError, Exception):
-            pass
-        try:
-            if self._browser:
+            except Exception:
+                pass
+        if self._browser:
+            try:
                 await self._browser.close()
-        except (RuntimeError, Exception):
-            pass
+            except Exception:
+                pass
         self._context = None
         self._browser = None
         self._task_count = 0

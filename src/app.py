@@ -90,10 +90,11 @@ class App:
             logger.info("Running connectivity preflight...")
             pr = preflight_check_all(devices, timeout=self.config.tcp_connect_timeout)
             plans = apply_preflight(plans, pr)
-            preflight_skipped = sum(1 for p in plans if p.status.startswith("EXEC_SKIPPED"))
-            # Add skipped plans to results
+            # Count & record ALL skipped plans (both PRECHECK_FAILED and PORT_BLOCKED)
             for p in plans:
-                if p.status == "EXEC_SKIPPED_PRECHECK_FAILED":
+                if p.status.startswith("EXEC_SKIPPED"):
+                    reason = p.skip_reason or "网络预检不通"
+                    logger.info("Skip: %s / %s → %s", p.device.device_name, p.task.task_name, reason)
                     self._results.append(ExecutionResult(
                         plan_id=p.plan_id,
                         device_name=p.device.device_name,
@@ -103,12 +104,13 @@ class App:
                         task_name=p.task.task_name,
                         task_type=p.task.task_type,
                         execution_mode=p.task.execution_mode,
-                        execution_status="EXEC_SKIPPED_PRECHECK_FAILED",
-                        execution_failure_reason="网络预检不通",
+                        execution_status=p.status,
+                        execution_failure_reason=reason,
                         started_at=time.time(),
                         ended_at=time.time(),
                     ))
-            logger.info("Preflight: %d plans skipped (unreachable)", preflight_skipped)
+            skipped_count = sum(1 for p in plans if p.status.startswith("EXEC_SKIPPED"))
+            logger.info("Preflight: %d plans skipped (%d ready)", skipped_count, len(plans) - skipped_count)
 
         # 5. Route guard
         route_guard = None
@@ -214,6 +216,9 @@ class App:
             plan.status = "RUNNING"
             plan.started_at = time.time()
             self.event_bus.emit("plan_started", plan=plan, index=i, total=total)
+
+            logger.info("START [%s] %s / %s (%d/%d)", plan.protocol, plan.device.device_name, plan.task.task_name, i+1, total)
+            print(f"  START [{plan.protocol}] {plan.device.device_name}  {plan.task.task_name}")
 
             try:
                 if plan.protocol == "BMC":

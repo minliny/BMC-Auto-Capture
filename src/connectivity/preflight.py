@@ -126,26 +126,42 @@ def apply_preflight(
 ) -> list[TaskPlan]:
     """Mark plans as skipped based on preflight results.
 
-    - BMC unreachable → skip BMC_URL / BMC_ACTIONS
-    - SSH unreachable / port blocked → skip SSH_CMD / TELNET_CMD
+    - BMC unreachable / IP empty → skip BMC_URL / BMC_ACTIONS
+    - SSH unreachable / port blocked / IP empty → skip SSH_CMD / TELNET_CMD
+
+    Stores the specific failure reason on plan.skip_reason.
     """
     lookup: dict[str, PreflightResult] = {r.device_name: r for r in report.results}
+    plan_device_names: set[str] = {p.device.device_name for p in plans}
+
+    # Warn about devices in preflight but not in any plan
+    for name in lookup:
+        if name not in plan_device_names:
+            logger.debug("Preflight result for '%s' has no matching plans (filtered by group/tags)", name)
 
     for plan in plans:
         pr = lookup.get(plan.device.device_name)
         if not pr:
+            logger.warning(
+                "Device '%s' in plan but not in preflight report — plan not skipped",
+                plan.device.device_name,
+            )
             continue
 
         if plan.protocol == "BMC":
             if pr.bmc_status == PreflightStatus.PORT_BLOCKED:
                 plan.status = "EXEC_SKIPPED_PORT_BLOCKED"
+                plan.skip_reason = f"BMC端口被安全策略拦截: {pr.bmc_error}"
             elif pr.bmc_status != PreflightStatus.OK:
                 plan.status = "EXEC_SKIPPED_PRECHECK_FAILED"
+                plan.skip_reason = f"BMC预检失败({pr.bmc_status}): {pr.bmc_error}"
 
         elif plan.protocol == "SSH":
             if pr.ssh_status == PreflightStatus.PORT_BLOCKED:
                 plan.status = "EXEC_SKIPPED_PORT_BLOCKED"
+                plan.skip_reason = f"SSH端口被安全策略拦截: {pr.ssh_error}"
             elif pr.ssh_status != PreflightStatus.OK:
                 plan.status = "EXEC_SKIPPED_PRECHECK_FAILED"
+                plan.skip_reason = f"SSH预检失败({pr.ssh_status}): {pr.ssh_error}"
 
     return plans

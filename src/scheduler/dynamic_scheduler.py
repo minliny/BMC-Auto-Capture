@@ -183,6 +183,9 @@ class DynamicScheduler:
                 plan.status = "RUNNING"
                 plan.started_at = time.time()
 
+                logger.info("START [%s] %s / %s", plan.protocol, plan.device.device_name, plan.task.task_name)
+                print(f"  START [{plan.protocol}] {plan.device.device_name}  {plan.task.task_name}")
+
                 if self._event_bus:
                     self._event_bus.emit("plan_started", plan=plan)
 
