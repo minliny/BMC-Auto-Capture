@@ -148,13 +148,29 @@ def main():
                 break
 
     if excel_path is None:
-        print("ERROR: No Excel config specified.", file=sys.stderr)
-        print("Usage: bmc-engine --app-dir <app_dir> --excel <path>", file=sys.stderr)
-        print("Or place task_template.xlsx in app/examples/ or current directory", file=sys.stderr)
-        sys.exit(1)
+        print("")
+        print("=" * 60)
+        print("  No Excel config file found automatically.")
+        print("")
+        print("  The Excel file contains TWO sheets:")
+        print("    Sheet 1 '设备信息' — device IPs, usernames, passwords")
+        print("    Sheet 2 '任务列表' — task names, groups, enabled flags")
+        print("")
+        print("  A template is included at:")
+        print("    app/examples/task_template.xlsx")
+        print("=" * 60)
+        print("")
+        user_input = input("  Enter path to Excel file (or press Enter to exit): ").strip()
+        if user_input:
+            excel_path = Path(user_input)
+        else:
+            print("No file specified. Exiting.")
+            sys.exit(1)
 
-    if not excel_path.exists():
+    if excel_path is None or not excel_path.exists():
         print(f"ERROR: Excel file not found: {excel_path}", file=sys.stderr)
+        print("Please check the path and try again.", file=sys.stderr)
+        print("Usage: bmc-engine --excel <path_to_xlsx>", file=sys.stderr)
         sys.exit(1)
 
     # Preflight-only mode
