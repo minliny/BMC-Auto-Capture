@@ -44,18 +44,14 @@ def overlay_device_info(
     TITLE_BG = (53, 54, 58)       # Windows title bar
     TAB_BG = (60, 64, 67)         # Tab strip background
     TAB_ACTIVE = (50, 52, 55)     # Active tab
-    NAV_BG = (53, 54, 58)         # Nav bar background
-    URL_BG = (60, 64, 67)         # URL bar
     TEXT_PRIMARY = (232, 234, 237)
     TEXT_SECONDARY = (154, 160, 166)
-    BORDER_COLOR = (40, 40, 42)
 
     # Layout heights
     title_bar_h = 30
     tab_bar_h = 36
-    nav_bar_h = 42
     device_bar_h = 24
-    chrome_total_h = title_bar_h + tab_bar_h + nav_bar_h + device_bar_h
+    chrome_total_h = title_bar_h + tab_bar_h + device_bar_h
 
     canvas = Image.new("RGBA", (width, height + chrome_total_h), TITLE_BG)
     draw = ImageDraw.Draw(canvas)
@@ -99,33 +95,8 @@ def overlay_device_info(
     draw.rectangle([(ntx, y_tab + 6), (ntx + 24, y_tab + tab_bar_h - 6)], fill=TAB_BG)
     draw.text((ntx + 7, y_tab + 8), "+", fill=TEXT_SECONDARY, font=font_bold)
 
-    # ====== Navigation bar ======
-    y_nav = y_tab + tab_bar_h
-    draw.rectangle([(0, y_nav), (width, y_nav + nav_bar_h)], fill=NAV_BG)
-
-    # Navigation buttons (text-based symbols)
-    for symbol, nx in [("<", 12), (">", 42), ("↻", 72)]:
-        draw.text((nx + 4, y_nav + 13), symbol, fill=TEXT_SECONDARY, font=font_bold)
-
-    # URL bar (rounded rectangle look)
-    url_left = 100
-    url_right = width - 60
-    url_h = 28
-    url_y = y_nav + 7
-    draw.rectangle([(url_left, url_y), (url_right, url_y + url_h)], fill=URL_BG)
-    # Lock text
-    draw.text((url_left + 10, y_nav + 12), "SSL", fill=(100, 180, 100), font=font_sm)
-    # URL text
-    url_display = page_url[:100] if page_url else "about:blank"
-    draw.text((url_left + 40, y_nav + 13), url_display, fill=TEXT_PRIMARY, font=font_sm)
-    # Star (bookmark)
-    draw.text((url_right - 28, y_nav + 12), "*", fill=TEXT_SECONDARY, font=font_bold)
-
-    # Chrome menu
-    draw.text((width - 44, y_nav + 13), "...", fill=TEXT_SECONDARY, font=font_bold)
-
     # ====== Device info bar ======
-    y_dev = y_nav + nav_bar_h
+    y_dev = y_tab + tab_bar_h
     draw.rectangle([(0, y_dev), (width, y_dev + device_bar_h)], fill=(40, 42, 45))
     info = f"Device: {device_name}  |  IP: {device_ip}  |  Task: {task_name}"
     draw.text((12, y_dev + 4), info, fill=TEXT_SECONDARY, font=font_sm)
