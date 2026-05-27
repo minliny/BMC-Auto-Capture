@@ -134,34 +134,59 @@ def apply_preflight(
     lookup: dict[str, PreflightResult] = {r.device_name: r for r in report.results}
     plan_device_names: set[str] = {p.device.device_name for p in plans}
 
+    # Diagnostic: count devices with preflight failures that DO have plans
+    bmc_fail_devices_with_plans = 0
+    ssh_fail_devices_with_plans = 0
+    bmc_skipped = 0
+    ssh_skipped = 0
+
     # Warn about devices in preflight but not in any plan
-    for name in lookup:
+    for name, pr in lookup.items():
         if name not in plan_device_names:
-            logger.debug("Preflight result for '%s' has no matching plans (filtered by group/tags)", name)
+            if pr.bmc_status != PreflightStatus.OK or pr.ssh_status != PreflightStatus.OK:
+                logger.info(
+                    "Preflight: device '%s' has failures (BMC=%s SSH=%s) but no matching plans (group/tag filter)",
+                    name, pr.bmc_status, pr.ssh_status,
+                )
 
     for plan in plans:
         pr = lookup.get(plan.device.device_name)
         if not pr:
             logger.warning(
-                "Device '%s' in plan but not in preflight report — plan not skipped",
+                "Preflight: device '%s' in plan but not in preflight report — plan not skipped",
                 plan.device.device_name,
             )
             continue
 
         if plan.protocol == "BMC":
+            if pr.bmc_status != PreflightStatus.OK:
+                bmc_fail_devices_with_plans += 1
             if pr.bmc_status == PreflightStatus.PORT_BLOCKED:
                 plan.status = "EXEC_SKIPPED_PORT_BLOCKED"
                 plan.skip_reason = f"BMC端口被安全策略拦截: {pr.bmc_error}"
+                bmc_skipped += 1
             elif pr.bmc_status != PreflightStatus.OK:
                 plan.status = "EXEC_SKIPPED_PRECHECK_FAILED"
                 plan.skip_reason = f"BMC预检失败({pr.bmc_status}): {pr.bmc_error}"
+                bmc_skipped += 1
 
         elif plan.protocol == "SSH":
+            if pr.ssh_status != PreflightStatus.OK:
+                ssh_fail_devices_with_plans += 1
             if pr.ssh_status == PreflightStatus.PORT_BLOCKED:
                 plan.status = "EXEC_SKIPPED_PORT_BLOCKED"
                 plan.skip_reason = f"SSH端口被安全策略拦截: {pr.ssh_error}"
+                ssh_skipped += 1
             elif pr.ssh_status != PreflightStatus.OK:
                 plan.status = "EXEC_SKIPPED_PRECHECK_FAILED"
                 plan.skip_reason = f"SSH预检失败({pr.ssh_status}): {pr.ssh_error}"
+                ssh_skipped += 1
+
+    logger.info(
+        "Preflight apply: BMC plans skipped=%d (fail devices with plans=%d), "
+        "SSH plans skipped=%d (fail devices with plans=%d)",
+        bmc_skipped, bmc_fail_devices_with_plans,
+        ssh_skipped, ssh_fail_devices_with_plans,
+    )
 
     return plans

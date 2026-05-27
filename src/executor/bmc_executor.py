@@ -136,33 +136,37 @@ class BMCExecutor(AbstractExecutor):
 
         page = None
         page_acquired = False
+        current_stage = "init"
 
-        # Hard task-level timeout: prevents a single BMC task from blocking
-        # a worker forever. 2× task.timeout_seconds is the absolute ceiling.
+        # Hard task-level timeout: 2× task.timeout_seconds is the absolute ceiling.
         task_timeout = max(task.timeout_seconds, 30) * 2
 
         async def _run_with_stages():
-            nonlocal page, page_acquired
+            nonlocal page, page_acquired, current_stage
 
             # --- Stage 1: acquire browser context ---
-            logger.info("[%s] Stage 1/6: acquire_context", dname)
+            current_stage = "1/6 acquire_context"
+            logger.info("[%s] Stage %s", dname, current_stage)
             context = await asyncio.wait_for(self._bm.get_context(), timeout=30)
             logger.info("[%s] Stage 1/6: context ready", dname)
 
             # --- Stage 2: acquire page ---
-            logger.info("[%s] Stage 2/6: acquire_page", dname)
+            current_stage = "2/6 acquire_page"
+            logger.info("[%s] Stage %s", dname, current_stage)
             page = await asyncio.wait_for(context.new_page(), timeout=15)
             page_acquired = True
             page.set_default_timeout(self._page_timeout * 1000)
             logger.info("[%s] Stage 2/6: page ready", dname)
 
             # --- Stage 3: resolve URL ---
-            logger.info("[%s] Stage 3/6: resolve_url", dname)
+            current_stage = "3/6 resolve_url"
+            logger.info("[%s] Stage %s", dname, current_stage)
             bmc_url = self._resolve_url(task.command_or_url, device.bmc_ip)
             logger.info("[%s] Stage 3/6: url=%s", dname, bmc_url)
 
             # --- Stage 4: login ---
-            logger.info("[%s] Stage 4/6: login", dname)
+            current_stage = "4/6 login"
+            logger.info("[%s] Stage %s", dname, current_stage)
             login_ok = await asyncio.wait_for(
                 self._bmc_login(page, bmc_url, device), timeout=self._connect_timeout + 30,
             )
@@ -175,42 +179,47 @@ class BMCExecutor(AbstractExecutor):
             logger.info("[%s] Stage 4/6: login ok", dname)
 
             # --- Stage 5: dismiss popups + navigate + capture ---
-            logger.info("[%s] Stage 5/6: dismiss_popups", dname)
+            current_stage = "5/6 navigate_capture"
+            logger.info("[%s] Stage %s", dname, current_stage)
             await self._dismiss_popups(page)
 
             if task.execution_mode == "BMC_URL":
-                logger.info("[%s] Stage 5/6: navigate BMC_URL", dname)
                 await self._run_bmc_url(page, bmc_url, task, device.bmc_ip, output_dir, result)
             elif task.execution_mode == "BMC_ACTIONS":
-                logger.info("[%s] Stage 5/6: navigate BMC_ACTIONS", dname)
                 await self._run_bmc_actions(page, task, device.bmc_ip, output_dir, result)
             logger.info("[%s] Stage 5/6: capture done", dname)
 
             # --- Stage 6: success ---
-            logger.info("[%s] Stage 6/6: done", dname)
+            current_stage = "6/6 done"
+            logger.info("[%s] Stage %s", dname, current_stage)
             result.execution_status = "EXEC_SUCCESS"
 
+        _t0 = time.time()
         try:
             await asyncio.wait_for(_run_with_stages(), timeout=task_timeout)
 
         except asyncio.TimeoutError:
-            stage = "acquire_context"
-            if page_acquired:
-                stage = "login_or_navigate"
+            elapsed = time.time() - _t0
             result.execution_status = "EXEC_TIMEOUT"
             result.execution_failure_reason = (
-                f"BMC任务整体超时 ({task_timeout}s)，卡在阶段: {stage}. "
+                f"BMC任务超时: 卡在 {current_stage}, "
+                f"已等待 {elapsed:.0f}s (硬上限 {task_timeout}s). "
                 f"可能原因: browser启动失败 / page获取阻塞 / BMC页面无响应."
             )
-            logger.error("[%s] BMC task timeout at stage: %s", dname, stage)
+            logger.error("[%s] BMC timeout at stage %s (%.0fs elapsed)", dname, current_stage, elapsed)
 
         except Exception as e:
             result.execution_status = "EXEC_ERROR"
             result.execution_failure_reason = str(e)
-            logger.error("[%s] BMC error: %s", dname, e)
+            logger.error("[%s] BMC error at stage %s: %s", dname, current_stage, e)
 
         finally:
             if page_acquired:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+            elif page is not None:
                 try:
                     await page.close()
                 except Exception:
