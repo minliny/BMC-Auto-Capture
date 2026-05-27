@@ -32,17 +32,20 @@ def _exe_dir() -> Path:
 
 
 def _setup_browser_path():
-    """Set PLAYWRIGHT_BROWSERS_PATH. Browsers are next to the exe (in runtime/)."""
-    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
-        return
+    """Set PLAYWRIGHT_BROWSERS_PATH.
 
-    # Frozen: browsers are next to exe (runtime/playwright_browsers/)
+    Priority:
+    1. Bundled browsers (runtime/playwright_browsers/) — always preferred
+    2. System cache (ms-playwright)
+    3. Existing env var PLAYWRIGHT_BROWSERS_PATH — only if it actually exists
+    """
+    # 1. Bundled browsers next to exe — always wins
     bundled = _exe_dir() / "playwright_browsers"
     if bundled.is_dir():
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
         return
 
-    # Fallback: system cache
+    # 2. System cache
     for cache in [
         Path.home() / "AppData" / "Local" / "ms-playwright",
         Path.home() / "Library" / "Caches" / "ms-playwright",
@@ -51,6 +54,18 @@ def _setup_browser_path():
         if cache.is_dir():
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(cache)
             return
+
+    # 3. Existing env var — only if the directory actually exists
+    env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")
+    if env_path and Path(env_path).is_dir():
+        return
+
+    # 4. Warn if env var set but path doesn't exist
+    if env_path:
+        import logging
+        logging.getLogger("bmc_auto_capture").warning(
+            "PLAYWRIGHT_BROWSERS_PATH=%s does not exist — browser launch will fail", env_path
+        )
 
 
 def main():
