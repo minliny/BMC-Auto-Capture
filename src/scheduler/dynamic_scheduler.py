@@ -85,6 +85,7 @@ class DynamicScheduler:
         last_progress_at = time.time()
         last_heartbeat_at = time.time()
         completed_count = 0
+        self._dispatched_count = 0
 
         try:
             while not self._stop_event.is_set() and self._has_remaining_work():
@@ -114,12 +115,12 @@ class DynamicScheduler:
                     locked_bmc = len(self._bmc_pool._running_devices)
                     locked_ssh = len(self._ssh_pool._running_devices)
                     logger.info(
-                        "HEARTBEAT: completed=%d pending=%d running(bmc=%d ssh=%d) ready=%d devices_locked(bmc=%d ssh=%d)",
-                        completed_count, pending, running_bmc, running_ssh, ready, locked_bmc, locked_ssh,
+                        "HEARTBEAT: dispatched=%d completed=%d pending=%d running(bmc=%d ssh=%d) ready=%d",
+                        self._dispatched_count, completed_count, pending, running_bmc, running_ssh, ready,
                     )
-                    print(f"  -- heartbeat: done={completed_count} pending={pending} "
-                          f"running(bmc={running_bmc} ssh={running_ssh}) ready={ready} "
-                          f"locked(bmc={locked_bmc} ssh={locked_ssh}) --")
+                    print(f"  -- heartbeat: dispatched={self._dispatched_count} done={completed_count} "
+                          f"pending={pending} running(bmc={running_bmc} ssh={running_ssh}) "
+                          f"ready={ready} --", flush=True)
 
                 # Stall detection: no progress for 60s
                 if now - last_progress_at >= 60:
@@ -197,9 +198,13 @@ class DynamicScheduler:
             self._ready_devices.append(did)
 
     def _has_remaining_work(self) -> bool:
+        # Check for tasks still in device queues
         for q in self._device_queues.values():
             if q:
                 return True
+        # Check for tasks dispatched but not yet completed
+        if self._bmc_pool._active_futures or self._ssh_pool._active_futures:
+            return True
         return False
 
     def _adjust_pools(self, cpu: float, mem: float):
@@ -242,6 +247,7 @@ class DynamicScheduler:
 
                 plan.status = "RUNNING"
                 plan.started_at = time.time()
+                self._dispatched_count += 1
 
                 logger.info("START [%s] %s / %s", plan.protocol, plan.device.device_name, plan.task.task_name)
                 print(f"  START [{plan.protocol}] {plan.device.device_name}  {plan.task.task_name}")
@@ -325,14 +331,28 @@ class DynamicScheduler:
         """Wait for running tasks to finish. Returns True if all drained, False if timed out."""
         logger.info("Draining running tasks...")
         drain_deadline = time.time() + 300  # 5 min absolute max
+        last_log = time.time()
         while self._bmc_pool._active_futures or self._ssh_pool._active_futures:
-            if time.time() > drain_deadline:
+            now = time.time()
+            if now > drain_deadline:
                 logger.warning(
                     "Drain timeout after 5min — %d bmc futures + %d ssh futures still active",
                     len(self._bmc_pool._active_futures),
                     len(self._ssh_pool._active_futures),
                 )
                 return False
+            if now - last_log >= 30:
+                pending = sum(len(q) for q in self._device_queues.values())
+                logger.info(
+                    "DRAIN: waiting on %d bmc + %d ssh futures (pending=%d completed=%d)",
+                    len(self._bmc_pool._active_futures),
+                    len(self._ssh_pool._active_futures),
+                    pending, len(self._results),
+                )
+                print(f"  -- drain: running(bmc={len(self._bmc_pool._active_futures)} "
+                      f"ssh={len(self._ssh_pool._active_futures)}) "
+                      f"pending={pending} done={len(self._results)} --", flush=True)
+                last_log = now
             time.sleep(1)
         logger.info("Drain complete")
         return True
