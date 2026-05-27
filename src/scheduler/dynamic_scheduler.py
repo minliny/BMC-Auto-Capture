@@ -228,7 +228,10 @@ class DynamicScheduler:
             self._event_bus.emit("plan_completed", plan=plan, result=result)
 
         status_icon = "OK" if result.execution_status == "EXEC_SUCCESS" else "FAIL"
-        print(f"[{len(self._results):>5}] {status_icon:>4} {result.device_name[:20]:<20} {result.task_name[:30]}")
+        reason = ""
+        if status_icon == "FAIL" and result.execution_failure_reason:
+            reason = f"  [{result.execution_failure_reason[:60]}]"
+        print(f"[{len(self._results):>5}] {status_icon:>4} {result.device_name}  {result.task_name}{reason}")
 
     def _drain(self):
         """Wait for running tasks to finish."""

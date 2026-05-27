@@ -76,18 +76,36 @@ def _setup_browser_path():
         del os.environ["PLAYWRIGHT_BROWSERS_PATH"]
 
 
-def main():
-    _setup_browser_path()
-
-    # Force UTF-8 output (fixes UnicodeEncodeError on Windows CMD)
+def _setup_encoding():
+    """Force UTF-8 I/O. Works in CMD (chcp 65001), PowerShell 5+, and frozen mode."""
+    # Try Python 3.7+ reconfigure (best approach)
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding='utf-8')
+            stream.reconfigure(encoding='utf-8', errors='replace')
         except Exception:
             pass
 
+    # Fallback: wrap with UTF-8 writer for older Python / edge cases
+    if sys.stdout.encoding and sys.stdout.encoding.upper() not in ('UTF-8', 'UTF8'):
+        try:
+            sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf-8',
+                              errors='replace', buffering=1, closefd=False)
+        except Exception:
+            pass
+
+    # Set default file encoding for open() and logging
+    try:
+        sys.setdefaultencoding  # type: ignore — not available in Python 3
+    except AttributeError:
+        pass
+
+
+def main():
+    _setup_browser_path()
+    _setup_encoding()
+
     parser = argparse.ArgumentParser(
-        description="BMC Auto-Capture v0.2.1 - Automated Test Evidence Collection",
+        description="BMC Auto-Capture v0.2.1 — BMC/SSH 自动化测试证据采集平台",
     )
     parser.add_argument("--excel", "-e", default=None, help="Path to Excel V2 config (.xlsx)")
     parser.add_argument("--config", "-c", default=None, help="Path to YAML config")

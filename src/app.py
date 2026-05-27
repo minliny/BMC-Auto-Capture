@@ -238,7 +238,10 @@ class App:
                 self.event_bus.emit("plan_completed", plan=plan, result=result, index=i, total=total)
 
                 status_icon = "OK" if result.execution_status == "EXEC_SUCCESS" else "FAIL"
-                print(f"[{i+1:>5}/{total}] {status_icon:>4} {plan.device.device_name[:20]:<20} {plan.task.task_name[:30]}")
+                reason = ""
+                if status_icon == "FAIL" and result.execution_failure_reason:
+                    reason = f"  [{result.execution_failure_reason[:60]}]"
+                print(f"[{i+1:>5}/{total}] {status_icon:>4} {plan.device.device_name}  {plan.task.task_name}{reason}")
 
             except Exception as e:
                 logger.error("Plan %s crashed: %s", plan.plan_id, e)

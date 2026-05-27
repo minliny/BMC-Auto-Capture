@@ -1,16 +1,12 @@
-@echo off
-REM Force UTF-8 codepage (must be before any non-ASCII output)
-chcp 65001 >nul 2>nul
-if errorlevel 1 (
-    echo [WARNING] UTF-8 codepage not available, Chinese may display incorrectly
-    echo [WARNING] Recommend using Windows Terminal
-)
+﻿@echo off
+REM UTF-8 with BOM — DO NOT save as ANSI
+REM Works in CMD and PowerShell 5+
 
+chcp 65001 >nul 2>nul
 setlocal
 title BMC Auto-Capture v0.2.1
 
 set "ROOT=%~dp0"
-REM Remove trailing backslash for clean path joining
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "RUNTIME=%ROOT%\runtime"
 set "APP=%ROOT%\app"
@@ -19,43 +15,43 @@ set "EXCEL=%APP%\examples\task_template.xlsx"
 
 :check_files
 if not exist "%ENGINE%" (
-    echo [ERROR] Engine not found: %ENGINE%
-    echo Please ensure runtime\bmc-engine.exe exists and re-extract the runtime package.
+    echo [错误] 找不到引擎: %ENGINE%
+    echo 请确保 runtime\bmc-engine.exe 存在，重新解压 runtime 包。
     pause
     exit /b 1
 )
 
 if not exist "%APP%\src" (
-    echo [ERROR] App directory incomplete: %APP%
-    echo Please re-extract bmc-app-*.zip to this folder.
+    echo [错误] app 目录不完整: %APP%
+    echo 请重新解压 bmc-app-*.zip 到当前目录。
     pause
     exit /b 1
 )
 
 if not exist "%EXCEL%" (
-    echo [WARNING] Default Excel not found: %EXCEL%
-    echo You can specify one via menu option [4].
+    echo [提示] 默认 Excel 不存在: %EXCEL%
+    echo 可通过菜单 [4] 指定文件路径。
     timeout /t 3 >nul
 )
 
 :menu
 cls
 echo ============================================================
-echo    BMC/SSH Automated Test Evidence Capture v0.2.1
+echo    BMC/SSH 自动化测试证据采集平台 v0.2.1
 echo ============================================================
 echo.
-echo    Config: %EXCEL%
-echo    Engine: %ENGINE%
+echo    配置文件: %EXCEL%
+echo    引擎位置: %ENGINE%
 echo.
-echo    [1] Run (sequential mode)
-echo    [2] Run (concurrent mode)
-echo    [3] Preflight only (no execution)
-echo    [4] Specify Excel file
-echo    [5] View latest results
-echo    [6] Exit
+echo    [1] 开始执行（顺序模式，稳定）
+echo    [2] 开始执行（并发模式，高效）
+echo    [3] 仅网络预检（不执行任务）
+echo    [4] 指定 Excel 文件
+echo    [5] 查看最近结果
+echo    [6] 退出
 echo.
 
-set /p CHOICE=   Select [1-6]:
+set /p CHOICE=   请选择 [1-6]:
 
 if "%CHOICE%"=="1" goto run_seq
 if "%CHOICE%"=="2" goto run_full
@@ -68,77 +64,82 @@ goto menu
 :run_seq
 cls
 echo ============================================================
-echo    Sequential Execution Mode
+echo    顺序执行模式
 echo ============================================================
 echo.
 if not exist "%EXCEL%" (
-    echo [ERROR] Excel not found: %EXCEL%
+    echo [错误] Excel 文件不存在: %EXCEL%
     pause
     goto menu
 )
-echo    Running... DO NOT close this window.
-echo    Results will be saved to output\ folder.
+echo    执行中，请勿关闭此窗口。
+echo    结果将保存到 output\ 目录。
 echo.
 "%ENGINE%" --app-dir "%APP%" --excel "%EXCEL%" --mode sequential
 echo.
-echo    Done. Press any key to return to menu...
+echo    执行完成。按任意键返回菜单...
 pause >nul
 goto menu
 
 :run_full
 cls
 echo ============================================================
-echo    Concurrent Execution Mode
+echo    动态并发执行模式
 echo ============================================================
 echo.
 if not exist "%EXCEL%" (
-    echo [ERROR] Excel not found: %EXCEL%
+    echo [错误] Excel 文件不存在: %EXCEL%
     pause
     goto menu
 )
-echo    Running... DO NOT close this window.
+echo    执行中，请勿关闭此窗口。
 echo.
 "%ENGINE%" --app-dir "%APP%" --excel "%EXCEL%" --mode full
 echo.
-echo    Done. Press any key to return to menu...
+echo    执行完成。按任意键返回菜单...
 pause >nul
 goto menu
 
 :preflight
 cls
 echo ============================================================
-echo    Network Connectivity Preflight
+echo    网络连通性预检
 echo ============================================================
 echo.
 if not exist "%EXCEL%" (
-    echo [ERROR] Excel not found: %EXCEL%
+    echo [错误] Excel 文件不存在: %EXCEL%
     pause
     goto menu
 )
-echo    Testing device connectivity (TCP 443/22)...
+echo    正在检测设备网络连通性 (TCP 443/22)...
 echo.
 "%ENGINE%" --app-dir "%APP%" --excel "%EXCEL%" --preflight-only
 echo.
-echo    Preflight done. Press any key to return to menu...
+echo    预检完成。按任意键返回菜单...
 pause >nul
 goto menu
 
 :set_excel
 cls
 echo ============================================================
-echo    Specify Excel Configuration
+echo    指定 Excel 配置文件
 echo ============================================================
 echo.
-echo    Current: %EXCEL%
+echo    当前文件: %EXCEL%
 echo.
-set /p NEW_EXCEL="    Enter Excel path: "
+echo    Excel 需包含两个 Sheet:
+echo      「设备信息」— 设备 IP、用户名、密码
+echo      「任务列表」— 任务名称、分组、启用状态
+echo    模板位置: app\examples\task_template.xlsx
+echo.
+set /p NEW_EXCEL="    请输入 Excel 文件路径（支持拖拽）: "
 if not "%NEW_EXCEL%"=="" set "EXCEL=%NEW_EXCEL%"
 goto menu
 
 :view_result
 cls
 echo ============================================================
-echo    Latest Results
+echo    最近执行结果
 echo ============================================================
 echo.
 if exist "output\result.csv" (
@@ -146,10 +147,10 @@ if exist "output\result.csv" (
     echo    ----------------------------------------
     type "output\result.csv"
 ) else (
-    echo    result.csv not found. Please run a task first.
+    echo    未找到 result.csv，请先执行任务。
 )
 echo.
-echo    Press any key to return to menu...
+echo    按任意键返回菜单...
 pause >nul
 goto menu
 
