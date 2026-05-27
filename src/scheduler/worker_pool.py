@@ -67,7 +67,13 @@ class WorkerPool:
         with self._lock:
             self._running_devices.add(device_id)
 
-        future = self._executor.submit(fn)
+        try:
+            future = self._executor.submit(fn)
+        except Exception:
+            with self._lock:
+                self._running_devices.discard(device_id)
+            raise
+
         with self._lock:
             self._active_futures[future] = device_id
 

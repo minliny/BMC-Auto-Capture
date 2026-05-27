@@ -178,6 +178,7 @@ class App:
 
     def stop(self):
         self._stop_event.set()
+        self._pause_event.set()  # Unblock pause so stop can take effect
 
     def pause(self):
         self._pause_event.clear()

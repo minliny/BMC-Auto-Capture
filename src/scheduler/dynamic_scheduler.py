@@ -111,15 +111,15 @@ class DynamicScheduler:
                     running_bmc = len(self._bmc_pool._active_futures)
                     running_ssh = len(self._ssh_pool._active_futures)
                     ready = len(self._ready_devices)
-                    locked = sum(1 for did in self._ready_devices
-                                 if self._bmc_pool.device_has_running_task(did)
-                                 or self._ssh_pool.device_has_running_task(did))
+                    locked_bmc = len(self._bmc_pool._running_devices)
+                    locked_ssh = len(self._ssh_pool._running_devices)
                     logger.info(
-                        "HEARTBEAT: completed=%d pending=%d running(bmc=%d ssh=%d) ready=%d locked=%d",
-                        completed_count, pending, running_bmc, running_ssh, ready, locked,
+                        "HEARTBEAT: completed=%d pending=%d running(bmc=%d ssh=%d) ready=%d devices_locked(bmc=%d ssh=%d)",
+                        completed_count, pending, running_bmc, running_ssh, ready, locked_bmc, locked_ssh,
                     )
                     print(f"  -- heartbeat: done={completed_count} pending={pending} "
-                          f"running(bmc={running_bmc} ssh={running_ssh}) ready={ready} --")
+                          f"running(bmc={running_bmc} ssh={running_ssh}) ready={ready} "
+                          f"locked(bmc={locked_bmc} ssh={locked_ssh}) --")
 
                 # Stall detection: no progress for 60s
                 if now - last_progress_at >= 60:
@@ -167,6 +167,7 @@ class DynamicScheduler:
 
     def stop(self):
         self._stop_event.set()
+        self._pause_event.set()  # Unblock pause so stop can take effect
 
     def pause(self):
         self._pause_event.clear()
@@ -226,9 +227,16 @@ class DynamicScheduler:
                     self._ready_devices.append(device_id)  # Back of line
                     continue
 
-                plan = self._device_queues[device_id][0]  # peek
+                q = self._device_queues.get(device_id)
+                if not q:
+                    continue  # Queue drained by another thread, skip
+
+                # Pop task NOW (main thread) to prevent race with worker-thread callback
+                plan = q.popleft()
 
                 if plan.protocol != protocol:
+                    # Wrong pool — push back and re-add device
+                    q.appendleft(plan)
                     self._ready_devices.append(device_id)
                     continue
 
@@ -241,11 +249,19 @@ class DynamicScheduler:
                 if self._event_bus:
                     self._event_bus.emit("plan_started", plan=plan)
 
-                pool.dispatch(
-                    fn=lambda p=plan: self._execute_plan(p),
-                    device_id=device_id,
-                    on_complete=lambda result, p=plan, did=device_id: self._on_plan_done(p, result, did),
-                )
+                try:
+                    pool.dispatch(
+                        fn=lambda p=plan: self._execute_plan(p),
+                        device_id=device_id,
+                        on_complete=lambda result, p=plan, did=device_id: self._on_plan_done(p, result, did),
+                    )
+                except Exception:
+                    # Dispatch failed → push task back to queue front
+                    q.appendleft(plan)
+                    plan.status = "PENDING"
+                    self._ready_devices.append(device_id)
+                    logger.error("Dispatch failed for %s/%s, task re-queued",
+                                 plan.device.device_name, plan.task.task_name)
 
     def _execute_plan(self, plan: TaskPlan) -> ExecutionResult:
         try:
@@ -279,18 +295,20 @@ class DynamicScheduler:
             )
 
     def _on_plan_done(self, plan: TaskPlan, result: ExecutionResult, device_id: str):
+        """Called from worker thread when a task completes.
+        Task was already popped from device queue in _dispatch (main thread).
+        Just record result and re-add device if it has more pending tasks.
+        """
         plan.completed_at = time.time()
         plan.status = "SUCCESS" if result.execution_status == "EXEC_SUCCESS" else result.execution_status
 
         with self._results_lock:
             self._results.append(result)
 
-        # Pop completed task from device queue
+        # Re-add device to ready queue if it still has pending tasks
         q = self._device_queues.get(device_id)
         if q:
-            q.popleft()
-            if q:
-                self._ready_devices.append(device_id)
+            self._ready_devices.append(device_id)
 
         if self._event_bus:
             self._event_bus.emit("plan_completed", plan=plan, result=result)

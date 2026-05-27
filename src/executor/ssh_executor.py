@@ -75,6 +75,7 @@ class SSHExecutor(AbstractExecutor):
         # Build command list (split by line or semicolon)
         commands = self._parse_commands(task.command_or_url)
 
+        client = None
         try:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -190,8 +191,6 @@ class SSHExecutor(AbstractExecutor):
 
                 step_index += 1
 
-            client.close()
-
             # Write output
             full_output = "\n\n".join(all_output)
             txt_path = write_text_file(output_dir, "output.txt", full_output)
@@ -215,6 +214,12 @@ class SSHExecutor(AbstractExecutor):
             result.execution_status = "EXEC_ERROR"
             result.execution_failure_reason = str(e)
             logger.error(f"[{device.device_name}] Unexpected error: {e}")
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
 
         result.output_dir = output_dir
         result.ended_at = time.time()
