@@ -98,13 +98,18 @@ class BMCExecutor(AbstractExecutor):
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
+        own_loop = self._loop is None
         loop = self._loop or asyncio.new_event_loop()
         self._loop = loop
         try:
             return loop.run_until_complete(self._execute_async(plan, output_root))
         finally:
-            if self._loop is None:
-                loop.close()
+            if own_loop:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+                self._loop = None
 
     async def _execute_async(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         device = plan.device
@@ -294,6 +299,28 @@ class BMCExecutor(AbstractExecutor):
                 await page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
                 pass
+
+            # Verify login succeeded: login form should be gone
+            still_login = await self._find_visible(page, LOGIN_USERNAME_SELECTORS)
+            if still_login:
+                # Check for error messages
+                error_selectors = [
+                    '.login-error', '.alert-danger', '.error',
+                    'text=密码错误', 'text=用户名不存在',
+                    'text=Login failed', 'text=Invalid',
+                ]
+                error_text = ""
+                for es in error_selectors:
+                    try:
+                        el = await page.query_selector(es)
+                        if el:
+                            error_text = await el.inner_text()
+                            break
+                    except Exception:
+                        pass
+                logger.error("[%s] Login failed: still on login page. Error: %s",
+                             device.device_name, error_text or "unknown")
+                return False
 
         return True
 

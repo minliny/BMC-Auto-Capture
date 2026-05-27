@@ -95,9 +95,11 @@ def check_device(device: Device, timeout: float = 5.0) -> PreflightResult:
 
 def check_all(devices: list[Device], timeout: float = 5.0) -> PreflightReport:
     report = PreflightReport(total=len(devices))
-    for device in devices:
-        if not device.enabled:
-            continue
+    enabled = [d for d in devices if d.enabled]
+    total = len(enabled)
+    for i, device in enumerate(enabled):
+        if i % 10 == 0 or i == total - 1:
+            logger.info("Preflight progress: %d/%d devices probed", i + 1, total)
         r = check_device(device, timeout)
         report.results.append(r)
         if r.bmc_status != PreflightStatus.OK:

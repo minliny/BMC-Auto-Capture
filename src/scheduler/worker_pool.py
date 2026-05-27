@@ -82,11 +82,11 @@ class WorkerPool:
         else:
             future.add_done_callback(lambda f: self._on_done(f, device_id))
 
-    def shutdown(self):
+    def shutdown(self, wait: bool = True):
         if self._executor:
-            self._executor.shutdown(wait=True)
+            self._executor.shutdown(wait=wait)
             self._executor = None
-            logger.info("[%s] Pool shut down", self.name)
+            logger.info("[%s] Pool shut down (wait=%s)", self.name, wait)
 
     def _on_done(self, future: Future, device_id: str, callback: Callable | None = None):
         with self._lock:

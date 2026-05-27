@@ -151,9 +151,9 @@ class DynamicScheduler:
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt — stopping scheduler")
         finally:
-            self._drain()
-            self._bmc_pool.shutdown()
-            self._ssh_pool.shutdown()
+            drained = self._drain()
+            self._bmc_pool.shutdown(wait=drained)
+            self._ssh_pool.shutdown(wait=drained)
             self._monitor.stop()
 
             import asyncio
@@ -281,7 +281,9 @@ class DynamicScheduler:
                 )
 
             return exec_.execute(plan, self._config.output_root)
-        except Exception as e:
+        except BaseException as e:
+            # Catch everything including KeyboardInterrupt/SystemExit
+            # so worker threads never crash silently
             logger.error("_execute_plan crashed for %s/%s: %s",
                          plan.device.device_name, plan.task.task_name, e)
             return ExecutionResult(
@@ -319,8 +321,8 @@ class DynamicScheduler:
             reason = f"  [{result.execution_failure_reason[:60]}]"
         print(f"[{len(self._results):>5}] {status_icon:>4} {result.device_name}  {result.task_name}{reason}")
 
-    def _drain(self):
-        """Wait for running tasks to finish — with hard timeout so process always exits."""
+    def _drain(self) -> bool:
+        """Wait for running tasks to finish. Returns True if all drained, False if timed out."""
         logger.info("Draining running tasks...")
         drain_deadline = time.time() + 300  # 5 min absolute max
         while self._bmc_pool._active_futures or self._ssh_pool._active_futures:
@@ -330,6 +332,7 @@ class DynamicScheduler:
                     len(self._bmc_pool._active_futures),
                     len(self._ssh_pool._active_futures),
                 )
-                break
+                return False
             time.sleep(1)
         logger.info("Drain complete")
+        return True
