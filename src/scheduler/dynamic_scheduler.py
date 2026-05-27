@@ -225,16 +225,24 @@ class DynamicScheduler:
 
     def _dispatch(self):
         for pool, protocol in [(self._bmc_pool, "BMC"), (self._ssh_pool, "SSH")]:
+            skipped = 0
+            ready_snapshot = len(self._ready_devices)
             while pool.has_idle() and self._ready_devices:
+                # Guard: if we've cycled through all devices without a match,
+                # no dispatchable task exists for this pool right now.
+                if skipped >= ready_snapshot:
+                    break
+
                 device_id = self._ready_devices.popleft()
 
                 if pool.device_has_running_task(device_id):
                     self._ready_devices.append(device_id)  # Back of line
+                    skipped += 1
                     continue
 
                 q = self._device_queues.get(device_id)
                 if not q:
-                    continue  # Queue drained by another thread, skip
+                    continue  # Queue drained, device done
 
                 # Pop task NOW (main thread) to prevent race with worker-thread callback
                 plan = q.popleft()
@@ -243,8 +251,11 @@ class DynamicScheduler:
                     # Wrong pool — push back and re-add device
                     q.appendleft(plan)
                     self._ready_devices.append(device_id)
+                    skipped += 1
                     continue
 
+                # Match! Dispatch and reset skip counter
+                skipped = 0
                 plan.status = "RUNNING"
                 plan.started_at = time.time()
                 self._dispatched_count += 1

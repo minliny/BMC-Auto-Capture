@@ -9,6 +9,7 @@ when workers naturally complete.
 
 import logging
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Any
 
