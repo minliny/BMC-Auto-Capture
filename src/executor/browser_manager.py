@@ -83,7 +83,9 @@ class BrowserManager:
 
         for tb in tbs:
             try:
-                await tb.close()
+                await asyncio.wait_for(tb.close(), timeout=10)
+            except asyncio.TimeoutError:
+                logger.warning("Browser close timed out after 10s, dropping refs")
             except Exception:
                 pass
 
@@ -155,10 +157,17 @@ class _ThreadLocalBrowser:
         self._loop_id = 0
 
     async def close(self):
-        await self._teardown_browser()
+        try:
+            await asyncio.wait_for(self._teardown_browser(), timeout=10)
+        except asyncio.TimeoutError:
+            logger.warning("Browser teardown timed out, dropping refs")
+        except Exception:
+            pass
         if self._playwright:
             try:
-                await self._playwright.stop()
+                await asyncio.wait_for(self._playwright.stop(), timeout=10)
+            except asyncio.TimeoutError:
+                pass
             except Exception:
                 pass
             self._playwright = None

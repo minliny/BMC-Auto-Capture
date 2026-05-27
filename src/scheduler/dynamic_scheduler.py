@@ -237,8 +237,16 @@ class DynamicScheduler:
         print(f"[{len(self._results):>5}] {status_icon:>4} {result.device_name}  {result.task_name}{reason}")
 
     def _drain(self):
-        """Wait for running tasks to finish."""
+        """Wait for running tasks to finish — with hard timeout so process always exits."""
         logger.info("Draining running tasks...")
+        drain_deadline = time.time() + 300  # 5 min absolute max
         while self._bmc_pool._active_futures or self._ssh_pool._active_futures:
+            if time.time() > drain_deadline:
+                logger.warning(
+                    "Drain timeout after 5min — %d bmc futures + %d ssh futures still active",
+                    len(self._bmc_pool._active_futures),
+                    len(self._ssh_pool._active_futures),
+                )
+                break
             time.sleep(1)
         logger.info("Drain complete")
