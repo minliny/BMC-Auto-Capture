@@ -156,9 +156,9 @@ class BMCExecutor(AbstractExecutor):
 
             # --- Navigate & capture ---
             if task.execution_mode == "BMC_URL":
-                await self._run_bmc_url(page, bmc_url, task, output_dir, result)
+                await self._run_bmc_url(page, bmc_url, task, device.bmc_ip, output_dir, result)
             elif task.execution_mode == "BMC_ACTIONS":
-                await self._run_bmc_actions(page, task, output_dir, result)
+                await self._run_bmc_actions(page, task, device.bmc_ip, output_dir, result)
 
             await page.close()
             result.execution_status = "EXEC_SUCCESS"
@@ -181,6 +181,8 @@ class BMCExecutor(AbstractExecutor):
     # ------------------------------------------------------------------
     async def _bmc_login(self, page, bmc_url: str, device) -> bool:
         """Navigate to BMC, detect login page, fill credentials, submit."""
+        # Validate URL host matches device BMC IP before navigation
+        self._validate_goto_url(bmc_url, device.bmc_ip)
         logger.info(f"[{device.device_name}] Navigating to BMC: {bmc_url}")
 
         try:
@@ -253,10 +255,11 @@ class BMCExecutor(AbstractExecutor):
     # ------------------------------------------------------------------
     # BMC_URL mode
     # ------------------------------------------------------------------
-    async def _run_bmc_url(self, page, bmc_url: str, task, output_dir: str, result: ExecutionResult) -> None:
+    async def _run_bmc_url(self, page, bmc_url: str, task, bmc_ip: str, output_dir: str, result: ExecutionResult) -> None:
         """Navigate to target URL (may differ from login URL), screenshot, save HTML."""
-        target_url = self._resolve_url(task.command_or_url, "")
+        target_url = self._resolve_url(task.command_or_url, bmc_ip)
         if target_url and target_url != bmc_url:
+            self._validate_goto_url(target_url, bmc_ip)
             logger.info("Navigating to target: %s", target_url)
             try:
                 await page.goto(target_url, wait_until="networkidle", timeout=self._page_timeout * 1000)
@@ -300,7 +303,7 @@ class BMCExecutor(AbstractExecutor):
     # ------------------------------------------------------------------
     # BMC_ACTIONS mode (DSL)
     # ------------------------------------------------------------------
-    async def _run_bmc_actions(self, page, task, output_dir: str, result: ExecutionResult) -> None:
+    async def _run_bmc_actions(self, page, task, bmc_ip: str, output_dir: str, result: ExecutionResult) -> None:
         """Execute a sequence of DSL actions."""
         import json
 
@@ -322,7 +325,9 @@ class BMCExecutor(AbstractExecutor):
 
             try:
                 if action_type == "goto":
-                    await page.goto(value, wait_until="networkidle", timeout=timeout_ms)
+                    resolved = self._resolve_url(value, bmc_ip)
+                    self._validate_goto_url(resolved, bmc_ip)
+                    await page.goto(resolved, wait_until="networkidle", timeout=timeout_ms)
                 elif action_type == "click":
                     await page.click(selector, timeout=timeout_ms)
                 elif action_type == "fill":
@@ -391,6 +396,19 @@ class BMCExecutor(AbstractExecutor):
         if not raw.startswith("http"):
             return f"https://{bmc_ip}{raw}"
         return raw
+
+    def _validate_goto_url(self, url: str, bmc_ip: str) -> None:
+        """Raise ValueError if URL host does not match the device BMC IP."""
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        expected = bmc_ip.lower()
+        if host != expected:
+            raise ValueError(
+                f"URL host mismatch: expected {expected}, got {host!r}. "
+                f"Rendered URL: {url}. "
+                f"Check _resolve_url bmc_ip parameter."
+            )
 
     def _build_output_dir(self, root: str, device, task) -> str:
         tmpl = task.output_dir_template

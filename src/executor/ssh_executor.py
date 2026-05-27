@@ -34,9 +34,10 @@ class SSHExecutor(AbstractExecutor):
         re.IGNORECASE,
     )
 
-    def __init__(self, connect_timeout: float = 15.0, command_timeout: float = 60.0):
+    def __init__(self, connect_timeout: float = 15.0, command_timeout: float = 60.0, idle_timeout: float = 5.0):
         self.connect_timeout = connect_timeout
         self.command_timeout = command_timeout
+        self.idle_timeout = idle_timeout
 
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         device = plan.device
@@ -104,46 +105,59 @@ class SSHExecutor(AbstractExecutor):
                     if time.time() > task_deadline:
                         raise TimeoutError(f"Task deadline exceeded after {self.command_timeout * 2:.0f}s")
 
-                    _stdin, stdout, stderr = client.exec_command(cmd, timeout=self.command_timeout)
+                    _stdin, stdout, stderr = client.exec_command(
+                        cmd, timeout=self.command_timeout, get_pty=True,
+                    )
 
-                    # Set channel timeout to prevent indefinite blocking on read()
                     channel = stdout.channel
                     channel.settimeout(self.command_timeout)
 
-                    # Read with timeout: chunked read, stop when no more data or deadline
                     out_chunks: list[bytes] = []
                     err_chunks: list[bytes] = []
                     cmd_deadline = time.time() + self.command_timeout
+                    last_data_at = time.time()
 
                     while time.time() < cmd_deadline:
+                        got_data = False
+
                         if channel.recv_ready():
                             chunk = channel.recv(65536)
                             if chunk:
                                 out_chunks.append(chunk)
+                                last_data_at = time.time()
+                                got_data = True
                             else:
                                 break  # EOF
-                        elif channel.recv_stderr_ready():
+
+                        if channel.recv_stderr_ready():
                             chunk = channel.recv_stderr(65536)
                             if chunk:
                                 err_chunks.append(chunk)
-                        elif channel.exit_status_ready():
-                            # Command finished, drain remaining data
-                            break
-                        else:
-                            time.sleep(0.1)  # Avoid busy-wait
+                                got_data = True
 
-                    # Drain any remaining data after exit_status_ready
+                        if channel.exit_status_ready():
+                            break  # Command process exited (Linux)
+
+                        # Idle detection: no data for idle_timeout → command output complete
+                        # This handles network device CLIs that never send exit-status
+                        if time.time() - last_data_at > self.idle_timeout:
+                            break
+
+                        if not got_data:
+                            time.sleep(0.1)
+
+                    # Drain any remaining data after break
                     try:
-                        channel.settimeout(1.0)
+                        channel.settimeout(0.5)
                         remaining = stdout.read()
                         if remaining:
                             out_chunks.append(remaining)
                     except Exception:
                         pass
 
-                    # Check if we hit the deadline
+                    # Check if we hit the hard deadline (idle timeout is normal, not a warning)
                     if time.time() >= cmd_deadline and not channel.exit_status_ready():
-                        out_chunks.append(b"\n[WARNING] Command read timeout - partial output saved")
+                        out_chunks.append(b"\n[WARNING] Hard timeout - partial output saved")
 
                     out = b"".join(out_chunks).decode("utf-8", errors="replace")
                     err = b"".join(err_chunks).decode("utf-8", errors="replace")
