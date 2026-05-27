@@ -87,9 +87,25 @@ class WorkerPool:
             self._running_devices.discard(device_id)
             self._active_futures.pop(future, None)
 
-        if callback:
-            try:
-                result = future.result()
-                callback(result)
-            except Exception as e:
-                logger.error("[%s] Worker callback error: %s", self.name, e)
+        if not callback:
+            return
+
+        try:
+            result = future.result()
+        except Exception as e:
+            logger.error("[%s] Worker crashed for device %s: %s", self.name, device_id, e)
+            # Synthesize an error result so callback always fires
+            from ..models.execution_result import ExecutionResult
+            result = ExecutionResult(
+                device_name=device_id,
+                task_name="(crashed)",
+                execution_status="EXEC_ERROR",
+                execution_failure_reason=f"Worker exception: {e}",
+                started_at=time.time(),
+                ended_at=time.time(),
+            )
+
+        try:
+            callback(result)
+        except Exception as e:
+            logger.error("[%s] Callback error for device %s: %s", self.name, device_id, e)

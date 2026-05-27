@@ -82,6 +82,10 @@ class DynamicScheduler:
         total = len(plans)
         logger.info("DynamicScheduler: %d plans, %d devices", total, len(self._device_queues))
 
+        last_progress_at = time.time()
+        last_heartbeat_at = time.time()
+        completed_count = 0
+
         try:
             while not self._stop_event.is_set() and self._has_remaining_work():
                 self._pause_event.wait()
@@ -93,7 +97,55 @@ class DynamicScheduler:
                 # 2. Dispatch
                 self._dispatch()
 
-                # 3. Brief sleep
+                # 3. Heartbeat + stall detection
+                now = time.time()
+                cur_completed = len(self._results)
+                if cur_completed > completed_count:
+                    completed_count = cur_completed
+                    last_progress_at = now
+
+                # Heartbeat every 30s
+                if now - last_heartbeat_at >= 30:
+                    last_heartbeat_at = now
+                    pending = sum(len(q) for q in self._device_queues.values())
+                    running_bmc = len(self._bmc_pool._active_futures)
+                    running_ssh = len(self._ssh_pool._active_futures)
+                    ready = len(self._ready_devices)
+                    locked = sum(1 for did in self._ready_devices
+                                 if self._bmc_pool.device_has_running_task(did)
+                                 or self._ssh_pool.device_has_running_task(did))
+                    logger.info(
+                        "HEARTBEAT: completed=%d pending=%d running(bmc=%d ssh=%d) ready=%d locked=%d",
+                        completed_count, pending, running_bmc, running_ssh, ready, locked,
+                    )
+                    print(f"  -- heartbeat: done={completed_count} pending={pending} "
+                          f"running(bmc={running_bmc} ssh={running_ssh}) ready={ready} --")
+
+                # Stall detection: no progress for 60s
+                if now - last_progress_at >= 60:
+                    logger.warning("SCHEDULER STALL: no progress for %.0fs", now - last_progress_at)
+                    # Dump first 10 pending plans with their status
+                    pending_dumped = 0
+                    for did, q in sorted(self._device_queues.items()):
+                        if q and pending_dumped < 10:
+                            p = q[0]
+                            blocked_by = ""
+                            if self._bmc_pool.device_has_running_task(did):
+                                blocked_by = " (device busy in BMC pool)"
+                            elif self._ssh_pool.device_has_running_task(did):
+                                blocked_by = " (device busy in SSH pool)"
+                            logger.warning(
+                                "  PENDING: device=%s task=%s protocol=%s%s",
+                                did, p.task.task_name, p.protocol, blocked_by,
+                            )
+                            pending_dumped += 1
+                    # Dump device locks
+                    logger.warning("  BMC active devices: %s", list(self._bmc_pool._running_devices))
+                    logger.warning("  SSH active devices: %s", list(self._ssh_pool._running_devices))
+                    logger.warning("  Ready devices: %d, total device queues: %d",
+                                   len(self._ready_devices), len(self._device_queues))
+
+                # 4. Brief sleep
                 time.sleep(0.5)
 
         except KeyboardInterrupt:
@@ -196,22 +248,35 @@ class DynamicScheduler:
                 )
 
     def _execute_plan(self, plan: TaskPlan) -> ExecutionResult:
-        if plan.protocol == "BMC" and self._bm:
-            exec_ = BMCExecutor(self._bm, connect_timeout=self._config.tcp_connect_timeout)
-        elif plan.protocol == "SSH":
-            exec_ = SSHExecutor(connect_timeout=self._config.tcp_connect_timeout)
-        else:
+        try:
+            if plan.protocol == "BMC" and self._bm:
+                exec_ = BMCExecutor(self._bm, connect_timeout=self._config.tcp_connect_timeout)
+            elif plan.protocol == "SSH":
+                exec_ = SSHExecutor(connect_timeout=self._config.tcp_connect_timeout)
+            else:
+                return ExecutionResult(
+                    plan_id=plan.plan_id,
+                    device_name=plan.device.device_name,
+                    task_name=plan.task.task_name,
+                    execution_status="EXEC_FAILED",
+                    execution_failure_reason=f"Unsupported protocol: {plan.protocol}",
+                    started_at=time.time(),
+                    ended_at=time.time(),
+                )
+
+            return exec_.execute(plan, self._config.output_root)
+        except Exception as e:
+            logger.error("_execute_plan crashed for %s/%s: %s",
+                         plan.device.device_name, plan.task.task_name, e)
             return ExecutionResult(
                 plan_id=plan.plan_id,
                 device_name=plan.device.device_name,
                 task_name=plan.task.task_name,
-                execution_status="EXEC_FAILED",
-                execution_failure_reason=f"Unsupported protocol: {plan.protocol}",
+                execution_status="EXEC_ERROR",
+                execution_failure_reason=f"_execute_plan exception: {e}",
                 started_at=time.time(),
                 ended_at=time.time(),
             )
-
-        return exec_.execute(plan, self._config.output_root)
 
     def _on_plan_done(self, plan: TaskPlan, result: ExecutionResult, device_id: str):
         plan.completed_at = time.time()
