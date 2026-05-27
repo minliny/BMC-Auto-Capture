@@ -1,9 +1,9 @@
-# UTF-8 encoded — PowerShell handles this natively
+﻿# UTF-8 with BOM — PowerShell 5.x needs BOM to detect UTF-8 encoding
 $host.UI.RawUI.WindowTitle = "BMC Auto-Capture v0.2.1"
 
 $ROOT = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RUNTIME = Join-Path $ROOT "..\runtime"
-$APP = Join-Path $ROOT "..\app"
+$RUNTIME = Join-Path $ROOT "runtime"
+$APP = Join-Path $ROOT "app"
 $ENGINE = Join-Path $RUNTIME "bmc-engine.exe"
 $EXCEL = Join-Path $APP "examples\task_template.xlsx"
 
@@ -128,7 +128,7 @@ function Show-Results {
     Write-Host "   最近执行结果"
     Write-Host "============================================================"
     Write-Host ""
-    $resultFile = Join-Path $ROOT "..\output\result.csv"
+    $resultFile = Join-Path $ROOT "output\result.csv"
     if (Test-Path $resultFile) {
         Write-Host "    output\result.csv"
         Write-Host "    ----------------------------------------"
