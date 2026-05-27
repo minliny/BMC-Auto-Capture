@@ -31,35 +31,49 @@ def overlay_device_info(
     page_url: str = "",
     page_title: str = "",
 ) -> str:
-    """Add an info bar to the top of a screenshot. Returns the new file path."""
+    """Add a Chrome-style taskbar + device info bar to the screenshot."""
     img = Image.open(image_path)
     width, height = img.size
 
-    bar_height = 80
-    canvas = Image.new("RGBA", (width, height + bar_height), (30, 30, 30, 255))
-    canvas.paste(img, (0, bar_height))
-
-    draw = ImageDraw.Draw(canvas)
-    font = _default_font(14)
+    font = _default_font(13)
     font_small = _default_font(11)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    lines = [
-        f"Device: {device_name}  |  IP: {device_ip}",
-        f"Task: {task_name}",
-    ]
-    if page_url:
-        lines.append(f"URL: {page_url}")
-    if page_title:
-        lines.append(f"Title: {page_title}")
+    # --- Chrome taskbar (top) ---
+    tab_bar_h = 36
+    url_bar_h = 32
+    device_bar_h = 22
+    chrome_h = tab_bar_h + url_bar_h + device_bar_h
 
-    y = 4
-    for line in lines:
-        draw.text((8, y), line, fill=(255, 255, 255, 255), font=font)
-        y += 18
+    canvas = Image.new("RGBA", (width, height + chrome_h), (40, 40, 40, 255))
 
-    # Timestamp on the right side
-    draw.text((width - 200, 4), timestamp, fill=(180, 180, 180, 255), font=font_small)
+    # Tab bar background
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle([(0, 0), (width, tab_bar_h)], fill=(50, 50, 50))
+    # Active tab
+    tab_w = min(width - 100, 280)
+    draw.rectangle([(8, 6), (tab_w, tab_bar_h)], fill=(60, 60, 60))
+    tab_title = page_title[:50] if page_title else "BMC Management"
+    draw.text((16, 10), tab_title, fill=(220, 220, 220), font=font_small)
+    # Window controls (red/yellow/green dots)
+    for cx, color in [(width - 60, (235, 95, 92)), (width - 40, (245, 190, 40)), (width - 20, (100, 200, 80))]:
+        draw.ellipse([(cx, 13), (cx + 11, 24)], fill=color)
+
+    # URL bar
+    draw.rectangle([(0, tab_bar_h), (width, tab_bar_h + url_bar_h)], fill=(70, 70, 70))
+    url_display = page_url[:120] if page_url else "about:blank"
+    url_box_w = width - 120
+    draw.rectangle([(8, tab_bar_h + 5), (url_box_w, tab_bar_h + url_bar_h - 5)], fill=(55, 55, 55))
+    draw.text((16, tab_bar_h + 10), url_display, fill=(200, 200, 200), font=font_small)
+
+    # Device info bar
+    draw.rectangle([(0, tab_bar_h + url_bar_h), (width, chrome_h)], fill=(30, 30, 30))
+    info = f"Device: {device_name} | IP: {device_ip} | Task: {task_name}"
+    draw.text((10, tab_bar_h + url_bar_h + 3), info, fill=(180, 180, 180), font=font_small)
+    draw.text((width - 180, tab_bar_h + url_bar_h + 3), timestamp, fill=(150, 150, 150), font=font_small)
+
+    # Paste page screenshot below chrome
+    canvas.paste(img, (0, chrome_h))
 
     out_path = image_path.replace(".png", "_annotated.png")
     canvas.save(out_path, "PNG")

@@ -255,6 +255,10 @@ class BMCExecutor(AbstractExecutor):
 
         await asyncio.sleep(2)  # Allow redirect to login page
 
+        # Check for "account already logged in elsewhere" before login
+        if await self._detect_account_conflict(page, device):
+            return False
+
         # Check for CAPTCHA before login
         captcha_seen = await detect_captcha(page)
         if captcha_seen and not self._bm.headless:
@@ -316,7 +320,34 @@ class BMCExecutor(AbstractExecutor):
                              device.device_name, error_text or "unknown")
                 return False
 
+            # Check for account conflict message that may appear after redirect
+            if await self._detect_account_conflict(page, device):
+                return False
+
         return True
+
+    async def _detect_account_conflict(self, page, device) -> bool:
+        """Check if BMC shows 'account already logged in elsewhere' message."""
+        conflict_patterns = [
+            'text=账户已在其他地方登录',
+            'text=已在其他地方登录',
+            'text=account already logged in',
+            'text=already logged in elsewhere',
+            'text=session conflict',
+            'text=会话冲突',
+            'text=该用户已登录',
+            'text=用户已在线',
+        ]
+        for pattern in conflict_patterns:
+            try:
+                el = await page.query_selector(pattern)
+                if el and await el.is_visible():
+                    text = await el.inner_text()
+                    logger.error("[%s] Account conflict detected: %s", device.device_name, text)
+                    return True
+            except Exception:
+                continue
+        return False
 
     async def _dismiss_popups(self, page) -> None:
         """Try to dismiss common post-login popups."""
@@ -352,7 +383,11 @@ class BMCExecutor(AbstractExecutor):
             await asyncio.sleep(2)
 
         # Full-page screenshot
-        ss_filename = task.image_name_template.replace("{timestamp}", time.strftime("%Y%m%d_%H%M%S"))
+        ss_filename = (task.image_name_template
+                       .replace("{device_name}", result.device_name)
+                       .replace("{task_name}", result.task_name)
+                       .replace("{step}", "001")
+                       .replace("{timestamp}", time.strftime("%Y%m%d_%H%M%S")))
         if not ss_filename.endswith(".png"):
             ss_filename += ".png"
         ss_path = os.path.join(output_dir, ss_filename)
@@ -423,7 +458,14 @@ class BMCExecutor(AbstractExecutor):
                 elif action_type == "wait":
                     await asyncio.sleep(float(value) if value else 1.0)
                 elif action_type == "screenshot":
-                    ss_path = os.path.join(output_dir, f"step_{i:03d}.png")
+                    ss_filename = (task.image_name_template
+                                   .replace("{device_name}", result.device_name)
+                                   .replace("{task_name}", result.task_name)
+                                   .replace("{step}", f"{i:03d}")
+                                   .replace("{timestamp}", time.strftime("%Y%m%d_%H%M%S")))
+                    if not ss_filename.endswith(".png"):
+                        ss_filename += ".png"
+                    ss_path = os.path.join(output_dir, ss_filename)
                     await page.screenshot(path=ss_path, full_page=True)
                     result.screenshots = result.screenshots + (ss_path,)
                     result.step_results.append(StepResult(
