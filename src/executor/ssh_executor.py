@@ -92,14 +92,61 @@ class SSHExecutor(AbstractExecutor):
             all_output: list[str] = []
             step_index = 0
 
+            # Per-task hard deadline: prevent any single SSH task from blocking forever
+            task_deadline = time.time() + max(self.command_timeout * len(commands), self.command_timeout) * 2
+
             for cmd in commands:
                 step_name = f"cmd_{step_index}"
                 logger.info(f"[{device.device_name}] Executing: {cmd[:60]}...")
 
                 try:
+                    # Check task-level timeout before each command
+                    if time.time() > task_deadline:
+                        raise TimeoutError(f"Task deadline exceeded after {self.command_timeout * 2:.0f}s")
+
                     _stdin, stdout, stderr = client.exec_command(cmd, timeout=self.command_timeout)
-                    out = stdout.read().decode("utf-8", errors="replace")
-                    err = stderr.read().decode("utf-8", errors="replace")
+
+                    # Set channel timeout to prevent indefinite blocking on read()
+                    channel = stdout.channel
+                    channel.settimeout(self.command_timeout)
+
+                    # Read with timeout: chunked read, stop when no more data or deadline
+                    out_chunks: list[bytes] = []
+                    err_chunks: list[bytes] = []
+                    cmd_deadline = time.time() + self.command_timeout
+
+                    while time.time() < cmd_deadline:
+                        if channel.recv_ready():
+                            chunk = channel.recv(65536)
+                            if chunk:
+                                out_chunks.append(chunk)
+                            else:
+                                break  # EOF
+                        elif channel.recv_stderr_ready():
+                            chunk = channel.recv_stderr(65536)
+                            if chunk:
+                                err_chunks.append(chunk)
+                        elif channel.exit_status_ready():
+                            # Command finished, drain remaining data
+                            break
+                        else:
+                            time.sleep(0.1)  # Avoid busy-wait
+
+                    # Drain any remaining data after exit_status_ready
+                    try:
+                        channel.settimeout(1.0)
+                        remaining = stdout.read()
+                        if remaining:
+                            out_chunks.append(remaining)
+                    except Exception:
+                        pass
+
+                    # Check if we hit the deadline
+                    if time.time() >= cmd_deadline and not channel.exit_status_ready():
+                        out_chunks.append(b"\n[WARNING] Command read timeout - partial output saved")
+
+                    out = b"".join(out_chunks).decode("utf-8", errors="replace")
+                    err = b"".join(err_chunks).decode("utf-8", errors="replace")
 
                     combined = out
                     if err:
@@ -111,6 +158,12 @@ class SSHExecutor(AbstractExecutor):
                         step_name=step_name,
                         status="SUCCESS",
                         details=f"output {len(combined)} chars",
+                    ))
+                except TimeoutError as e:
+                    all_output.append(f"$ {cmd}\n[TIMEOUT] {e}")
+                    result.step_results.append(StepResult(
+                        step_index=step_index, step_name=step_name,
+                        status="TIMEOUT", details=str(e),
                     ))
                 except Exception as e:
                     all_output.append(f"$ {cmd}\n[ERROR] {e}")
