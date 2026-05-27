@@ -207,21 +207,27 @@ class BMCExecutor(AbstractExecutor):
                 f"可能原因: browser启动失败 / page获取阻塞 / BMC页面无响应."
             )
             logger.error("[%s] BMC timeout at stage %s (%.0fs elapsed)", dname, current_stage, elapsed)
+            # Force browser reset so next task on this thread doesn't reuse bad state
+            self._bm.reset_thread()
 
         except Exception as e:
             result.execution_status = "EXEC_ERROR"
             result.execution_failure_reason = str(e)
             logger.error("[%s] BMC error at stage %s: %s", dname, current_stage, e)
+            # If page acquisition itself failed, force browser reset
+            if "acquire_page" in current_stage or "acquire_context" in current_stage:
+                self._bm.reset_thread()
 
         finally:
+            # Close page with timeout protection (page might be in broken state)
             if page_acquired:
                 try:
-                    await page.close()
+                    await asyncio.wait_for(page.close(), timeout=5)
                 except Exception:
                     pass
             elif page is not None:
                 try:
-                    await page.close()
+                    await asyncio.wait_for(page.close(), timeout=5)
                 except Exception:
                     pass
 

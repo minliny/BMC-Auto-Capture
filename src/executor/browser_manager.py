@@ -67,6 +67,14 @@ class BrowserManager:
 
         return await tb.get_context()
 
+    def reset_thread(self):
+        """Force current thread's browser to be recreated on next get_context()."""
+        tid = threading.get_ident()
+        with self._tls_lock:
+            tb = self._tls.pop(tid, None)
+        if tb is not None:
+            logger.warning("Resetting browser for thread %d after failure", tid)
+
     async def teardown(self):
         """Close all thread-local browsers. Called from main thread on shutdown."""
         with self._tls_lock:
