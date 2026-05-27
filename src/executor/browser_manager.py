@@ -7,13 +7,18 @@ Detects event loop changes (asyncio.run creating new loops) and resets according
 from __future__ import annotations
 import asyncio
 import logging
+import threading
 import time
 
 logger = logging.getLogger("bmc_auto_capture.browser")
 
 
 class BrowserManager:
-    """Manages a single Playwright browser instance with recycling thresholds."""
+    """Manages a single Playwright browser instance with recycling thresholds.
+
+    Thread-safe: serializes get_context() and teardown() with a lock.
+    Event-loop aware: detects loop changes and resets without blocking.
+    """
 
     def __init__(
         self,
@@ -34,6 +39,7 @@ class BrowserManager:
         self._task_count = 0
         self._born_at: float = 0.0
         self._loop_id: int = 0
+        self._lock = threading.Lock()
 
     @property
     def headless(self) -> bool:
@@ -53,57 +59,71 @@ class BrowserManager:
 
     async def get_context(self):
         """Return a fresh or recycled BrowserContext.
-        Detects event loop changes and forces a full reset when needed."""
-        current_loop = id(asyncio.get_event_loop())
 
-        if current_loop != self._loop_id and self._playwright is not None:
-            logger.debug("Event loop changed, recreating browser")
-            await self._force_reset()
+        Serialized by a threading lock so concurrent BMC workers don't
+        race on browser creation / reset.  Loop-change detection resets
+        WITHOUT awaiting cleanup on the wrong loop, which would deadlock.
+        """
+        with self._lock:
+            current_loop = id(asyncio.get_event_loop())
 
-        if self._playwright is None:
-            await self.start()
-            self._loop_id = current_loop
+            if current_loop != self._loop_id and self._playwright is not None:
+                logger.debug("Event loop changed, dropping old browser refs")
+                self._drop_refs()
 
-        if self._should_recycle():
-            await self._teardown_browser()
+            if self._playwright is None:
+                await self.start()
+                self._loop_id = current_loop
 
-        if self._browser is None:
-            logger.info("Launching browser (headless=%s)", self._headless)
-            self._browser = await self._playwright.chromium.launch(
-                headless=self._headless,
-                args=[
-                    "--ignore-certificate-errors",
-                    "--disable-blink-features=AutomationControlled",
-                ],
-            )
-            self._context = await self._browser.new_context(
-                viewport=self._viewport,
-                ignore_https_errors=True,
-                locale="zh-CN",
-            )
-            self._task_count = 0
-            self._born_at = time.time()
+            if self._should_recycle():
+                await self._teardown_browser()
 
-        self._task_count += 1
-        return self._context
+            if self._browser is None:
+                logger.info("Launching browser (headless=%s)", self._headless)
+                self._browser = await self._playwright.chromium.launch(
+                    headless=self._headless,
+                    args=[
+                        "--ignore-certificate-errors",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                )
+                self._context = await self._browser.new_context(
+                    viewport=self._viewport,
+                    ignore_https_errors=True,
+                    locale="zh-CN",
+                )
+                self._task_count = 0
+                self._born_at = time.time()
+
+            self._task_count += 1
+            return self._context
 
     async def teardown(self):
-        await self._force_reset()
+        with self._lock:
+            await self._teardown_browser()
+            if self._playwright:
+                try:
+                    await self._playwright.stop()
+                except Exception:
+                    pass
+            self._drop_refs()
+
+    def _drop_refs(self):
+        """Drop references without awaiting close on potentially wrong loop."""
+        self._context = None
+        self._browser = None
+        self._playwright = None
+        self._loop_id = 0
 
     async def _force_reset(self):
-        """Tear down everything. Handles closed-loop case by dropping refs."""
-        try:
-            await self._teardown_browser()
-        except Exception:
-            self._context = None
-            self._browser = None
+        """Full teardown + reset. Caller must hold self._lock."""
+        await self._teardown_browser()
         if self._playwright:
             try:
                 await self._playwright.stop()
             except Exception:
                 pass
-            self._playwright = None
-        self._loop_id = 0
+        self._drop_refs()
 
     def _should_recycle(self) -> bool:
         if self._browser is None:
