@@ -15,9 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import threading
 import time
-from typing import Optional
 
 from .base import AbstractExecutor
 from .browser_manager import BrowserManager
@@ -92,9 +90,6 @@ class BMCExecutor(AbstractExecutor):
     browser recreation and Chromium process leaks.
     """
 
-    _thread_loops: dict[int, asyncio.AbstractEventLoop] = {}
-    _thread_loops_lock = threading.Lock()
-
     def __init__(
         self,
         browser_manager: BrowserManager,
@@ -105,30 +100,9 @@ class BMCExecutor(AbstractExecutor):
         self._connect_timeout = connect_timeout
         self._page_timeout = page_timeout
 
-    @classmethod
-    def _get_loop(cls) -> asyncio.AbstractEventLoop:
-        tid = threading.get_ident()
-        with cls._thread_loops_lock:
-            loop = cls._thread_loops.get(tid)
-            if loop is None or loop.is_closed():
-                loop = asyncio.new_event_loop()
-                cls._thread_loops[tid] = loop
-            return loop
-
-    @classmethod
-    def cleanup_thread_loop(cls):
-        """Close and remove the event loop for the current thread."""
-        tid = threading.get_ident()
-        with cls._thread_loops_lock:
-            loop = cls._thread_loops.pop(tid, None)
-        if loop is not None and not loop.is_closed():
-            try:
-                loop.close()
-            except Exception:
-                pass
-
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
-        loop = self._get_loop()
+        from .browser_manager import _get_thread_loop
+        loop = _get_thread_loop()
         return loop.run_until_complete(self._execute_async(plan, output_root))
 
     async def _execute_async(self, plan: TaskPlan, output_root: str) -> ExecutionResult:

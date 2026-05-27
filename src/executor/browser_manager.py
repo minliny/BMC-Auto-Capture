@@ -75,19 +75,71 @@ class BrowserManager:
         if tb is not None:
             logger.warning("Resetting browser for thread %d after failure", tid)
 
+    def close_current_thread_browser(self):
+        """Close the current thread's browser on its own event loop.
+
+        Called from a BMC worker thread BEFORE pool shutdown.
+        This avoids cross-loop deadlocks that happen when the main thread
+        tries to close browsers via asyncio.run().
+        """
+        import asyncio as asyncio_mod
+        tid = threading.get_ident()
+        with self._tls_lock:
+            tb = self._tls.pop(tid, None)
+        if tb is None:
+            return
+        # Get the persistent event loop for this thread
+        loop = _get_thread_loop()
+        if loop.is_closed():
+            tb._drop_refs()  # Can't close, just drop
+            return
+        try:
+            loop.run_until_complete(
+                asyncio_mod.wait_for(tb.close(), timeout=15)
+            )
+        except Exception:
+            pass
+
     async def teardown(self):
-        """Close all thread-local browsers. Called from main thread on shutdown."""
+        """Drop any remaining browser refs. Called from main thread on shutdown.
+
+        Browser cleanup should already have happened on worker threads
+        via close_current_thread_browser(). This is a safety net only —
+        it drops refs WITHOUT awaiting close (would deadlock on wrong loop).
+        """
         with self._tls_lock:
             tbs = list(self._tls.values())
             self._tls.clear()
 
         for tb in tbs:
-            try:
-                await asyncio.wait_for(tb.close(), timeout=10)
-            except asyncio.TimeoutError:
-                logger.warning("Browser close timed out after 10s, dropping refs")
-            except Exception:
-                pass
+            logger.warning("Browser still registered at teardown — dropping refs")
+
+
+# Thread-local persistent event loops (shared with BMCExecutor)
+_thread_loops: dict[int, "asyncio.AbstractEventLoop"] = {}
+_thread_loops_lock = threading.Lock()
+
+
+def _get_thread_loop() -> "asyncio.AbstractEventLoop":
+    tid = threading.get_ident()
+    with _thread_loops_lock:
+        loop = _thread_loops.get(tid)
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            _thread_loops[tid] = loop
+        return loop
+
+
+def _cleanup_thread_loop():
+    """Close and remove the event loop for the current thread."""
+    tid = threading.get_ident()
+    with _thread_loops_lock:
+        loop = _thread_loops.pop(tid, None)
+    if loop is not None and not loop.is_closed():
+        try:
+            loop.close()
+        except Exception:
+            pass
 
 
 class _ThreadLocalBrowser:

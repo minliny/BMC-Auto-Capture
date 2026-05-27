@@ -153,10 +153,31 @@ class DynamicScheduler:
             logger.info("Keyboard interrupt — stopping scheduler")
         finally:
             drained = self._drain()
+
+            # Close browsers on worker threads BEFORE pool shutdown.
+            # Each worker thread uses its own persistent event loop to
+            # close its browser, avoiding cross-loop deadlocks.
+            if self._bm and self._bmc_pool._executor is not None:
+                browser_count = len(self._bm._tls)
+                if browser_count > 0:
+                    logger.info("Cleaning up %d browser(s) on worker threads...", browser_count)
+                    cleanup_futures = []
+                    for _ in range(browser_count):
+                        f = self._bmc_pool._executor.submit(
+                            self._bm.close_current_thread_browser
+                        )
+                        cleanup_futures.append(f)
+                    for f in cleanup_futures:
+                        try:
+                            f.result(timeout=20)
+                        except Exception:
+                            pass
+
             self._bmc_pool.shutdown(wait=drained)
             self._ssh_pool.shutdown(wait=drained)
             self._monitor.stop()
 
+            # Safety net: drop any remaining browser refs (no await on wrong loop)
             import asyncio
             if self._bm:
                 try:
