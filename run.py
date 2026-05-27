@@ -35,15 +35,22 @@ def _setup_browser_path():
     """Set PLAYWRIGHT_BROWSERS_PATH.
 
     Priority:
-    1. Bundled browsers (runtime/playwright_browsers/) — always preferred
-    2. System cache (ms-playwright)
-    3. Existing env var PLAYWRIGHT_BROWSERS_PATH — only if it actually exists
+    1. Bundled browsers — next to exe, or one level up
+    2. System ms-playwright cache
+    3. If all fail, UNSET stale env var so Playwright gives a clear error
     """
-    # 1. Bundled browsers next to exe — always wins
-    bundled = _exe_dir() / "playwright_browsers"
-    if bundled.is_dir():
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
-        return
+    _print = print  # Use builtin print (logging may not be set up yet)
+
+    # 1. Search bundled browsers
+    search_dirs = [
+        _exe_dir() / "playwright_browsers",           # runtime/playwright_browsers/
+        _exe_dir().parent / "playwright_browsers",    # ../playwright_browsers/ (old layout)
+    ]
+    for d in search_dirs:
+        if d.is_dir():
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(d)
+            _print(f"[browser] Using bundled: {d}")
+            return
 
     # 2. System cache
     for cache in [
@@ -53,19 +60,20 @@ def _setup_browser_path():
     ]:
         if cache.is_dir():
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(cache)
+            _print(f"[browser] Using system cache: {cache}")
             return
 
-    # 3. Existing env var — only if the directory actually exists
+    # 3. Existing env var — only if the path actually exists
     env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")
     if env_path and Path(env_path).is_dir():
+        _print(f"[browser] Using env var: {env_path}")
         return
 
-    # 4. Warn if env var set but path doesn't exist
+    # 4. Stale/broken env var — unset it so Playwright fails with a clear message
     if env_path:
-        import logging
-        logging.getLogger("bmc_auto_capture").warning(
-            "PLAYWRIGHT_BROWSERS_PATH=%s does not exist — browser launch will fail", env_path
-        )
+        _print(f"[browser] WARNING: PLAYWRIGHT_BROWSERS_PATH={env_path} does not exist!")
+        _print("[browser] Unsetting it. Install Chromium: python -m playwright install chromium")
+        del os.environ["PLAYWRIGHT_BROWSERS_PATH"]
 
 
 def main():
