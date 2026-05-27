@@ -122,9 +122,9 @@ jobs:
         run: |
           mkdir -p dist/app
           cp -r src/ config/ examples/ tasks.json README.md dist/app/
-          cp scripts/start.bat dist/
+          cp scripts/start.bat scripts/start.ps1 dist/
           cd dist
-          zip -r ../bmc-app-${{ github.ref_name }}.zip app/ start.bat -x "*.pyc" "__pycache__/*"
+          zip -r ../bmc-app-${{ github.ref_name }}.zip app/ start.bat start.ps1 -x "*.pyc" "__pycache__/*"
 
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
