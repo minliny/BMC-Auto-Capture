@@ -89,7 +89,12 @@ class BrowserManager:
 
 
 class _ThreadLocalBrowser:
-    """Per-thread Playwright browser with recycling."""
+    """Per-thread Playwright browser with recycling.
+
+    Detects event-loop changes: BMCExecutor creates a new asyncio loop
+    per task.  When the loop changes, old Playwright objects are invalid
+    on the new loop and must be recreated.
+    """
 
     def __init__(self, headless, max_tasks, max_age_seconds, viewport):
         self._headless = headless
@@ -101,12 +106,23 @@ class _ThreadLocalBrowser:
         self._context = None
         self._task_count = 0
         self._born_at: float = 0.0
+        self._loop_id: int = 0
 
     async def get_context(self):
         from playwright.async_api import async_playwright
 
+        current_loop = id(asyncio.get_event_loop())
+
+        # Event loop changed → old Playwright objects belong to a dead loop.
+        # Drop refs WITHOUT awaiting close (would hang on wrong loop).
+        if current_loop != self._loop_id and self._playwright is not None:
+            logger.debug("Event loop changed, recreating browser for thread %d",
+                         __import__("threading").get_ident())
+            self._drop_refs()
+
         if self._playwright is None:
             self._playwright = await async_playwright().start()
+            self._loop_id = current_loop
 
         if self._should_recycle():
             await self._teardown_browser()
@@ -130,6 +146,13 @@ class _ThreadLocalBrowser:
 
         self._task_count += 1
         return self._context
+
+    def _drop_refs(self):
+        """Drop references without awaiting close on a potentially dead loop."""
+        self._playwright = None
+        self._browser = None
+        self._context = None
+        self._loop_id = 0
 
     async def close(self):
         await self._teardown_browser()
