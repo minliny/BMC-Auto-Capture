@@ -8,7 +8,17 @@
       "command_or_url": "/UI/Static/#/navigate/system/storage",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [
+        {
+          "name": "存储页面基础校验",
+          "desc": "验证存储管理页面正常加载，无异常告警",
+          "checks": [
+            {"type": "text_exists", "target": "Storage", "desc": "页面包含Storage标题"},
+            {"type": "text_not_exists", "target": "异常", "desc": "页面无异常状态"},
+            {"type": "text_not_exists", "target": "告警", "desc": "页面无告警信息"}
+          ]
+        }
+      ]
     },
     "机柜RM211的管理iBMC IP查询和设置测试": {
       "task_type": "BMC",
@@ -174,13 +184,13 @@
       "retry_count": 0,
       "rules": [
         {
-          "rule_name": "check_output_not_empty",
-          "rule_type": "advanced",
-          "enabled": false,
-          "actions": [
-            {"action_type": "assert_text", "value": "up", "_note": "输出应包含 up 状态的端口"}
-          ],
-          "_note": "需在真实设备验证后启用。预期端口清单待业务方确认。"
+          "name": "端口状态检查",
+          "desc": "L1交换机所有UP端口应正常，不应出现down状态",
+          "checks": [
+            {"type": "text_exists", "target": "up", "desc": "输出包含UP端口"},
+            {"type": "text_not_exists", "target": "down", "desc": "不存在down端口"},
+            {"type": "text_not_exists", "target": "DOWN", "desc": "不存在DOWN端口"}
+          ]
         }
       ]
     },

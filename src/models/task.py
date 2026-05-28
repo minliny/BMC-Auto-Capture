@@ -64,15 +64,70 @@ class Task:
     enabled: bool = True
 
     def parsed_rules(self) -> tuple[Rule, ...]:
-        """Parse rules_json into Rule objects. Returns empty tuple on failure."""
+        """Parse rules_json into Rule objects.
+
+        Supports two formats:
+        1. Simplified (v2): {"name":..., "desc":..., "checks":[...]}
+           Each check: {"type":..., "target":..., "expect":..., "desc":...}
+        2. Legacy (v1): {"rule_name":..., "rule_type":..., "actions":[...]}
+        """
         if not self.rules_json.strip():
             return ()
         try:
             raw = json.loads(self.rules_json)
             items = raw if isinstance(raw, list) else [raw]
-            return tuple(Rule.from_dict(r) for r in items)
-        except (json.JSONDecodeError, TypeError, KeyError):
+        except (json.JSONDecodeError, TypeError):
             return ()
+
+        result: list[Rule] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            # Detect simplified format: has "checks" key
+            if "checks" in item:
+                result.append(self._parse_simplified_rule(item))
+            else:
+                result.append(Rule.from_dict(item))
+        return tuple(result)
+
+    @staticmethod
+    def _parse_simplified_rule(item: dict) -> Rule:
+        """Convert simplified rule format to internal Rule model."""
+        checks = item.get("checks", [])
+        actions: list[RuleAction] = []
+        for c in checks:
+            if not isinstance(c, dict):
+                continue
+            t = c.get("type", "")
+            target = c.get("target", "")
+            expect = c.get("expect", "")
+            # Map simplified types to internal action_types
+            if t == "text_exists":
+                actions.append(RuleAction("assert_text", "", target))
+            elif t == "text_not_exists":
+                actions.append(RuleAction("assert_no_text", "", target))
+            elif t == "element_exists":
+                actions.append(RuleAction("assert_element", target, ""))
+            elif t == "element_not_exists":
+                actions.append(RuleAction("assert_no_element", target, ""))
+            elif t == "element_text_is":
+                # Combine: check element exists AND its text equals expect
+                actions.append(RuleAction("assert_element", target, ""))
+                actions.append(RuleAction("assert_element_text", target, expect))
+            elif t == "element_text_contains":
+                actions.append(RuleAction("assert_element", target, ""))
+                actions.append(RuleAction("assert_text", "", expect))
+            elif t in ("screenshot", "save_html", "save_txt",
+                        "click", "fill", "wait_for", "wait_millis"):
+                actions.append(RuleAction(t, target, expect))
+            else:
+                logger.warning("Unknown rule check type: %s", t)
+        return Rule(
+            rule_name=item.get("name", item.get("rule_name", "")),
+            rule_type="advanced",  # Simplified rules are always validation-only
+            enabled=item.get("enabled", True),
+            actions=tuple(actions),
+        )
 
     def basic_rules(self) -> tuple[Rule, ...]:
         return tuple(r for r in self.parsed_rules() if r.rule_type == "basic" and r.enabled)

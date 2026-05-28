@@ -135,6 +135,21 @@ class AssertNoElementHandler(RuleActionHandler):
             raise AssertionError(f"Forbidden element found: {action.selector}")
 
 
+class AssertElementTextHandler(RuleActionHandler):
+    """Fail if element's text does not equal the expected value."""
+    action_type = "assert_element_text"
+
+    async def execute(self, action, context) -> None:
+        el = await context.page.query_selector(action.selector)
+        if not el:
+            raise AssertionError(f"Element not found: {action.selector}")
+        text = await el.inner_text()
+        if text.strip() != action.value.strip():
+            raise AssertionError(
+                f"Element '{action.selector}' text mismatch: expected '{action.value}', got '{text.strip()}'"
+            )
+
+
 # Register all built-in handlers
 def _register_all():
     for cls in [
@@ -150,6 +165,7 @@ def _register_all():
         AssertElementHandler,
         AssertNoTextHandler,
         AssertNoElementHandler,
+        AssertElementTextHandler,
     ]:
         register(cls.action_type, cls)
 
