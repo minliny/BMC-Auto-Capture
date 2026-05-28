@@ -5,6 +5,10 @@ title BMC Auto-Capture v0.2.1
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
+
+:: Auto-unblock files downloaded from internet (removes Mark of the Web)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Path '%ROOT%' -Recurse -File | Unblock-File -ErrorAction SilentlyContinue" >nul 2>nul
+
 set "RUNTIME=%ROOT%\runtime"
 set "APP=%ROOT%\app"
 set "ENGINE=%RUNTIME%\bmc-engine.exe"
