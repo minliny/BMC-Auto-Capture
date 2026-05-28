@@ -137,11 +137,22 @@ class SSHExecutor(AbstractExecutor):
                                 err_chunks.append(chunk)
                                 got_data = True
 
+                        # Handle pagination: "---- More ----" / "----More----"
+                        if out_chunks:
+                            tail = b"".join(out_chunks[-2:]).decode("utf-8", errors="replace")
+                            if "----More----" in tail or "---- More ----" in tail:
+                                try:
+                                    _stdin.write(" ")
+                                    _stdin.flush()
+                                    last_data_at = time.time()
+                                    got_data = True
+                                except Exception:
+                                    pass
+
                         if channel.exit_status_ready():
                             break  # Command process exited (Linux)
 
                         # Idle detection: no data for idle_timeout → command output complete
-                        # This handles network device CLIs that never send exit-status
                         if time.time() - last_data_at > self.idle_timeout:
                             break
 
@@ -157,7 +168,7 @@ class SSHExecutor(AbstractExecutor):
                     except Exception:
                         pass
 
-                    # Check if we hit the hard deadline (idle timeout is normal, not a warning)
+                    # Check if we hit the hard deadline
                     if time.time() >= cmd_deadline and not channel.exit_status_ready():
                         out_chunks.append("\n[WARNING] 硬超时 - 已保存部分输出".encode("utf-8"))
 
@@ -192,13 +203,16 @@ class SSHExecutor(AbstractExecutor):
 
                 step_index += 1
 
+            # File naming: {设备IP}-{设备名称} (SSH uses inband_ip)
+            file_base = f"{device.inband_ip}-{device.device_name}"
+
             # Write output
             full_output = "\n\n".join(all_output)
-            txt_path = write_text_file(output_dir, "output.txt", full_output)
+            txt_path = write_text_file(output_dir, f"{file_base}.txt", full_output)
             result.txt_file = txt_path
 
             # Generate terminal-style screenshot
-            ss_path = render_text_to_image(full_output, output_dir, "terminal.png")
+            ss_path = render_text_to_image(full_output, output_dir, f"{file_base}.png")
             result.screenshots = (ss_path,)
             result.step_results.append(StepResult(
                 step_index=step_index,
@@ -235,6 +249,7 @@ class SSHExecutor(AbstractExecutor):
 
         # Generate terminal screenshot for error paths too (partial output)
         if not result.screenshots and output_dir:
+            file_base = f"{device.inband_ip}-{device.device_name}"
             error_text = f"EXECUTION FAILED\n{'=' * 60}\n"
             error_text += f"Device: {device.device_name}\n"
             error_text += f"Task: {task.task_name}\n"
@@ -244,7 +259,7 @@ class SSHExecutor(AbstractExecutor):
                 error_text += f"\n{'─' * 60}\nPartial output:\n"
                 error_text += "\n\n".join(all_output[-3:])  # Last 3 commands
             try:
-                ss_path = render_text_to_image(error_text, output_dir, "terminal_error.png")
+                ss_path = render_text_to_image(error_text, output_dir, f"{file_base}.png")
                 result.screenshots = (ss_path,)
             except Exception:
                 pass
@@ -254,7 +269,8 @@ class SSHExecutor(AbstractExecutor):
         result.duration_seconds = result.ended_at - result.started_at
 
         # Write task log
-        log_path = write_log_file(output_dir, "task.log", self._build_log(result))
+        file_base = f"{device.inband_ip}-{device.device_name}" if device.inband_ip else f"noip-{device.device_name}"
+        log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result))
         result.log_file = log_path
 
         return result
@@ -269,13 +285,8 @@ class SSHExecutor(AbstractExecutor):
         return [c.strip() for c in raw.split(";") if c.strip()]
 
     def _build_output_dir(self, root: str, device, task) -> str:
-        # Render template variables
-        tmpl = task.output_dir_template
-        tmpl = tmpl.replace("{device_name}", device.device_name)
-        tmpl = tmpl.replace("{device_group}", device.device_group)
-        tmpl = tmpl.replace("{task_name}", task.task_name)
-        tmpl = tmpl.replace("{task_type}", task.task_type)
-        return os.path.join(root, tmpl)
+        seq_str = task.sequence_str or str(task.sequence)
+        return os.path.join(root, f"{seq_str} {task.task_name}", device.device_group)
 
     def _classify_socket_error(self, e: socket.error) -> str:
         errno = e.errno if hasattr(e, "errno") else 0

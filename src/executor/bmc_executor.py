@@ -236,7 +236,8 @@ class BMCExecutor(AbstractExecutor):
         result.ended_at = time.time()
         result.duration_seconds = result.ended_at - result.started_at
 
-        log_path = write_log_file(output_dir, "task.log", self._build_log(result))
+        file_base = f"{device.bmc_ip}-{device.device_name}"
+        log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result))
         result.log_file = log_path
 
         return result
@@ -513,15 +514,11 @@ class BMCExecutor(AbstractExecutor):
                     f"target_url={target_url} current_url={page.url}"
                 )
 
+        # File naming: {设备IP}-{设备名称}
+        file_base = f"{device.bmc_ip}-{device.device_name}"
+
         # Full-page screenshot
-        ss_filename = (task.image_name_template
-                       .replace("{device_name}", result.device_name)
-                       .replace("{task_name}", result.task_name)
-                       .replace("{step}", "001")
-                       .replace("{timestamp}", time.strftime("%Y%m%d_%H%M%S")))
-        if not ss_filename.endswith(".png"):
-            ss_filename += ".png"
-        ss_path = os.path.join(output_dir, ss_filename)
+        ss_path = os.path.join(output_dir, f"{file_base}.png")
         await page.screenshot(path=ss_path, full_page=True)
 
         result.screenshots = (ss_path,)
@@ -535,7 +532,7 @@ class BMCExecutor(AbstractExecutor):
 
         # Save HTML
         html_content = await page.content()
-        html_path = write_html_file(output_dir, "page.html", html_content)
+        html_path = write_html_file(output_dir, f"{file_base}.html", html_content)
         result.html_file = html_path
 
         # Run rules (basic = blocking, advanced = validation only)
@@ -626,14 +623,10 @@ class BMCExecutor(AbstractExecutor):
                 elif action_type == "wait":
                     await asyncio.sleep(float(value) if value else 1.0)
                 elif action_type == "screenshot":
-                    ss_filename = (task.image_name_template
-                                   .replace("{device_name}", result.device_name)
-                                   .replace("{task_name}", result.task_name)
-                                   .replace("{step}", f"{i:03d}")
-                                   .replace("{timestamp}", time.strftime("%Y%m%d_%H%M%S")))
-                    if not ss_filename.endswith(".png"):
-                        ss_filename += ".png"
-                    ss_path = os.path.join(output_dir, ss_filename)
+                    file_base = f"{device.bmc_ip}-{device.device_name}"
+                    if action.get("value"):
+                        file_base += f"_{action['value']}"
+                    ss_path = os.path.join(output_dir, f"{file_base}_{i:03d}.png")
                     await page.screenshot(path=ss_path, full_page=True)
                     result.screenshots = result.screenshots + (ss_path,)
                     result.step_results.append(StepResult(
@@ -705,12 +698,8 @@ class BMCExecutor(AbstractExecutor):
             )
 
     def _build_output_dir(self, root: str, device, task) -> str:
-        tmpl = task.output_dir_template
-        tmpl = tmpl.replace("{device_name}", device.device_name)
-        tmpl = tmpl.replace("{device_group}", device.device_group)
-        tmpl = tmpl.replace("{task_name}", task.task_name)
-        tmpl = tmpl.replace("{task_type}", task.task_type)
-        return os.path.join(root, tmpl)
+        seq_str = task.sequence_str or str(task.sequence)
+        return os.path.join(root, f"{seq_str} {task.task_name}", device.device_group)
 
     def _build_log(self, result: ExecutionResult) -> str:
         lines = [

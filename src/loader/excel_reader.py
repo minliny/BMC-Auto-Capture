@@ -292,9 +292,11 @@ def load_tasks(
         if execution_mode == "CUSTOM_SCRIPT" and not tdef.get("enabled", False):
             enabled = False
 
+        raw_seq = _str(vals[0]) if len(vals) > 0 else str(i + 1)
         task = Task(
             row_index=i + 2,
             sequence=_int(vals[0]) if len(vals) > 0 else i + 1,
+            sequence_str=raw_seq,
             task_name=task_name,
             task_type=task_type,
             match_group=match_group,
