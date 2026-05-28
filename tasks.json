@@ -9,7 +9,9 @@
       "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/system/storage\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \"i.el-tree-node__expand-icon:not(.is-leaf), .el-tree-node__expand-icon:not(.is-leaf)\", \"_note\": \"展开存储树\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"click\", \"selector\": \"#LogicalDrive0, span:has-text('Logical Drive 0'), text=Logical Drive 0\", \"_note\": \"点击Logical Drive 0\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"screenshot\", \"value\": \"logical_drive_0\"}, {\"action\": \"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "机柜RM211的管理iBMC IP查询和设置测试": {
       "task_type": "BMC",
@@ -17,7 +19,9 @@
       "command_or_url": "/UI/Static/#/navigate/manager/network",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点远程上电和下电测试": {
       "task_type": "BMC",
@@ -25,7 +29,9 @@
       "command_or_url": "/UI/Static/#/navigate/system/power/control",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点部件信息查询测试-资产摘要": {
       "task_type": "BMC",
@@ -33,7 +39,9 @@
       "command_or_url": "/UI/Static/#/navigate/system/info/product",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点部件信息查询测试-网络适配器": {
       "task_type": "BMC",
@@ -41,7 +49,9 @@
       "command_or_url": "/UI/Static/#/navigate/system/info/net",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点部件信息查询测试-门限传感器": {
       "task_type": "BMC",
@@ -49,7 +59,9 @@
       "command_or_url": "/UI/Static/#/navigate/system/info/sensor",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点部件信息查询测试-电源信息": {
       "task_type": "BMC",
@@ -57,7 +69,9 @@
       "command_or_url": "/UI/Static/#/navigate/system/power/converter",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点部件信息查询测试-风扇信息": {
       "task_type": "BMC",
@@ -65,7 +79,9 @@
       "command_or_url": "/UI/Static/#/navigate/system/fans/fans-info",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "风扇冗余测试": {
       "task_type": "BMC",
@@ -73,7 +89,9 @@
       "command_or_url": "/UI/Static/#/navigate/system/fans/fans-info",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "A3 BMC首页截图": {
       "task_type": "BMC",
@@ -95,7 +113,9 @@
           ],
           "_note": "通用 BMC 页面无告警检查。需在真实设备验证后启用。"
         }
-      ]
+      ],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "操作系统安装测试": {
       "task_type": "SSH",
@@ -103,7 +123,9 @@
       "command_or_url": "uname -a",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "NPU驱动和固件安装测试": {
       "task_type": "SSH",
@@ -111,7 +133,9 @@
       "command_or_url": "npu-smi info\n/usr/local/Ascend/driver/tools/upgrade-tool --device_index -1 --component -1 --version",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "灵衢网络管理网口IP查询和设置测试": {
       "task_type": "SSH",
@@ -119,7 +143,9 @@
       "command_or_url": "system-view\ninterface MEth0/0/0\ndisplay this",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点电子标签查询测试": {
       "task_type": "SSH",
@@ -127,7 +153,9 @@
       "command_or_url": "display device elabel",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点灵衢总线板与灵衢总线和以太板CPLD版本信息查询测试": {
       "task_type": "SSH",
@@ -135,7 +163,9 @@
       "command_or_url": "display device card\ndisplay version",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点光口状态查询测试": {
       "task_type": "SSH",
@@ -157,7 +187,9 @@
           ],
           "_note": "需在真实设备验证后启用。预期端口清单待业务方确认。"
         }
-      ]
+      ],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点光模块信息查询测试": {
       "task_type": "SSH",
@@ -165,7 +197,9 @@
       "command_or_url": "display interface transceiver",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点温度管理测试": {
       "task_type": "SSH",
@@ -173,7 +207,9 @@
       "command_or_url": "display device temperature",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": []
+      "rules": [],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点L1交换网络端口查询测试": {
       "task_type": "SSH",
@@ -203,7 +239,9 @@
             }
           ]
         }
-      ]
+      ],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "模块拔插告警上报测试": {
       "task_type": "SSH",
@@ -225,7 +263,9 @@
           ],
           "_note": "需在真实设备验证后启用。拔插场景和目标端口未定义前不启用。"
         }
-      ]
+      ],
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点上电测试-内存": {
       "task_type": "BMC",
@@ -235,7 +275,9 @@
       "retry_count": 0,
       "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_page_capture wrapper, PAGE_MAP 映射缺失)",
-      "_migrated_to": "BMC_URL — 旧版本仅打开 memory 页面截图，无点击交互"
+      "_migrated_to": "BMC_URL — 旧版本仅打开 memory 页面截图，无点击交互",
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点上电测试-CPU": {
       "task_type": "BMC",
@@ -245,7 +287,9 @@
       "retry_count": 0,
       "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_page_capture wrapper, PAGE_MAP 映射缺失)",
-      "_migrated_to": "BMC_URL — 旧版本仅打开 processor 页面截图，无点击交互"
+      "_migrated_to": "BMC_URL — 旧版本仅打开 processor 页面截图，无点击交互",
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点iBMC IP查询和设置测试": {
       "task_type": "BMC",
@@ -255,7 +299,9 @@
       "retry_count": 0,
       "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_2_ibmc_ip_network_test)",
-      "_migrated_to": "BMC_URL — 旧版本源码仅打开 network 页面截图，无实际 IP 设置动作"
+      "_migrated_to": "BMC_URL — 旧版本源码仅打开 network 页面截图，无实际 IP 设置动作",
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点部件信息查询测试-CPU": {
       "task_type": "BMC",
@@ -268,7 +314,9 @@
       "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_processor_cpu_test)",
       "_migrated_to": "BMC_ACTIONS — goto processor → click CPU tab → click expand → screenshot",
-      "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。"
+      "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。",
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点部件信息查询测试-NPU": {
       "task_type": "BMC",
@@ -281,7 +329,9 @@
       "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_processor_npu_test)",
       "_migrated_to": "BMC_ACTIONS — goto processor → click NPU tab → click expand → screenshot",
-      "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。"
+      "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。",
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "计算节点部件信息查询测试-内存": {
       "task_type": "BMC",
@@ -294,7 +344,9 @@
       "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_memory_info_test)",
       "_migrated_to": "BMC_ACTIONS — goto memory → click expand → screenshot",
-      "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。"
+      "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。",
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "电源冗余测试": {
       "task_type": "BMC",
@@ -307,7 +359,9 @@
       "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_2_rm211_power_redundancy_system_event)",
       "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
-      "_note": "未在真实设备验证，默认禁用。旧版同一脚本同时用于电源冗余和硬盘冗余-系统日志。"
+      "_note": "未在真实设备验证，默认禁用。旧版同一脚本同时用于电源冗余和硬盘冗余-系统日志。",
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "硬盘冗余测试-系统日志": {
       "task_type": "BMC",
@@ -320,7 +374,9 @@
       "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_2_rm211_power_redundancy_system_event — 同脚本)",
       "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
-      "_note": "未在真实设备验证，默认禁用。与电源冗余测试使用相同脚本。"
+      "_note": "未在真实设备验证，默认禁用。与电源冗余测试使用相同脚本。",
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "硬盘冗余测试": {
       "task_type": "BMC",
@@ -333,7 +389,9 @@
       "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_4_a3_disk_redundancy_logical_drive)",
       "_migrated_to": "BMC_ACTIONS — goto storage → expand tree → click Logical Drive 0 → screenshot",
-      "_note": "未在真实设备验证，默认禁用。只读查看，不涉及 RAID 配置变更。UI 控件可能因 BMC 版本不同而异。"
+      "_note": "未在真实设备验证，默认禁用。只读查看，不涉及 RAID 配置变更。UI 控件可能因 BMC 版本不同而异。",
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     },
     "拔插硬盘后清除Foreign配置": {
       "task_type": "BMC",
@@ -345,7 +403,9 @@
       "rules": [],
       "enabled": true,
       "_high_risk": true,
-      "_warning": "高风险写操作：执行 RAID ClearForeign 配置清除。误执行会导致数据丢失。仅在以下条件全部满足时才可启用：(1) 用户明确了解操作后果 (2) 已确认目标设备状态 (3) 非批量执行 (4) 有操作审计记录。禁止 Agent 自动下发此任务。"
+      "_warning": "高风险写操作：执行 RAID ClearForeign 配置清除。误执行会导致数据丢失。仅在以下条件全部满足时才可启用：(1) 用户明确了解操作后果 (2) 已确认目标设备状态 (3) 非批量执行 (4) 有操作审计记录。禁止 Agent 自动下发此任务。",
+      "output_dir_template": "{task_sequence} {task_name}/{device_group}",
+      "image_name_template": "{device_ip}-{device_name}"
     }
   }
 }

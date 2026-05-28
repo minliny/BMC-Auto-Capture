@@ -236,7 +236,11 @@ class BMCExecutor(AbstractExecutor):
         result.ended_at = time.time()
         result.duration_seconds = result.ended_at - result.started_at
 
-        file_base = f"{device.bmc_ip}-{device.device_name}"
+        file_base = (task.image_name_template
+                     .replace("{device_ip}", device.bmc_ip)
+                     .replace("{device_name}", device.device_name)
+                     .replace("{task_name}", task.task_name)
+                     .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
         log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result))
         result.log_file = log_path
 
@@ -576,8 +580,12 @@ class BMCExecutor(AbstractExecutor):
                     f"target_url={target_url} current_url={page.url}"
                 )
 
-        # File naming: {设备IP}-{设备名称}
-        file_base = f"{device.bmc_ip}-{device.device_name}"
+        # File naming from template
+        file_base = (task.image_name_template
+                     .replace("{device_ip}", device.bmc_ip)
+                     .replace("{device_name}", device.device_name)
+                     .replace("{task_name}", task.task_name)
+                     .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
 
         # Full-page screenshot
         ss_path = os.path.join(output_dir, f"{file_base}.png")
@@ -685,7 +693,11 @@ class BMCExecutor(AbstractExecutor):
                 elif action_type == "wait":
                     await asyncio.sleep(float(value) if value else 1.0)
                 elif action_type == "screenshot":
-                    file_base = f"{device.bmc_ip}-{device.device_name}"
+                    file_base = (task.image_name_template
+                                 .replace("{device_ip}", device.bmc_ip)
+                                 .replace("{device_name}", device.device_name)
+                                 .replace("{task_name}", task.task_name)
+                                 .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
                     ss_path = os.path.join(output_dir, f"{file_base}.png")
                     await page.screenshot(path=ss_path, full_page=True)
                     result.screenshots = result.screenshots + (ss_path,)
@@ -695,7 +707,11 @@ class BMCExecutor(AbstractExecutor):
                     ))
                 elif action_type == "save_html":
                     html = await page.content()
-                    file_base = f"{device.bmc_ip}-{device.device_name}"
+                    file_base = (task.image_name_template
+                                 .replace("{device_ip}", device.bmc_ip)
+                                 .replace("{device_name}", device.device_name)
+                                 .replace("{task_name}", task.task_name)
+                                 .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
                     html_path = write_html_file(output_dir, f"{file_base}.html", html)
                     result.html_file = html_path
                 elif action_type == "assert_visible":
@@ -758,8 +774,13 @@ class BMCExecutor(AbstractExecutor):
             )
 
     def _build_output_dir(self, root: str, device, task) -> str:
+        tmpl = task.output_dir_template
         seq_str = task.sequence_str or str(task.sequence)
-        return os.path.join(root, f"{seq_str} {task.task_name}", device.device_group)
+        tmpl = tmpl.replace("{task_sequence}", seq_str)
+        tmpl = tmpl.replace("{task_name}", task.task_name)
+        tmpl = tmpl.replace("{device_group}", device.device_group)
+        tmpl = tmpl.replace("{device_name}", device.device_name)
+        return os.path.join(root, tmpl)
 
     def _build_log(self, result: ExecutionResult) -> str:
         lines = [

@@ -203,8 +203,12 @@ class SSHExecutor(AbstractExecutor):
 
                 step_index += 1
 
-            # File naming: {设备IP}-{设备名称} (SSH uses inband_ip)
-            file_base = f"{device.inband_ip}-{device.device_name}"
+            # File naming from template (SSH uses inband_ip)
+            file_base = (task.image_name_template
+                         .replace("{device_ip}", device.inband_ip)
+                         .replace("{device_name}", device.device_name)
+                         .replace("{task_name}", task.task_name)
+                         .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
 
             # Write output
             full_output = "\n\n".join(all_output)
@@ -249,7 +253,11 @@ class SSHExecutor(AbstractExecutor):
 
         # Generate terminal screenshot for error paths too (partial output)
         if not result.screenshots and output_dir:
-            file_base = f"{device.inband_ip}-{device.device_name}"
+            file_base = (task.image_name_template
+                         .replace("{device_ip}", device.inband_ip)
+                         .replace("{device_name}", device.device_name)
+                         .replace("{task_name}", task.task_name)
+                         .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
             error_text = f"EXECUTION FAILED\n{'=' * 60}\n"
             error_text += f"Device: {device.device_name}\n"
             error_text += f"Task: {task.task_name}\n"
@@ -269,7 +277,11 @@ class SSHExecutor(AbstractExecutor):
         result.duration_seconds = result.ended_at - result.started_at
 
         # Write task log
-        file_base = f"{device.inband_ip}-{device.device_name}" if device.inband_ip else f"noip-{device.device_name}"
+        file_base = (task.image_name_template
+                     .replace("{device_ip}", device.inband_ip or "noip")
+                     .replace("{device_name}", device.device_name)
+                     .replace("{task_name}", task.task_name)
+                     .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
         log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result))
         result.log_file = log_path
 
@@ -285,8 +297,13 @@ class SSHExecutor(AbstractExecutor):
         return [c.strip() for c in raw.split(";") if c.strip()]
 
     def _build_output_dir(self, root: str, device, task) -> str:
+        tmpl = task.output_dir_template
         seq_str = task.sequence_str or str(task.sequence)
-        return os.path.join(root, f"{seq_str} {task.task_name}", device.device_group)
+        tmpl = tmpl.replace("{task_sequence}", seq_str)
+        tmpl = tmpl.replace("{task_name}", task.task_name)
+        tmpl = tmpl.replace("{device_group}", device.device_group)
+        tmpl = tmpl.replace("{device_name}", device.device_name)
+        return os.path.join(root, tmpl)
 
     def _classify_socket_error(self, e: socket.error) -> str:
         errno = e.errno if hasattr(e, "errno") else 0
