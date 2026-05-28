@@ -210,8 +210,8 @@ def main():
         from collections import defaultdict
         groups: dict[str, dict] = defaultdict(lambda: {
             "devices": set(),
-            "bmc_ok": 0, "bmc_fail": defaultdict(list),
-            "ssh_ok": 0, "ssh_fail": defaultdict(list),
+            "bmc_ok": 0, "bmc_no_ip": [], "bmc_fail": defaultdict(list),
+            "ssh_ok": 0, "ssh_no_ip": [], "ssh_fail": defaultdict(list),
             "bmc_with_ip": set(),
             "ssh_with_ip": set(),
         })
@@ -226,7 +226,7 @@ def main():
                 g["bmc_ok"] += 1
                 g["bmc_with_ip"].add(r.device_name)
             elif r.bmc_status == "IP_EMPTY":
-                g["bmc_fail"]["IP为空"].append(r)
+                g["bmc_no_ip"].append(r)
             elif r.bmc_status == "HOST_RESOLVE_FAILED":
                 g["bmc_fail"]["DNS解析失败"].append(r)
             elif r.bmc_status == "TIMEOUT":
@@ -240,18 +240,12 @@ def main():
             else:
                 g["bmc_fail"][r.bmc_status].append(r)
 
-            if r.bmc_status != "IP_EMPTY" and r.bmc_status != "UNKNOWN":
-                # Has some kind of BMC address (could be wrong but not empty)
-                pass
-            if r.bmc_status == "OK":
-                g["bmc_with_ip"].add(r.device_name)
-
             # SSH
             if r.ssh_status == "OK":
                 g["ssh_ok"] += 1
                 g["ssh_with_ip"].add(r.device_name)
             elif r.ssh_status == "IP_EMPTY":
-                g["ssh_fail"]["IP为空"].append(r)
+                g["ssh_no_ip"].append(r)
             elif r.ssh_status == "HOST_RESOLVE_FAILED":
                 g["ssh_fail"]["DNS解析失败"].append(r)
             elif r.ssh_status == "TIMEOUT":
@@ -265,9 +259,6 @@ def main():
             else:
                 g["ssh_fail"][r.ssh_status].append(r)
 
-            if r.ssh_status == "OK":
-                g["ssh_with_ip"].add(r.device_name)
-
         # Print per-group summary
         print(f"\n{'=' * 80}")
         print(f"  Connectivity Preflight — Per-Group Summary")
@@ -280,13 +271,14 @@ def main():
             print(f"\n  [{group_name}]  ({total_dev} devices)")
 
             # BMC
-            bmc_total = g["bmc_ok"] + sum(len(v) for v in g["bmc_fail"].values())
             print(f"    ── 带外 (BMC) :443 ──")
-            print(f"    设备总数: {total_dev}  有BMC IP: {len(g['bmc_with_ip'])}  探测总数: {bmc_total}")
-            print(f"    通过: {g['bmc_ok']}")
-            fail_count = sum(len(v) for v in g["bmc_fail"].values())
-            if fail_count > 0:
-                print(f"    不通过: {fail_count}")
+            print(f"    设备总数: {total_dev}")
+            print(f"    已配置BMC IP: {len(g['bmc_with_ip'])} 台")
+            print(f"    未配置BMC IP: {len(g['bmc_no_ip'])} 台（仅带内设备）")
+            print(f"    连通测试通过: {g['bmc_ok']}")
+            bmc_fail_count = sum(len(v) for v in g["bmc_fail"].values())
+            if bmc_fail_count > 0:
+                print(f"    连通测试不通过: {bmc_fail_count}")
                 for cat, items in sorted(g["bmc_fail"].items(), key=lambda x: -len(x[1])):
                     print(f"      └ {cat}: {len(items)} 台")
                     for r in items[:3]:
@@ -294,16 +286,17 @@ def main():
                     if len(items) > 3:
                         print(f"         · ... and {len(items) - 3} more")
             else:
-                print(f"    不通过: 0")
+                print(f"    连通测试不通过: 0")
 
             # SSH
-            ssh_total = g["ssh_ok"] + sum(len(v) for v in g["ssh_fail"].values())
             print(f"    ── 带内 (SSH) :22 ──")
-            print(f"    设备总数: {total_dev}  有带内IP: {len(g['ssh_with_ip'])}  探测总数: {ssh_total}")
-            print(f"    通过: {g['ssh_ok']}")
-            fail_count = sum(len(v) for v in g["ssh_fail"].values())
-            if fail_count > 0:
-                print(f"    不通过: {fail_count}")
+            print(f"    设备总数: {total_dev}")
+            print(f"    已配置带内IP: {len(g['ssh_with_ip'])} 台")
+            print(f"    未配置带内IP: {len(g['ssh_no_ip'])} 台（仅带外设备）")
+            print(f"    连通测试通过: {g['ssh_ok']}")
+            ssh_fail_count = sum(len(v) for v in g["ssh_fail"].values())
+            if ssh_fail_count > 0:
+                print(f"    连通测试不通过: {ssh_fail_count}")
                 for cat, items in sorted(g["ssh_fail"].items(), key=lambda x: -len(x[1])):
                     print(f"      └ {cat}: {len(items)} 台")
                     for r in items[:3]:
@@ -311,15 +304,19 @@ def main():
                     if len(items) > 3:
                         print(f"         · ... and {len(items) - 3} more")
             else:
-                print(f"    不通过: 0")
+                print(f"    连通测试不通过: 0")
 
         # Overall
         all_bmc_ok = sum(g["bmc_ok"] for g in groups.values())
         all_bmc_fail = sum(sum(len(v) for v in g["bmc_fail"].values()) for g in groups.values())
+        all_bmc_no_ip = sum(len(g["bmc_no_ip"]) for g in groups.values())
         all_ssh_ok = sum(g["ssh_ok"] for g in groups.values())
         all_ssh_fail = sum(sum(len(v) for v in g["ssh_fail"].values()) for g in groups.values())
+        all_ssh_no_ip = sum(len(g["ssh_no_ip"]) for g in groups.values())
         print(f"\n  {'─' * 70}")
-        print(f"  TOTAL: {report.total} devices | BMC {all_bmc_ok}/{all_bmc_ok+all_bmc_fail} OK | SSH {all_ssh_ok}/{all_ssh_ok+all_ssh_fail} OK")
+        print(f"  TOTAL: {report.total} devices")
+        print(f"  BMC: {all_bmc_ok} OK / {all_bmc_fail} FAIL / {all_bmc_no_ip} 未配置IP")
+        print(f"  SSH: {all_ssh_ok} OK / {all_ssh_fail} FAIL / {all_ssh_no_ip} 未配置IP")
         print(f"{'=' * 80}")
         sys.exit(0)
 

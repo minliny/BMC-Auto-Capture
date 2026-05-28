@@ -90,8 +90,6 @@ def _categorize_failure(status: str, reason: str) -> str:
     """Categorize an execution failure into a human-readable type."""
     if status == "EXEC_SUCCESS":
         return "OK"
-    if "IP为空" in reason or "IP empty" in reason.lower():
-        return "IP为空"
     if "认证失败" in reason or "Authentication" in reason or "Auth" in reason:
         return "账号/密码错误"
     if "登录失败" in reason or "Login fail" in reason.lower():
@@ -122,9 +120,11 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
     groups: dict[str, dict] = defaultdict(lambda: {
         "devices": set(),
         "bmc_devices_with_ip": set(),
-        "bmc_ok": 0, "bmc_fail": defaultdict(list),
+        "bmc_ok": 0, "bmc_no_ip": defaultdict(list),
+        "bmc_fail": defaultdict(list),
         "ssh_devices_with_ip": set(),
-        "ssh_ok": 0, "ssh_fail": defaultdict(list),
+        "ssh_ok": 0, "ssh_no_ip": defaultdict(list),
+        "ssh_fail": defaultdict(list),
     })
 
     for r in results:
@@ -136,6 +136,8 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
                 g["bmc_devices_with_ip"].add(r.device_name)
             if r.execution_status == "EXEC_SUCCESS":
                 g["bmc_ok"] += 1
+            elif "IP为空" in (r.execution_failure_reason or ""):
+                g["bmc_no_ip"]["未配置BMC IP"].append(r)
             else:
                 cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
                 g["bmc_fail"][cat].append(r)
@@ -145,6 +147,8 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
                 g["ssh_devices_with_ip"].add(r.device_name)
             if r.execution_status == "EXEC_SUCCESS":
                 g["ssh_ok"] += 1
+            elif "IP为空" in (r.execution_failure_reason or ""):
+                g["ssh_no_ip"]["未配置带内IP"].append(r)
             else:
                 cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
                 g["ssh_fail"][cat].append(r)
@@ -166,15 +170,16 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
         print(f"\n  [{group_name}]  ({total_dev} devices)")
 
         # BMC section
-        bmc_total = g["bmc_ok"] + sum(len(v) for v in g["bmc_fail"].values())
+        bmc_total = g["bmc_ok"] + sum(len(v) for v in g["bmc_no_ip"].values()) + sum(len(v) for v in g["bmc_fail"].values())
+        bmc_fail_count = sum(len(v) for v in g["bmc_fail"].values())
         print(f"    ── 带外 (BMC) ──")
-        print(f"    设备总数: {total_dev}  有BMC IP: {bmc_with_ip}  任务总数: {bmc_total}")
+        print(f"    设备总数: {total_dev}  已配置BMC IP: {bmc_with_ip}")
         print(f"    连通成功: {g['bmc_ok']}")
-        if g["bmc_fail"]:
-            print(f"    不通过: {sum(len(v) for v in g['bmc_fail'].values())}")
+        print(f"    未配置IP: {total_dev - bmc_with_ip} 台（仅带内设备）")
+        if bmc_fail_count > 0:
+            print(f"    不通过: {bmc_fail_count}")
             for cat, items in sorted(g["bmc_fail"].items(), key=lambda x: -len(x[1])):
                 print(f"      └ {cat}: {len(items)} 台")
-                # Show first 3 device examples
                 for r in items[:3]:
                     reason = r.execution_failure_reason[:80] if r.execution_failure_reason else "(no detail)"
                     print(f"         · {r.device_name}: {reason}")
@@ -184,12 +189,14 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
             print(f"    不通过: 0")
 
         # SSH section
-        ssh_total = g["ssh_ok"] + sum(len(v) for v in g["ssh_fail"].values())
+        ssh_total = g["ssh_ok"] + sum(len(v) for v in g["ssh_no_ip"].values()) + sum(len(v) for v in g["ssh_fail"].values())
+        ssh_fail_count = sum(len(v) for v in g["ssh_fail"].values())
         print(f"    ── 带内 (SSH) ──")
-        print(f"    设备总数: {total_dev}  有带内IP: {ssh_with_ip}  任务总数: {ssh_total}")
+        print(f"    设备总数: {total_dev}  已配置带内IP: {ssh_with_ip}")
         print(f"    连通成功: {g['ssh_ok']}")
-        if g["ssh_fail"]:
-            print(f"    不通过: {sum(len(v) for v in g['ssh_fail'].values())}")
+        print(f"    未配置IP: {total_dev - ssh_with_ip} 台（仅带外设备）")
+        if ssh_fail_count > 0:
+            print(f"    不通过: {ssh_fail_count}")
             for cat, items in sorted(g["ssh_fail"].items(), key=lambda x: -len(x[1])):
                 print(f"      └ {cat}: {len(items)} 台")
                 for r in items[:3]:
@@ -223,7 +230,12 @@ def write_connectivity_csv(results: Sequence[ExecutionResult], output_dir: str,
             "任务名称", "任务类型", "执行状态", "失败分类", "失败原因",
         ])
         for r in sorted(results, key=lambda r: (r.device_group, r.device_name, r.task_name)):
-            cat = _categorize_failure(r.execution_status, r.execution_failure_reason) if r.execution_status != "EXEC_SUCCESS" else "OK"
+            if r.execution_status == "EXEC_SUCCESS":
+                cat = "OK"
+            elif "IP为空" in (r.execution_failure_reason or ""):
+                cat = "未配置IP"
+            else:
+                cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
             writer.writerow([
                 r.device_group, r.device_name, r.bmc_ip, r.inband_ip,
                 r.task_name, r.task_type, r.execution_status, cat,
