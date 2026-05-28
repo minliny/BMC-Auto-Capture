@@ -40,10 +40,20 @@ def _bool(val: Any) -> bool:
 
 
 def _int(val: Any, default: int = 0) -> int:
+    """Parse integer. Supports dotted notation like '4.1.7' → 4001007."""
     try:
         return int(val)
     except (ValueError, TypeError):
-        return default
+        pass
+    # Try dotted format: 4.1.7 → 4*1000000 + 1*1000 + 7 = 4001007
+    s = str(val).strip()
+    if s and all(p.isdigit() for p in s.split(".") if p):
+        parts = [int(p) for p in s.split(".")]
+        result = 0
+        for p in parts:
+            result = result * 1000 + p
+        return result
+    return default
 
 
 def _parse_tags(raw: str) -> tuple[str, ...]:
