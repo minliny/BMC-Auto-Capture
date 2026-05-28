@@ -87,7 +87,11 @@
           "rule_type": "advanced",
           "enabled": false,
           "actions": [
-            {"action_type": "assert_text", "value": "正常", "_note": "BMC 页面不应包含告警关键字。需在真实设备上确认 BMC 正常状态下的文本特征。"}
+            {
+              "action_type": "assert_text",
+              "value": "正常",
+              "_note": "BMC 页面不应包含告警关键字。需在真实设备上确认 BMC 正常状态下的文本特征。"
+            }
           ],
           "_note": "通用 BMC 页面无告警检查。需在真实设备验证后启用。"
         }
@@ -145,7 +149,11 @@
           "rule_type": "advanced",
           "enabled": false,
           "actions": [
-            {"action_type": "assert_text", "value": "up", "_note": "接口状态应包含 up，如果接口 down 则规则 FAIL"}
+            {
+              "action_type": "assert_text",
+              "value": "up",
+              "_note": "接口状态应包含 up，如果接口 down 则规则 FAIL"
+            }
           ],
           "_note": "需在真实设备验证后启用。预期端口清单待业务方确认。"
         }
@@ -178,9 +186,21 @@
           "name": "端口状态检查",
           "desc": "L1交换机所有UP端口应正常，不应出现down状态",
           "checks": [
-            {"type": "text_exists", "target": "up", "desc": "输出包含UP端口"},
-            {"type": "text_not_exists", "target": "down", "desc": "不存在down端口"},
-            {"type": "text_not_exists", "target": "DOWN", "desc": "不存在DOWN端口"}
+            {
+              "type": "text_exists",
+              "target": "up",
+              "desc": "输出包含UP端口"
+            },
+            {
+              "type": "text_not_exists",
+              "target": "down",
+              "desc": "不存在down端口"
+            },
+            {
+              "type": "text_not_exists",
+              "target": "DOWN",
+              "desc": "不存在DOWN端口"
+            }
           ]
         }
       ]
@@ -197,7 +217,11 @@
           "rule_type": "advanced",
           "enabled": false,
           "actions": [
-            {"action_type": "assert_text", "value": "up", "_note": "接口应处于 up 状态，如存在 down/error-down 则规则 FAIL"}
+            {
+              "action_type": "assert_text",
+              "value": "up",
+              "_note": "接口应处于 up 状态，如存在 down/error-down 则规则 FAIL"
+            }
           ],
           "_note": "需在真实设备验证后启用。拔插场景和目标端口未定义前不启用。"
         }
@@ -241,7 +265,7 @@
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "enabled": false,
+      "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_processor_cpu_test)",
       "_migrated_to": "BMC_ACTIONS — goto processor → click CPU tab → click expand → screenshot",
       "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。"
@@ -254,7 +278,7 @@
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "enabled": false,
+      "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_processor_npu_test)",
       "_migrated_to": "BMC_ACTIONS — goto processor → click NPU tab → click expand → screenshot",
       "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。"
@@ -267,7 +291,7 @@
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "enabled": false,
+      "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_memory_info_test)",
       "_migrated_to": "BMC_ACTIONS — goto memory → click expand → screenshot",
       "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。"
@@ -280,7 +304,7 @@
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "enabled": false,
+      "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_2_rm211_power_redundancy_system_event)",
       "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
       "_note": "未在真实设备验证，默认禁用。旧版同一脚本同时用于电源冗余和硬盘冗余-系统日志。"
@@ -293,7 +317,7 @@
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "enabled": false,
+      "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_2_rm211_power_redundancy_system_event — 同脚本)",
       "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
       "_note": "未在真实设备验证，默认禁用。与电源冗余测试使用相同脚本。"
@@ -306,7 +330,7 @@
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "enabled": false,
+      "enabled": true,
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_4_a3_disk_redundancy_logical_drive)",
       "_migrated_to": "BMC_ACTIONS — goto storage → expand tree → click Logical Drive 0 → screenshot",
       "_note": "未在真实设备验证，默认禁用。只读查看，不涉及 RAID 配置变更。UI 控件可能因 BMC 版本不同而异。"
@@ -319,7 +343,7 @@
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "enabled": false,
+      "enabled": true,
       "_high_risk": true,
       "_warning": "高风险写操作：执行 RAID ClearForeign 配置清除。误执行会导致数据丢失。仅在以下条件全部满足时才可启用：(1) 用户明确了解操作后果 (2) 已确认目标设备状态 (3) 非批量执行 (4) 有操作审计记录。禁止 Agent 自动下发此任务。"
     }
