@@ -19,6 +19,24 @@ from ..models.execution_result import ExecutionResult, StepResult
 from ..out.file_writer import write_text_file, write_log_file
 from ..out.screenshot import render_text_to_image
 
+
+def _resolve_template(tmpl: str, device, task) -> str:
+    """Replace Excel header name variables with actual values."""
+    seq = task.sequence_str or str(task.sequence)
+    return (tmpl
+            .replace("{任务序号}", seq)
+            .replace("{任务名称}", task.task_name)
+            .replace("{任务类型}", task.task_type)
+            .replace("{设备分类}", device.device_group)
+            .replace("{设备名称}", device.device_name)
+            .replace("{带外管理IP}", device.bmc_ip)
+            .replace("{带外管理用户名}", device.bmc_username)
+            .replace("{带外管理密码}", device.bmc_password)
+            .replace("{带内管理IP}", device.inband_ip)
+            .replace("{带内管理用户名}", device.inband_username)
+            .replace("{带内管理密码}", device.inband_password))
+
+
 logger = logging.getLogger("bmc_auto_capture.ssh")
 
 
@@ -203,12 +221,8 @@ class SSHExecutor(AbstractExecutor):
 
                 step_index += 1
 
-            # File naming from template (SSH uses inband_ip)
-            file_base = (task.image_name_template
-                         .replace("{device_ip}", device.inband_ip)
-                         .replace("{device_name}", device.device_name)
-                         .replace("{task_name}", task.task_name)
-                         .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
+            # File naming from template
+            file_base = _resolve_template(task.image_name_template, device, task)
 
             # Write output
             full_output = "\n\n".join(all_output)
@@ -297,13 +311,7 @@ class SSHExecutor(AbstractExecutor):
         return [c.strip() for c in raw.split(";") if c.strip()]
 
     def _build_output_dir(self, root: str, device, task) -> str:
-        tmpl = task.output_dir_template
-        seq_str = task.sequence_str or str(task.sequence)
-        tmpl = tmpl.replace("{task_sequence}", seq_str)
-        tmpl = tmpl.replace("{task_name}", task.task_name)
-        tmpl = tmpl.replace("{device_group}", device.device_group)
-        tmpl = tmpl.replace("{device_name}", device.device_name)
-        return os.path.join(root, tmpl)
+        return os.path.join(root, _resolve_template(task.output_dir_template, device, task))
 
     def _classify_socket_error(self, e: socket.error) -> str:
         errno = e.errno if hasattr(e, "errno") else 0

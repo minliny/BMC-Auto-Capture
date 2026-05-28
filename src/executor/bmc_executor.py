@@ -81,6 +81,23 @@ LOGIN_SUBMIT_SELECTORS = [
 ]
 
 
+def _resolve_template(tmpl: str, device, task) -> str:
+    """Replace Excel header name variables with actual values."""
+    seq = task.sequence_str or str(task.sequence)
+    return (tmpl
+            .replace("{任务序号}", seq)
+            .replace("{任务名称}", task.task_name)
+            .replace("{任务类型}", task.task_type)
+            .replace("{设备分类}", device.device_group)
+            .replace("{设备名称}", device.device_name)
+            .replace("{带外管理IP}", device.bmc_ip)
+            .replace("{带外管理用户名}", device.bmc_username)
+            .replace("{带外管理密码}", device.bmc_password)
+            .replace("{带内管理IP}", device.inband_ip)
+            .replace("{带内管理用户名}", device.inband_username)
+            .replace("{带内管理密码}", device.inband_password))
+
+
 class BMCLoginError(Exception):
     pass
 
@@ -236,11 +253,7 @@ class BMCExecutor(AbstractExecutor):
         result.ended_at = time.time()
         result.duration_seconds = result.ended_at - result.started_at
 
-        file_base = (task.image_name_template
-                     .replace("{device_ip}", device.bmc_ip)
-                     .replace("{device_name}", device.device_name)
-                     .replace("{task_name}", task.task_name)
-                     .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
+        file_base = _resolve_template(task.image_name_template, device, task)
         log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result))
         result.log_file = log_path
 
@@ -581,11 +594,7 @@ class BMCExecutor(AbstractExecutor):
                 )
 
         # File naming from template
-        file_base = (task.image_name_template
-                     .replace("{device_ip}", device.bmc_ip)
-                     .replace("{device_name}", device.device_name)
-                     .replace("{task_name}", task.task_name)
-                     .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
+        file_base = _resolve_template(task.image_name_template, device, task)
 
         # Full-page screenshot
         ss_path = os.path.join(output_dir, f"{file_base}.png")
@@ -774,13 +783,7 @@ class BMCExecutor(AbstractExecutor):
             )
 
     def _build_output_dir(self, root: str, device, task) -> str:
-        tmpl = task.output_dir_template
-        seq_str = task.sequence_str or str(task.sequence)
-        tmpl = tmpl.replace("{task_sequence}", seq_str)
-        tmpl = tmpl.replace("{task_name}", task.task_name)
-        tmpl = tmpl.replace("{device_group}", device.device_group)
-        tmpl = tmpl.replace("{device_name}", device.device_name)
-        return os.path.join(root, tmpl)
+        return os.path.join(root, _resolve_template(task.output_dir_template, device, task))
 
     def _build_log(self, result: ExecutionResult) -> str:
         lines = [
