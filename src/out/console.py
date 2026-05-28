@@ -25,42 +25,42 @@ def _color(code: str, text: str) -> str:
 
 
 def info(msg: str):
-    print(_color(_BLUE, f"  • {msg}"), flush=True)
+    print(_color(_BLUE, f"  {_color(_BLUE, '[INFO]')} {msg}"), flush=True)
 
 
 def ok(msg: str):
-    print(_color(_GREEN, f"  ✓ {msg}"), flush=True)
+    print(_color(_GREEN, f"  {_color(_GREEN, '[ OK ]')} {msg}"), flush=True)
 
 
 def warn(msg: str):
-    print(_color(_YELLOW, f"  ⚠ {msg}"), flush=True)
+    print(_color(_YELLOW, f"  {_color(_YELLOW, '[WARN]')} {msg}"), flush=True)
 
 
 def error(msg: str):
-    print(_color(_RED, f"  ✗ {msg}"), flush=True)
+    print(_color(_RED, f"  {_color(_RED, '[ERROR]')} {msg}"), flush=True)
 
 
 def start(protocol: str, device: str, task: str):
-    print(_color(_CYAN, f"  ▶ [{protocol}] {device}  {task}"), flush=True)
+    print(_color(_CYAN, f"  {_color(_CYAN, '[START]')} [{protocol}] {device}  {task}"), flush=True)
 
 
 def done(idx: int, total: int, status: str, device: str, task: str, reason: str = ""):
     """Print task completion. status: OK/FAIL/SKIP/ERR"""
     if status == "OK":
-        icon = _color(_GREEN, "OK")
+        level = _color(_GREEN, "[ OK ]")
     elif status in ("FAIL", "ERR"):
-        icon = _color(_RED, status)
+        level = _color(_RED, f"[{status}]")
     else:
-        icon = _color(_YELLOW, status)
+        level = _color(_YELLOW, f"[{status}]")
     r = f"  [{reason[:50]}]" if reason else ""
-    print(f"  [{idx:>4}/{total}] {icon}  {device}  {task}{r}", flush=True)
+    print(f"  {level} [{idx:>4}/{total}] {device}  {task}{r}", flush=True)
 
 
 def heartbeat(dispatched: int, done: int, pending: int,
               bmc_run: int, ssh_run: int, ready: int):
     print(_color(_DIM,
-        f"  ── 心跳: 已派={dispatched} 完成={done} 待处理={pending} "
-        f"BMC运行={bmc_run} SSH运行={ssh_run} 就绪={ready} ──"
+        f"  {_color(_DIM, '[INFO]')} 心跳: 已派={dispatched} 完成={done} 待处理={pending} "
+        f"BMC运行={bmc_run} SSH运行={ssh_run} 就绪={ready}"
     ), flush=True)
 
 
