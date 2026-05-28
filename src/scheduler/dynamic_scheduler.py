@@ -23,6 +23,7 @@ from ..models.execution_result import ExecutionResult
 from ..executor.ssh_executor import SSHExecutor
 from ..executor.bmc_executor import BMCExecutor
 from ..executor.browser_manager import BrowserManager
+from ..out.console import start as cstart, done as cdone, heartbeat as cheartbeat, info as cinfo
 from .resource_monitor import ResourceMonitor
 from .worker_pool import WorkerPool
 
@@ -118,9 +119,8 @@ class DynamicScheduler:
                         "心跳: 已派发=%d 已完成=%d 待处理=%d 运行中(带外=%d 带内=%d) 就绪=%d",
                         self._dispatched_count, completed_count, pending, running_bmc, running_ssh, ready,
                     )
-                    print(f"  -- heartbeat: dispatched={self._dispatched_count} done={completed_count} "
-                          f"pending={pending} running(bmc={running_bmc} ssh={running_ssh}) "
-                          f"ready={ready} --", flush=True)
+                    cheartbeat(self._dispatched_count, completed_count, pending,
+                               running_bmc, running_ssh, ready)
 
                 # Stall detection: no progress for 60s
                 if now - last_progress_at >= 60:
@@ -282,7 +282,7 @@ class DynamicScheduler:
                 self._dispatched_count += 1
 
                 logger.info("开始 [%s] %s / %s", plan.protocol, plan.device.device_name, plan.task.task_name)
-                print(f"  START [{plan.protocol}] {plan.device.device_name}  {plan.task.task_name}")
+                cstart(plan.protocol, plan.device.device_name, plan.task.task_name)
 
                 if self._event_bus:
                     self._event_bus.emit("plan_started", plan=plan)
@@ -357,7 +357,7 @@ class DynamicScheduler:
         reason = ""
         if status_icon == "FAIL" and result.execution_failure_reason:
             reason = f"  [{result.execution_failure_reason[:60]}]"
-        print(f"[{len(self._results):>5}] {status_icon:>4} {result.device_name}  {result.task_name}{reason}")
+        cdone(len(self._results), self._dispatched_count, status_icon, result.device_name, result.task_name, reason)
 
     def _drain(self) -> bool:
         """Wait for running tasks to finish. Returns True if all drained, False if timed out."""
@@ -381,9 +381,9 @@ class DynamicScheduler:
                     len(self._ssh_pool._active_futures),
                     pending, len(self._results),
                 )
-                print(f"  -- drain: running(bmc={len(self._bmc_pool._active_futures)} "
-                      f"ssh={len(self._ssh_pool._active_futures)}) "
-                      f"pending={pending} done={len(self._results)} --", flush=True)
+                cinfo(f"等待收尾: BMC运行={len(self._bmc_pool._active_futures)} "
+                      f"SSH运行={len(self._ssh_pool._active_futures)} "
+                      f"待处理={pending} 已完成={len(self._results)}")
                 last_log = now
             time.sleep(1)
         logger.info("等待完成")
