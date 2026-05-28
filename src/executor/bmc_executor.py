@@ -426,7 +426,7 @@ class BMCExecutor(AbstractExecutor):
         return ""
 
     async def _dismiss_popups(self, page) -> None:
-        """Try to dismiss common post-login popups."""
+        """Try to dismiss common post-login popups (called after initial login)."""
         for _ in range(5):  # max 5 popups
             dismissed = False
             for sel in POPUP_DISMISS_SELECTORS:
@@ -443,6 +443,31 @@ class BMCExecutor(AbstractExecutor):
             if not dismissed:
                 break
 
+    async def _dismiss_all_blockers(self, page) -> None:
+        """Aggressively dismiss ALL known blockers (popups, password risks, etc.).
+        Retries multiple times because some popups cascade (dismiss one → another appears).
+        """
+        for round_num in range(5):
+            clicked = False
+            for sel in POPUP_DISMISS_SELECTORS:
+                try:
+                    el = await page.query_selector(sel)
+                    if el and await el.is_visible():
+                        logger.info("正在关闭阻塞弹窗:  %s (round %d)", sel, round_num + 1)
+                        await el.click()
+                        await asyncio.sleep(2)
+                        # Wait for page to stabilize after click
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=10000)
+                        except Exception:
+                            pass
+                        clicked = True
+                        break
+                except Exception:
+                    continue
+            if not clicked:
+                break  # No more blockers found
+
     # ------------------------------------------------------------------
     # BMC_URL mode
     # ------------------------------------------------------------------
@@ -451,20 +476,30 @@ class BMCExecutor(AbstractExecutor):
         target_url = self._resolve_url(task.command_or_url, device.bmc_ip)
         if target_url and target_url != bmc_url:
             self._validate_goto_url(target_url, device.bmc_ip)
-            logger.info("正在导航到目标:  %s", target_url)
-            try:
-                await page.goto(target_url, wait_until="networkidle", timeout=self._page_timeout * 1000)
-            except Exception:
-                await page.goto(target_url, wait_until="domcontentloaded", timeout=self._page_timeout * 1000)
-            await asyncio.sleep(2)
 
-            # Re-dismiss any popups that appeared on the target page
-            await self._dismiss_popups(page)
+            # Retry loop: dismiss blockers and re-navigate up to 3 times
+            for attempt in range(3):
+                logger.info("正在导航到目标:  %s (attempt %d)", target_url, attempt + 1)
+                try:
+                    await page.goto(target_url, wait_until="networkidle", timeout=self._page_timeout * 1000)
+                except Exception:
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=self._page_timeout * 1000)
+                await asyncio.sleep(2)
 
-        # Verify we're on the target page, not still stuck at login
-        blocker = await self._detect_target_blocker(page, target_url)
-        if blocker:
-            raise Exception(blocker)
+                # Aggressively dismiss any blockers (password risk, popups, etc.)
+                await self._dismiss_all_blockers(page)
+
+                # Check if we reached the target
+                blocker = await self._detect_target_blocker(page, target_url)
+                if not blocker:
+                    break  # Success
+                logger.warning("[%s] 目标页面被阻塞 (attempt %d): %s", device.device_name, attempt + 1, blocker)
+            else:
+                # All retries exhausted
+                raise Exception(
+                    f"目标页面未到达(已重试3次): {blocker}。"
+                    f"target_url={target_url} current_url={page.url}"
+                )
 
         # Full-page screenshot
         ss_filename = (task.image_name_template
