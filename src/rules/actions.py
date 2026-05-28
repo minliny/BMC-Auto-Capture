@@ -106,6 +106,35 @@ class AssertElementHandler(RuleActionHandler):
             raise AssertionError(f"Element not visible: {action.selector}")
 
 
+class AssertNoTextHandler(RuleActionHandler):
+    """Fail if the given text IS found on the page.
+    Use for: no 'down' ports, no '告警', no '异常'.
+    """
+    action_type = "assert_no_text"
+
+    async def execute(self, action, context) -> None:
+        text = await context.page.inner_text("body")
+        if action.value in text:
+            # Find the surrounding context for debugging
+            idx = text.index(action.value)
+            snippet = text[max(0, idx - 40):idx + len(action.value) + 40]
+            raise AssertionError(
+                f"Forbidden text '{action.value}' found on page near: ...{snippet}..."
+            )
+
+
+class AssertNoElementHandler(RuleActionHandler):
+    """Fail if the given CSS selector IS found and visible.
+    Use for: no alert icons, no error badges.
+    """
+    action_type = "assert_no_element"
+
+    async def execute(self, action, context) -> None:
+        el = await context.page.query_selector(action.selector)
+        if el and await el.is_visible():
+            raise AssertionError(f"Forbidden element found: {action.selector}")
+
+
 # Register all built-in handlers
 def _register_all():
     for cls in [
@@ -119,6 +148,8 @@ def _register_all():
         WaitMillisHandler,
         AssertTextHandler,
         AssertElementHandler,
+        AssertNoTextHandler,
+        AssertNoElementHandler,
     ]:
         register(cls.action_type, cls)
 
