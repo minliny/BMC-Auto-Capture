@@ -80,7 +80,7 @@ class SSHExecutor(AbstractExecutor):
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-            logger.info(f"[{device.device_name}] Connecting to {host}:{port} as {username}")
+            logger.info(f"[{device.device_name}] 正在连接到 {host}:{port} as {username}")
             client.connect(
                 hostname=host,
                 port=port,
@@ -99,7 +99,7 @@ class SSHExecutor(AbstractExecutor):
 
             for cmd in commands:
                 step_name = f"cmd_{step_index}"
-                logger.info(f"[{device.device_name}] Executing: {cmd[:60]}...")
+                logger.info(f"[{device.device_name}] 正在执行:  {cmd[:60]}...")
 
                 try:
                     # Check task-level timeout before each command
@@ -158,7 +158,7 @@ class SSHExecutor(AbstractExecutor):
 
                     # Check if we hit the hard deadline (idle timeout is normal, not a warning)
                     if time.time() >= cmd_deadline and not channel.exit_status_ready():
-                        out_chunks.append(b"\n[WARNING] Hard timeout - partial output saved")
+                        out_chunks.append("\n[WARNING] 硬超时 - 已保存部分输出".encode("utf-8"))
 
                     out = b"".join(out_chunks).decode("utf-8", errors="replace")
                     err = b"".join(err_chunks).decode("utf-8", errors="replace")
@@ -201,7 +201,7 @@ class SSHExecutor(AbstractExecutor):
         except socket.error as e:
             result.execution_status = self._classify_socket_error(e)
             result.execution_failure_reason = str(e)
-            logger.error(f"[{device.device_name}] Socket error: {e}")
+            logger.error(f"[{device.device_name}] Socket错误: {e}")
         except paramiko.AuthenticationException as e:
             result.execution_status = "EXEC_FAILED"
             result.execution_failure_reason = f"SSH认证失败: {e}"
@@ -213,7 +213,7 @@ class SSHExecutor(AbstractExecutor):
         except Exception as e:
             result.execution_status = "EXEC_ERROR"
             result.execution_failure_reason = str(e)
-            logger.error(f"[{device.device_name}] Unexpected error: {e}")
+            logger.error(f"[{device.device_name}] 未知错误: {e}")
         finally:
             if client is not None:
                 try:

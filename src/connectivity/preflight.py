@@ -145,7 +145,7 @@ def check_all(devices: list[Device], timeout: float = 5.0,
             unique.append(d)
 
     total = len(unique)
-    logger.info("Preflight: probing %d unique devices (max %d parallel)", total, max_workers)
+    logger.info("预检: 正在探测 %d unique devices (max %d parallel)", total, max_workers)
     print(f"  Probing {total} devices in parallel (workers={max_workers})...")
 
     report = PreflightReport(total=total)
@@ -186,7 +186,7 @@ def check_all(devices: list[Device], timeout: float = 5.0,
     report.results.sort(key=lambda r: r.device_name)
 
     logger.info(
-        "Preflight complete: %d unique devices, BMC %d/%d OK, SSH %d/%d OK",
+        "预检完成:  %d unique devices, BMC %d/%d OK, SSH %d/%d OK",
         total,
         report.bmc_ok, report.bmc_ok + report.bmc_fail,
         report.ssh_ok, report.ssh_ok + report.ssh_fail,
@@ -219,7 +219,7 @@ def apply_preflight(
         if name not in plan_device_names:
             if pr.bmc_status != PreflightStatus.OK or pr.ssh_status != PreflightStatus.OK:
                 logger.info(
-                    "Preflight: device '%s' has failures (BMC=%s SSH=%s) but no matching plans (group/tag filter)",
+                    "预检: 设备 '%s' 存在故障 (BMC=%s SSH=%s) 但无匹配计划 (group/tag filter)",
                     name, pr.bmc_status, pr.ssh_status,
                 )
 
@@ -227,7 +227,7 @@ def apply_preflight(
         pr = lookup.get(plan.device.device_name)
         if not pr:
             logger.warning(
-                "Preflight: device '%s' in plan but not in preflight report — plan not skipped",
+                "预检: 设备 '%s' 在计划中但不在预检报告中 — plan not skipped",
                 plan.device.device_name,
             )
             continue
@@ -257,7 +257,7 @@ def apply_preflight(
                 ssh_skipped += 1
 
     logger.info(
-        "Preflight apply: BMC plans skipped=%d (fail devices with plans=%d), "
+        "预检应用:  BMC plans skipped=%d (fail devices with plans=%d), "
         "SSH plans skipped=%d (fail devices with plans=%d)",
         bmc_skipped, bmc_fail_devices_with_plans,
         ssh_skipped, ssh_fail_devices_with_plans,

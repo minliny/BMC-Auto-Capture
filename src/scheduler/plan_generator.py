@@ -34,7 +34,7 @@ def generate_plans(devices: list[Device], tasks: list[Task]) -> list[TaskPlan]:
 
     total_devices = len({p.device.device_name for p in plans})
     logger.info(
-        "Plan generation: %d devices × %d tasks = %d plans (%d unique devices)",
+        "计划生成:  %d devices × %d tasks = %d plans (%d unique devices)",
         len(enabled_devices), len(enabled_tasks), len(plans), total_devices,
     )
 

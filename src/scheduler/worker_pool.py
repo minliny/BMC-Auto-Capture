@@ -40,7 +40,7 @@ class WorkerPool:
     def start(self):
         if self._executor is None:
             self._executor = ThreadPoolExecutor(max_workers=self._target, thread_name_prefix=self.name)
-            logger.info("[%s] Pool started with %d workers", self.name, self._target)
+            logger.info("[%s] 工作池已启动, 线程数= %d workers", self.name, self._target)
 
     def resize(self, new_target: int):
         new_target = max(1, min(new_target, self._max))
@@ -48,7 +48,7 @@ class WorkerPool:
         self._target = new_target
         if new_target != old and self._executor is not None:
             self._executor._max_workers = new_target
-            logger.info("[%s] Pool resized: %d → %d", self.name, old, new_target)
+            logger.info("[%s] 工作池已调整: %d → %d", self.name, old, new_target)
 
     def has_idle(self) -> bool:
         """Check if pool has capacity for more work."""
@@ -87,7 +87,7 @@ class WorkerPool:
         if self._executor:
             self._executor.shutdown(wait=wait)
             self._executor = None
-            logger.info("[%s] Pool shut down (wait=%s)", self.name, wait)
+            logger.info("[%s] 工作池已关闭 (wait=%s)", self.name, wait)
 
     def _on_done(self, future: Future, device_id: str, callback: Callable | None = None):
         with self._lock:
@@ -100,7 +100,7 @@ class WorkerPool:
         try:
             result = future.result()
         except Exception as e:
-            logger.error("[%s] Worker crashed for device %s: %s", self.name, device_id, e)
+            logger.error("[%s] 工作线程异常, 设备:  %s: %s", self.name, device_id, e)
             # Synthesize an error result so callback always fires
             from ..models.execution_result import ExecutionResult
             result = ExecutionResult(

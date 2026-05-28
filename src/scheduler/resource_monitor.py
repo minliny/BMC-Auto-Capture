@@ -32,13 +32,13 @@ class ResourceMonitor:
         self._stop.clear()
         self._thread = threading.Thread(target=self._poll_loop, daemon=True, name="resource-monitor")
         self._thread.start()
-        logger.info("Resource monitor started (interval=%.1fs)", self._interval)
+        logger.info("资源监控已启动 (interval=%.1fs)", self._interval)
 
     def stop(self):
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=5.0)
-        logger.info("Resource monitor stopped")
+        logger.info("资源监控已停止")
 
     def _poll_loop(self):
         import psutil
@@ -50,8 +50,8 @@ class ResourceMonitor:
                 with self._lock:
                     self._cpu = cpu
                     self._mem = mem
-                logger.debug("Resource sample: CPU %.1f%%, MEM %.1f%%", cpu, mem)
+                logger.debug("资源采样:  CPU %.1f%%, MEM %.1f%%", cpu, mem)
             except Exception as e:
-                logger.warning("Resource sampling failed: %s", e)
+                logger.warning("资源采样失败: %s", e)
 
             self._stop.wait(self._interval)

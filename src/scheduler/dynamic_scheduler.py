@@ -80,7 +80,7 @@ class DynamicScheduler:
         )
 
         total = len(plans)
-        logger.info("DynamicScheduler: %d plans, %d devices", total, len(self._device_queues))
+        logger.info("动态调度器: %d 个计划, %d 台设备", total, len(self._device_queues))
 
         last_progress_at = time.time()
         last_heartbeat_at = time.time()
@@ -115,7 +115,7 @@ class DynamicScheduler:
                     locked_bmc = len(self._bmc_pool._running_devices)
                     locked_ssh = len(self._ssh_pool._running_devices)
                     logger.info(
-                        "HEARTBEAT: dispatched=%d completed=%d pending=%d running(bmc=%d ssh=%d) ready=%d",
+                        "心跳: 已派发=%d 已完成=%d 待处理=%d 运行中(带外=%d 带内=%d) 就绪=%d",
                         self._dispatched_count, completed_count, pending, running_bmc, running_ssh, ready,
                     )
                     print(f"  -- heartbeat: dispatched={self._dispatched_count} done={completed_count} "
@@ -124,7 +124,7 @@ class DynamicScheduler:
 
                 # Stall detection: no progress for 60s
                 if now - last_progress_at >= 60:
-                    logger.warning("SCHEDULER STALL: no progress for %.0fs", now - last_progress_at)
+                    logger.warning("调度器停滞: %.0f 秒无进展", now - last_progress_at)
                     # Dump first 10 pending plans with their status
                     pending_dumped = 0
                     for did, q in sorted(self._device_queues.items()):
@@ -150,7 +150,7 @@ class DynamicScheduler:
                 time.sleep(0.5)
 
         except KeyboardInterrupt:
-            logger.info("Keyboard interrupt — stopping scheduler")
+            logger.info("用户中断 — stopping scheduler")
         finally:
             drained = self._drain()
 
@@ -160,7 +160,7 @@ class DynamicScheduler:
             if self._bm and self._bmc_pool._executor is not None:
                 browser_count = len(self._bm._tls)
                 if browser_count > 0:
-                    logger.info("Cleaning up %d browser(s) on worker threads...", browser_count)
+                    logger.info("正在清理 %d 个浏览器实例 on worker threads...", browser_count)
                     cleanup_futures = []
                     for _ in range(browser_count):
                         f = self._bmc_pool._executor.submit(
@@ -193,11 +193,11 @@ class DynamicScheduler:
 
     def pause(self):
         self._pause_event.clear()
-        logger.info("Scheduler paused")
+        logger.info("调度器已暂停")
 
     def resume(self):
         self._pause_event.set()
-        logger.info("Scheduler resumed")
+        logger.info("调度器已恢复")
 
     @property
     def results(self) -> list[ExecutionResult]:
@@ -281,7 +281,7 @@ class DynamicScheduler:
                 plan.started_at = time.time()
                 self._dispatched_count += 1
 
-                logger.info("START [%s] %s / %s", plan.protocol, plan.device.device_name, plan.task.task_name)
+                logger.info("开始 [%s] %s / %s", plan.protocol, plan.device.device_name, plan.task.task_name)
                 print(f"  START [{plan.protocol}] {plan.device.device_name}  {plan.task.task_name}")
 
                 if self._event_bus:
@@ -294,11 +294,11 @@ class DynamicScheduler:
                         on_complete=lambda result, p=plan, did=device_id: self._on_plan_done(p, result, did),
                     )
                 except Exception:
-                    # Dispatch failed → push task back to queue front
+                    # 派发失败 → push task back to queue front
                     q.appendleft(plan)
                     plan.status = "PENDING"
                     self._ready_devices.append(device_id)
-                    logger.error("Dispatch failed for %s/%s, task re-queued",
+                    logger.error("派发失败 for %s/%s, 任务已重新入队",
                                  plan.device.device_name, plan.task.task_name)
 
     def _execute_plan(self, plan: TaskPlan) -> ExecutionResult:
@@ -361,14 +361,14 @@ class DynamicScheduler:
 
     def _drain(self) -> bool:
         """Wait for running tasks to finish. Returns True if all drained, False if timed out."""
-        logger.info("Draining running tasks...")
+        logger.info("等待运行中的任务完成...")
         drain_deadline = time.time() + 300  # 5 min absolute max
         last_log = time.time()
         while self._bmc_pool._active_futures or self._ssh_pool._active_futures:
             now = time.time()
             if now > drain_deadline:
                 logger.warning(
-                    "Drain timeout after 5min — %d bmc futures + %d ssh futures still active",
+                    "等待超时(5分钟) — %d bmc futures + %d ssh futures still active",
                     len(self._bmc_pool._active_futures),
                     len(self._ssh_pool._active_futures),
                 )
@@ -386,5 +386,5 @@ class DynamicScheduler:
                       f"pending={pending} done={len(self._results)} --", flush=True)
                 last_log = now
             time.sleep(1)
-        logger.info("Drain complete")
+        logger.info("等待完成")
         return True

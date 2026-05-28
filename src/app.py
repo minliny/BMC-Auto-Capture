@@ -68,31 +68,31 @@ class App:
         # 0. Set up timestamped output root to avoid cross-run overwrites
         run_ts = time.strftime("%Y%m%d_%H%M%S")
         self.config.output_root = str(Path(self.config.output_root) / run_ts)
-        logger.info("Output directory: %s", self.config.output_root)
+        logger.info("输出目录:  %s", self.config.output_root)
 
         # 1. Load
-        logger.info("Loading Excel: %s", excel_path)
+        logger.info("正在加载Excel:  %s", excel_path)
         devices, tasks = load_all(str(excel_path))
-        logger.info("Loaded %d devices, %d tasks", len(devices), len(tasks))
+        logger.info("已加载 %d 台设备, %d 个任务", len(devices), len(tasks))
 
         # 2. Validate
         report = validate(devices, tasks)
         self._print_validation(report)
         if not report.is_valid:
-            logger.error("Validation failed with %d errors", len(report.errors))
+            logger.error("校验失败, 错误数:  %d errors", len(report.errors))
             return []
 
         # 3. Generate plans
         plans = generate_plans(devices, tasks)
         if not plans:
-            logger.warning("No plans generated — check device/task matching")
+            logger.warning("未生成执行计划 — check device/task matching")
             return []
 
         self.event_bus.emit("plans_generated", count=len(plans))
 
         # 4. Connectivity preflight
         if self.config.preflight_enabled:
-            logger.info("Running connectivity preflight...")
+            logger.info("正在执行网络连通性预检...")
             pr = preflight_check_all(devices, timeout=self.config.tcp_connect_timeout,
                                      max_workers=self.config.max_bmc_workers + self.config.max_ssh_workers)
             plans = apply_preflight(plans, pr)
@@ -116,7 +116,7 @@ class App:
                         ended_at=time.time(),
                     ))
             skipped_count = sum(1 for p in plans if p.status.startswith("EXEC_SKIPPED"))
-            logger.info("Preflight: %d plans skipped (%d ready)", skipped_count, len(plans) - skipped_count)
+            logger.info("预检: %d 个计划已跳过 (%d 个就绪)", skipped_count, len(plans) - skipped_count)
 
         # 5. Route guard
         route_guard = None
@@ -127,7 +127,7 @@ class App:
 
         # 6. Execute
         ready_plans = [p for p in plans if not p.status.startswith("EXEC_SKIPPED")]
-        logger.info("Executing %d plans (%d skipped by preflight)", len(ready_plans), len(plans) - len(ready_plans))
+        logger.info("正在执行 %d 个计划 (%d 个被预检跳过)", len(ready_plans), len(plans) - len(ready_plans))
 
         if mode == "full":
             self._execute_dynamic(ready_plans)
@@ -155,7 +155,7 @@ class App:
             logger.warning("Failed to write connectivity summary: %s", e)
 
         summary = compute_summary(self._results)
-        logger.info("Summary: %s", summary)
+        logger.info("汇总:  %s", summary)
         print_terminal_summary(self._results)
 
         return self._results
@@ -229,7 +229,7 @@ class App:
             plan.started_at = time.time()
             self.event_bus.emit("plan_started", plan=plan, index=i, total=total)
 
-            logger.info("START [%s] %s / %s (%d/%d)", plan.protocol, plan.device.device_name, plan.task.task_name, i+1, total)
+            logger.info("开始 [%s] %s / %s (%d/%d)", plan.protocol, plan.device.device_name, plan.task.task_name, i+1, total)
             print(f"  START [{plan.protocol}] {plan.device.device_name}  {plan.task.task_name}")
 
             try:

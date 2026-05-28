@@ -73,7 +73,7 @@ class BrowserManager:
         with self._tls_lock:
             tb = self._tls.pop(tid, None)
         if tb is not None:
-            logger.warning("Resetting browser for thread %d after failure", tid)
+            logger.warning("重置线程浏览器 %d after failure", tid)
 
     def close_current_thread_browser(self):
         """Close the current thread's browser on its own event loop.
@@ -112,7 +112,7 @@ class BrowserManager:
             self._tls.clear()
 
         for tb in tbs:
-            logger.warning("Browser still registered at teardown — dropping refs")
+            logger.warning("浏览器在清理时仍注册 — 丢弃引用")
 
 
 # Thread-local persistent event loops (shared with BMCExecutor)
@@ -170,7 +170,7 @@ class _ThreadLocalBrowser:
         # Event loop changed → old Playwright objects belong to a dead loop.
         # Drop refs WITHOUT awaiting close (would hang on wrong loop).
         if current_loop != self._loop_id and self._playwright is not None:
-            logger.debug("Event loop changed, recreating browser for thread %d",
+            logger.debug("事件循环变化, 重建浏览器 for thread %d",
                          __import__("threading").get_ident())
             self._drop_refs()
 
@@ -182,7 +182,7 @@ class _ThreadLocalBrowser:
             await self._teardown_browser()
 
         if self._browser is None:
-            logger.info("Launching browser (headless=%s)", self._headless)
+            logger.info("启动浏览器 (无头模式=%s)", self._headless)
             self._browser = await self._playwright.chromium.launch(
                 headless=self._headless,
                 args=[
@@ -212,7 +212,7 @@ class _ThreadLocalBrowser:
         try:
             await asyncio.wait_for(self._teardown_browser(), timeout=10)
         except asyncio.TimeoutError:
-            logger.warning("Browser teardown timed out, dropping refs")
+            logger.warning("浏览器清理超时, 丢弃引用")
         except Exception:
             pass
         if self._playwright:
@@ -228,10 +228,10 @@ class _ThreadLocalBrowser:
         if self._browser is None:
             return False
         if self._task_count >= self._max_tasks:
-            logger.info("Browser recycling: reached %d tasks", self._task_count)
+            logger.info("浏览器回收: 已达 %d tasks", self._task_count)
             return True
         if time.time() - self._born_at >= self._max_age:
-            logger.info("Browser recycling: age exceeded limit")
+            logger.info("浏览器回收: 超时 exceeded limit")
             return True
         return False
 

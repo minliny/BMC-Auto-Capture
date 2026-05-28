@@ -146,7 +146,7 @@ class BMCExecutor(AbstractExecutor):
             current_stage = "1/6 acquire_context"
             logger.info("[%s] Stage %s", dname, current_stage)
             context = await asyncio.wait_for(self._bm.get_context(), timeout=30)
-            logger.info("[%s] Stage 1/6: context ready", dname)
+            logger.info("[%s] 阶段 1/6: 浏览器就绪", dname)
 
             # --- Stage 2: acquire page ---
             current_stage = "2/6 acquire_page"
@@ -154,7 +154,7 @@ class BMCExecutor(AbstractExecutor):
             page = await asyncio.wait_for(context.new_page(), timeout=15)
             page_acquired = True
             page.set_default_timeout(self._page_timeout * 1000)
-            logger.info("[%s] Stage 2/6: page ready", dname)
+            logger.info("[%s] 阶段 2/6: 页面就绪", dname)
 
             # --- Stage 3: resolve URL ---
             current_stage = "3/6 resolve_url"
@@ -174,7 +174,7 @@ class BMCExecutor(AbstractExecutor):
                 result.ended_at = time.time()
                 result.duration_seconds = result.ended_at - result.started_at
                 return
-            logger.info("[%s] Stage 4/6: login ok", dname)
+            logger.info("[%s] 阶段 4/6: 登录 ok", dname)
 
             # --- Stage 5: dismiss popups + navigate + capture ---
             current_stage = "5/6 navigate_capture"
@@ -185,7 +185,7 @@ class BMCExecutor(AbstractExecutor):
                 await self._run_bmc_url(page, bmc_url, task, device, output_dir, result)
             elif task.execution_mode == "BMC_ACTIONS":
                 await self._run_bmc_actions(page, task, device.bmc_ip, output_dir, result)
-            logger.info("[%s] Stage 5/6: capture done", dname)
+            logger.info("[%s] 阶段 5/6: 采集完成", dname)
 
             # --- Stage 6: success ---
             current_stage = "6/6 done"
@@ -211,7 +211,7 @@ class BMCExecutor(AbstractExecutor):
         except Exception as e:
             result.execution_status = "EXEC_ERROR"
             result.execution_failure_reason = str(e)
-            logger.error("[%s] BMC error at stage %s: %s", dname, current_stage, e)
+            logger.error("[%s] BMC任务出错, 阶段 %s: %s", dname, current_stage, e)
             # If page acquisition itself failed, force browser reset
             if "acquire_page" in current_stage or "acquire_context" in current_stage:
                 self._bm.reset_thread()
@@ -246,7 +246,7 @@ class BMCExecutor(AbstractExecutor):
         """
         # Validate URL host matches device BMC IP before navigation
         self._validate_goto_url(bmc_url, device.bmc_ip)
-        logger.info(f"[{device.device_name}] Navigating to BMC: {bmc_url}")
+        logger.info(f"[{device.device_name}] 正在访问BMC:  {bmc_url}")
 
         try:
             await page.goto(bmc_url, wait_until="domcontentloaded", timeout=self._connect_timeout * 1000)
@@ -273,7 +273,7 @@ class BMCExecutor(AbstractExecutor):
         password_el = await self._find_visible(page, LOGIN_PASSWORD_SELECTORS)
 
         if username_el and password_el:
-            logger.info(f"[{device.device_name}] Login form detected, filling credentials")
+            logger.info(f"[{device.device_name}] 检测到登录表单, 正在填写凭证")
             await username_el.fill(device.bmc_username)
             await password_el.fill(device.bmc_password)
 
@@ -359,7 +359,7 @@ class BMCExecutor(AbstractExecutor):
                 try:
                     el = await page.query_selector(sel)
                     if el and await el.is_visible():
-                        logger.info("Dismissing popup: %s", sel)
+                        logger.info("正在关闭弹窗:  %s", sel)
                         await el.click()
                         await asyncio.sleep(1)
                         dismissed = True
@@ -377,7 +377,7 @@ class BMCExecutor(AbstractExecutor):
         target_url = self._resolve_url(task.command_or_url, device.bmc_ip)
         if target_url and target_url != bmc_url:
             self._validate_goto_url(target_url, device.bmc_ip)
-            logger.info("Navigating to target: %s", target_url)
+            logger.info("正在导航到目标:  %s", target_url)
             try:
                 await page.goto(target_url, wait_until="networkidle", timeout=self._page_timeout * 1000)
             except Exception:

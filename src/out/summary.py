@@ -69,17 +69,17 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
     total = s["total"] or 1
 
     print("\n" + "=" * 60)
-    print("  BMC Auto-Capture v0.2.1 — Execution Summary")
+    print("  BMC Auto-Capture v0.2.1 — 执行汇总")
     print("=" * 60)
-    print(f"  Total plans:    {s['total']:>6}")
-    print(f"  Success:        {s['success']:>6}  ({s['success'] / total * 100:.1f}%)")
-    print(f"  Failed:         {s['failed']:>6}  ({s['failed'] / total * 100:.1f}%)")
-    print(f"  Error:          {s['error']:>6}  ({s['error'] / total * 100:.1f}%)")
-    print(f"  Skipped (preflight): {s['skipped_preflight']:>6}")
-    print(f"  Skipped (port):      {s['skipped_port_blocked']:>6}")
-    print(f"  Skipped (route):     {s['skipped_route']:>6}")
-    print(f"  Rule passed:    {s['rule_passed']:>6}")
-    print(f"  Rule failed:    {s['rule_failed']:>6}")
+    print(f"  计划总数:       {s['total']:>6}")
+    print(f"  成功:           {s['success']:>6}  ({s['success'] / total * 100:.1f}%)")
+    print(f"  失败:           {s['failed']:>6}  ({s['failed'] / total * 100:.1f}%)")
+    print(f"  错误:           {s['error']:>6}  ({s['error'] / total * 100:.1f}%)")
+    print(f"  跳过(预检不通):  {s['skipped_preflight']:>6}")
+    print(f"  跳过(端口拦截):  {s['skipped_port_blocked']:>6}")
+    print(f"  跳过(路由变更):  {s['skipped_route']:>6}")
+    print(f"  规则通过:       {s['rule_passed']:>6}")
+    print(f"  规则失败:       {s['rule_failed']:>6}")
     print("=" * 60)
 
     # Per-group connectivity summary
@@ -154,11 +154,11 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
                 g["ssh_fail"][cat].append(r)
 
     if not groups:
-        print("\n  (No connectivity data available)")
+        print("\n  (无连通性数据)")
         return
 
     print("\n" + "=" * 80)
-    print("  Per-Group Connectivity Summary")
+    print("  按设备分组连通性汇总")
     print("=" * 80)
 
     for group_name in sorted(groups.keys()):
@@ -167,7 +167,7 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
         bmc_with_ip = len(g["bmc_devices_with_ip"])
         ssh_with_ip = len(g["ssh_devices_with_ip"])
 
-        print(f"\n  [{group_name}]  ({total_dev} devices)")
+        print(f"\n  [{group_name}]  ({total_dev} 台设备)")
 
         # BMC section
         bmc_total = g["bmc_ok"] + sum(len(v) for v in g["bmc_no_ip"].values()) + sum(len(v) for v in g["bmc_fail"].values())
@@ -181,10 +181,10 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
             for cat, items in sorted(g["bmc_fail"].items(), key=lambda x: -len(x[1])):
                 print(f"      └ {cat}: {len(items)} 台")
                 for r in items[:3]:
-                    reason = r.execution_failure_reason[:80] if r.execution_failure_reason else "(no detail)"
+                    reason = r.execution_failure_reason[:80] if r.execution_failure_reason else "(无详情)"
                     print(f"         · {r.device_name}: {reason}")
                 if len(items) > 3:
-                    print(f"         · ... and {len(items) - 3} more")
+                    print(f"         · ... 及其他 {len(items) - 3} 台")
         else:
             print(f"    不通过: 0")
 
@@ -200,10 +200,10 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
             for cat, items in sorted(g["ssh_fail"].items(), key=lambda x: -len(x[1])):
                 print(f"      └ {cat}: {len(items)} 台")
                 for r in items[:3]:
-                    reason = r.execution_failure_reason[:80] if r.execution_failure_reason else "(no detail)"
+                    reason = r.execution_failure_reason[:80] if r.execution_failure_reason else "(无详情)"
                     print(f"         · {r.device_name}: {reason}")
                 if len(items) > 3:
-                    print(f"         · ... and {len(items) - 3} more")
+                    print(f"         · ... 及其他 {len(items) - 3} 台")
         else:
             print(f"    不通过: 0")
 
@@ -213,7 +213,7 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
     all_bmc_fail = sum(sum(len(v) for v in g["bmc_fail"].values()) for g in groups.values())
     all_ssh_ok = sum(g["ssh_ok"] for g in groups.values())
     all_ssh_fail = sum(sum(len(v) for v in g["ssh_fail"].values()) for g in groups.values())
-    print(f"  TOTAL: BMC OK={all_bmc_ok} FAIL={all_bmc_fail}  |  SSH OK={all_ssh_ok} FAIL={all_ssh_fail}")
+    print(f"  总计:  BMC OK={all_bmc_ok} 失败={all_bmc_fail}  |  带内 成功={all_ssh_ok} 失败={all_ssh_fail}")
     print("=" * 80)
 
 
