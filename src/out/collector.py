@@ -64,4 +64,11 @@ def compute_summary(results: Sequence[ExecutionResult]) -> dict:
         "skipped_disabled": skipped_disabled,
         "rule_passed": sum(1 for r in results if r.rule_status == "RULE_PASSED"),
         "rule_failed": sum(1 for r in results if r.rule_status == "RULE_FAILED"),
+        "checkpoint_pass": sum(1 for r in results if r.checkpoint_status == "CHECK_PASS"),
+        "checkpoint_fail": sum(1 for r in results if r.checkpoint_status == "CHECK_FAIL"),
+        "checkpoint_warn": sum(1 for r in results if r.checkpoint_status == "CHECK_WARN"),
+        "checkpoint_skip": sum(1 for r in results if r.checkpoint_status == "CHECK_SKIP"),
+        "final_pass": sum(1 for r in results if r.final_verdict == "PASS"),
+        "final_fail": sum(1 for r in results if r.final_verdict == "FAIL"),
+        "final_warn": sum(1 for r in results if r.final_verdict == "WARN"),
     }

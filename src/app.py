@@ -101,7 +101,7 @@ class App:
                 if p.status.startswith("EXEC_SKIPPED"):
                     reason = p.skip_reason or "网络预检不通"
                     logger.info("Skip: %s / %s → %s", p.device.device_name, p.task.task_name, reason)
-                    self._results.append(ExecutionResult(
+                    result = ExecutionResult(
                         plan_id=p.plan_id,
                         device_name=p.device.device_name,
                         device_group=p.device.device_group,
@@ -114,7 +114,9 @@ class App:
                         execution_failure_reason=reason,
                         started_at=time.time(),
                         ended_at=time.time(),
-                    ))
+                    )
+                    self._compute_verdict(result)
+                    self._results.append(result)
             skipped_count = sum(1 for p in plans if p.status.startswith("EXEC_SKIPPED"))
             logger.info("预检: %d 个计划已跳过 (%d 个就绪)", skipped_count, len(plans) - skipped_count)
 
@@ -250,6 +252,7 @@ class App:
 
                 plan.completed_at = time.time()
                 plan.status = "SUCCESS" if result.execution_status == "EXEC_SUCCESS" else result.execution_status
+                self._compute_verdict(result)
                 self._results.append(result)
 
                 self.event_bus.emit("plan_completed", plan=plan, result=result, index=i, total=total)
@@ -290,6 +293,29 @@ class App:
             logger.error("[%s row %d] %s: %s", msg.source, msg.row, msg.field, msg.message)
 
     # ------------------------------------------------------------------
+    def _compute_verdict(self, result: ExecutionResult) -> None:
+        """Derive final_verdict from execution + artifact + checkpoint status.
+        Rollup: FAIL > WARN > PASS > SKIP > DISABLED.
+        """
+        if result.execution_status not in ("EXEC_SUCCESS", "EXEC_RUNNING"):
+            result.final_verdict = "FAIL"
+            return
+        if result.artifact_status == "ARTIFACT_FAILED":
+            result.final_verdict = "FAIL"
+            return
+        cp = result.checkpoint_status
+        if cp == "CHECK_FAIL":
+            result.final_verdict = "FAIL"
+        elif cp == "CHECK_WARN":
+            result.final_verdict = "WARN"
+        elif cp == "CHECK_PASS":
+            result.final_verdict = "PASS"
+        elif cp in ("CHECK_SKIP", "CHECK_DISABLED"):
+            result.final_verdict = "PASS"
+        else:
+            result.final_verdict = "PASS"
+
+    # ------------------------------------------------------------------
     # Run with pre-parsed plans (in-memory execution via API)
     # ------------------------------------------------------------------
     def run_with_plans(self, plans: list[TaskPlan]) -> list[ExecutionResult]:
@@ -314,7 +340,7 @@ class App:
                 if p.status.startswith("EXEC_SKIPPED"):
                     reason = p.skip_reason or "网络预检不通"
                     logger.info("Skip: %s / %s → %s", p.device.device_name, p.task.task_name, reason)
-                    self._results.append(ExecutionResult(
+                    result = ExecutionResult(
                         plan_id=p.plan_id,
                         device_name=p.device.device_name,
                         device_group=p.device.device_group,
@@ -327,7 +353,9 @@ class App:
                         execution_failure_reason=reason,
                         started_at=time.time(),
                         ended_at=time.time(),
-                    ))
+                    )
+                    self._compute_verdict(result)
+                    self._results.append(result)
             skipped_count = sum(1 for p in plans if p.status.startswith("EXEC_SKIPPED"))
             logger.info("预检: %d 个计划已跳过 (%d 个就绪)", skipped_count, len(plans) - skipped_count)
 
