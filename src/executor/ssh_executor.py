@@ -17,6 +17,7 @@ from .base import AbstractExecutor
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult, StepResult
 from ..out.file_writer import write_text_file, write_log_file
+from ..out.screenshot import render_text_to_image
 
 logger = logging.getLogger("bmc_auto_capture.ssh")
 
@@ -76,6 +77,7 @@ class SSHExecutor(AbstractExecutor):
         commands = self._parse_commands(task.command_or_url)
 
         client = None
+        all_output: list[str] = []
         try:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -91,7 +93,6 @@ class SSHExecutor(AbstractExecutor):
                 allow_agent=False,
             )
 
-            all_output: list[str] = []
             step_index = 0
 
             # Per-task hard deadline: prevent any single SSH task from blocking forever
@@ -196,6 +197,17 @@ class SSHExecutor(AbstractExecutor):
             txt_path = write_text_file(output_dir, "output.txt", full_output)
             result.txt_file = txt_path
 
+            # Generate terminal-style screenshot
+            ss_path = render_text_to_image(full_output, output_dir, "terminal.png")
+            result.screenshots = (ss_path,)
+            result.step_results.append(StepResult(
+                step_index=step_index,
+                step_name="ssh_terminal_screenshot",
+                status="SUCCESS",
+                screenshot=ss_path,
+                details=f"Terminal output {len(full_output)} chars",
+            ))
+
             result.execution_status = "EXEC_SUCCESS"
 
         except socket.error as e:
@@ -220,6 +232,22 @@ class SSHExecutor(AbstractExecutor):
                     client.close()
                 except Exception:
                     pass
+
+        # Generate terminal screenshot for error paths too (partial output)
+        if not result.screenshots and output_dir:
+            error_text = f"EXECUTION FAILED\n{'=' * 60}\n"
+            error_text += f"Device: {device.device_name}\n"
+            error_text += f"Task: {task.task_name}\n"
+            error_text += f"Status: {result.execution_status}\n"
+            error_text += f"Reason: {result.execution_failure_reason}\n"
+            if all_output:
+                error_text += f"\n{'─' * 60}\nPartial output:\n"
+                error_text += "\n\n".join(all_output[-3:])  # Last 3 commands
+            try:
+                ss_path = render_text_to_image(error_text, output_dir, "terminal_error.png")
+                result.screenshots = (ss_path,)
+            except Exception:
+                pass
 
         result.output_dir = output_dir
         result.ended_at = time.time()
