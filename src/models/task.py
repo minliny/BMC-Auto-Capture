@@ -54,6 +54,7 @@ class Task:
     execution_mode: str  # "BMC_URL" | "BMC_ACTIONS" | "SSH_CMD" | "TELNET_CMD"
     match_group: str = ""
     match_tags: tuple[str, ...] = ()
+    match_models: tuple[str, ...] = ()
     command_or_url: str = ""
     actions_json: str = ""
     rules_json: str = ""

@@ -48,6 +48,11 @@ def _matches(device: Device, task: Task) -> bool:
         if device.device_group != task.match_group:
             return False
 
+    # Device model matching: device must match ONE of the task's models
+    if task.match_models:
+        if device.device_model not in task.match_models:
+            return False
+
     # Tag matching: device must have ALL task tags
     if task.match_tags:
         device_tag_set = set(device.tags)

@@ -265,7 +265,8 @@ def load_tasks(
 
         if is_simplified:
             match_group = vals[3] if len(vals) > 3 else ""
-            match_tags = _parse_tags(vals[4]) if len(vals) > 4 else ()
+            match_models_raw = vals[4] if len(vals) > 4 else ""
+            match_models = _parse_tags(match_models_raw)  # 设备型号, comma-separated
             output_dir_template = vals[5] if len(vals) > 5 else "{device_group}/{device_name}/{task_name}"
             image_name_template = vals[6] if len(vals) > 6 else "{device_name}_{task_name}_{timestamp}"
             enabled = _bool(vals[7]) if len(vals) > 7 else True
@@ -280,6 +281,7 @@ def load_tasks(
             # Legacy full-column format — Excel provides everything as before
             match_group = vals[3] if len(vals) > 3 else ""
             match_tags = _parse_tags(vals[4]) if len(vals) > 4 else ()
+            match_models = ()
             if not execution_mode:
                 execution_mode = vals[5] if len(vals) > 5 else ""
             if not command_or_url:
@@ -305,6 +307,7 @@ def load_tasks(
             task_type=task_type,
             match_group=match_group,
             match_tags=match_tags,
+            match_models=match_models,
             execution_mode=execution_mode,
             command_or_url=command_or_url,
             actions_json=actions_json,
