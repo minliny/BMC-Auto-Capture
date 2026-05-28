@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -127,7 +128,8 @@ def check_device(device: Device, timeout: float = 5.0) -> PreflightResult:
     )
 
 
-def check_all(devices: list[Device], timeout: float = 5.0) -> PreflightReport:
+def check_all(devices: list[Device], timeout: float = 5.0,
+              max_workers: int = 20) -> PreflightReport:
     # Dedup by device name — each unique device probed once
     seen: set[str] = set()
     unique: list[Device] = []
@@ -136,24 +138,50 @@ def check_all(devices: list[Device], timeout: float = 5.0) -> PreflightReport:
             seen.add(d.device_name)
             unique.append(d)
 
-    report = PreflightReport(total=len(unique))
-    for i, device in enumerate(unique):
-        if i % 10 == 0 or i == len(unique) - 1:
-            logger.info("Preflight progress: %d/%d devices probed", i + 1, len(unique))
-        r = check_device(device, timeout)
-        report.results.append(r)
-        if r.bmc_status != PreflightStatus.OK:
-            report.bmc_fail += 1
-        else:
-            report.bmc_ok += 1
-        if r.ssh_status != PreflightStatus.OK:
-            report.ssh_fail += 1
-        else:
-            report.ssh_ok += 1
+    total = len(unique)
+    logger.info("Preflight: probing %d unique devices (max %d parallel)", total, max_workers)
+    print(f"  Probing {total} devices in parallel (workers={max_workers})...")
+
+    report = PreflightReport(total=total)
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="preflight") as pool:
+        future_to_device = {
+            pool.submit(check_device, d, timeout): d for d in unique
+        }
+        for future in as_completed(future_to_device):
+            device = future_to_device[future]
+            try:
+                r = future.result()
+            except Exception as e:
+                logger.error("Preflight crashed for %s: %s", device.device_name, e)
+                r = PreflightResult(
+                    device_name=device.device_name,
+                    bmc_status=PreflightStatus.UNKNOWN,
+                    ssh_status=PreflightStatus.UNKNOWN,
+                    bmc_error=str(e),
+                    ssh_error=str(e),
+                )
+            report.results.append(r)
+            if r.bmc_status != PreflightStatus.OK:
+                report.bmc_fail += 1
+            else:
+                report.bmc_ok += 1
+            if r.ssh_status != PreflightStatus.OK:
+                report.ssh_fail += 1
+            else:
+                report.ssh_ok += 1
+
+            completed += 1
+            if completed % 10 == 0 or completed == total:
+                print(f"  Progress: {completed}/{total} devices probed", flush=True)
+
+    # Sort results by device name for consistent output
+    report.results.sort(key=lambda r: r.device_name)
 
     logger.info(
         "Preflight complete: %d unique devices, BMC %d/%d OK, SSH %d/%d OK",
-        len(unique),
+        total,
         report.bmc_ok, report.bmc_ok + report.bmc_fail,
         report.ssh_ok, report.ssh_ok + report.ssh_fail,
     )
