@@ -7,6 +7,7 @@ from __future__ import annotations
 import csv
 import logging
 import os
+from collections import defaultdict
 from typing import Sequence
 
 from ..models.execution_result import ExecutionResult
@@ -19,12 +20,8 @@ def build_pivot_csv(
     output_dir: str,
     filename: str = "summary_pivot.csv",
 ) -> str:
-    """Generate a device(row) × task(column) pivot table CSV.
-
-    Each cell shows execution_status.
-    """
-    # Collect unique devices and tasks
-    devices: dict[str, str] = {}  # device_name -> device_group
+    """Generate a device(row) × task(column) pivot table CSV."""
+    devices: dict[str, str] = {}
     tasks: list[str] = []
     task_set: set[str] = set()
 
@@ -35,12 +32,10 @@ def build_pivot_csv(
             task_set.add(r.task_name)
             tasks.append(r.task_name)
 
-    # Build lookup: (device, task) -> status
     lookup: dict[tuple[str, str], str] = {}
     for r in results:
         lookup[(r.device_name, r.task_name)] = r.execution_status
 
-    # Sort devices by group then name
     sorted_devices = sorted(devices.items(), key=lambda x: (x[1], x[0]))
 
     path = os.path.join(output_dir, filename)
@@ -50,7 +45,6 @@ def build_pivot_csv(
         writer = csv.writer(f)
         header = ["设备分组", "设备名称"] + tasks
         writer.writerow(header)
-
         for dev_name, dev_group in sorted_devices:
             row = [dev_group, dev_name]
             for task_name in tasks:
@@ -62,7 +56,7 @@ def build_pivot_csv(
 
 
 def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
-    """Print a human-readable summary to stdout."""
+    """Print execution summary + per-task breakdown + per-group summary."""
     from .collector import compute_summary
 
     s = compute_summary(results)
@@ -82,18 +76,21 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
     print(f"  规则失败:       {s['rule_failed']:>6}")
     print("=" * 60)
 
-    # Per-group connectivity summary
-    print_connectivity_summary(results)
+    print_execution_summary(results)
 
 
 def _categorize_failure(status: str, reason: str) -> str:
     """Categorize an execution failure into a human-readable type."""
     if status == "EXEC_SUCCESS":
         return "OK"
+    if "IP为空" in reason or "IP empty" in reason.lower():
+        return "未配置IP"
     if "认证失败" in reason or "Authentication" in reason or "Auth" in reason:
         return "账号/密码错误"
     if "登录失败" in reason or "Login fail" in reason.lower():
         return "登录失败"
+    if "页面无法访问" in reason or "Failed to reach" in reason:
+        return "BMC页面无法访问"
     if "超时" in reason or "timeout" in reason.lower() or "Timeout" in reason:
         return "连接超时"
     if "拒绝" in reason or "refused" in reason.lower():
@@ -104,8 +101,6 @@ def _categorize_failure(status: str, reason: str) -> str:
         return "网络不可达"
     if "DNS" in reason or "getaddrinfo" in reason or "resolve" in reason.lower():
         return "DNS解析失败"
-    if "路由" in reason or "route" in reason.lower():
-        return "路由变更"
     if status.startswith("EXEC_SKIPPED_PRECHECK"):
         return "预检不通"
     if status.startswith("EXEC_SKIPPED_PORT"):
@@ -113,107 +108,87 @@ def _categorize_failure(status: str, reason: str) -> str:
     return "其他错误"
 
 
-def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
-    """Print per-device-group BMC/SSH connectivity summary with failure details."""
-    from collections import defaultdict
+def print_execution_summary(results: Sequence[ExecutionResult]) -> None:
+    """Print task execution results: per-task breakdown + per-group summary."""
+    if not results:
+        return
 
-    groups: dict[str, dict] = defaultdict(lambda: {
-        "devices": set(),
-        "bmc_devices_with_ip": set(),
-        "bmc_ok": 0, "bmc_no_ip": defaultdict(list),
-        "bmc_fail": defaultdict(list),
-        "ssh_devices_with_ip": set(),
-        "ssh_ok": 0, "ssh_no_ip": defaultdict(list),
-        "ssh_fail": defaultdict(list),
+    # Per-task stats
+    task_stats: dict[str, dict] = defaultdict(lambda: {
+        "ok": 0, "fail": defaultdict(list), "task_type": "", "total": 0,
+    })
+    group_stats: dict[str, dict] = defaultdict(lambda: {
+        "devices": set(), "bmc_ok": 0, "bmc_fail": [], "ssh_ok": 0, "ssh_fail": [],
     })
 
     for r in results:
-        g = groups[r.device_group or "(unknown)"]
-        g["devices"].add(r.device_name)
+        tn = r.task_name
+        ts = task_stats[tn]
+        ts["task_type"] = r.task_type
+        ts["total"] += 1
+        if r.execution_status == "EXEC_SUCCESS":
+            ts["ok"] += 1
+        else:
+            cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
+            ts["fail"][cat].append(r)
 
+        g = group_stats[r.device_group or "(未知分组)"]
+        g["devices"].add(r.device_name)
         if r.task_type in ("BMC", "BMC_URL", "BMC_ACTIONS"):
-            if r.bmc_ip:
-                g["bmc_devices_with_ip"].add(r.device_name)
             if r.execution_status == "EXEC_SUCCESS":
                 g["bmc_ok"] += 1
-            elif "IP为空" in (r.execution_failure_reason or ""):
-                g["bmc_no_ip"]["未配置BMC IP"].append(r)
             else:
-                cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
-                g["bmc_fail"][cat].append(r)
-
+                g["bmc_fail"].append(r)
         elif r.task_type in ("SSH", "SSH_CMD", "TELNET", "TELNET_CMD"):
-            if r.inband_ip:
-                g["ssh_devices_with_ip"].add(r.device_name)
             if r.execution_status == "EXEC_SUCCESS":
                 g["ssh_ok"] += 1
-            elif "IP为空" in (r.execution_failure_reason or ""):
-                g["ssh_no_ip"]["未配置带内IP"].append(r)
             else:
-                cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
-                g["ssh_fail"][cat].append(r)
+                g["ssh_fail"].append(r)
 
-    if not groups:
-        print("\n  (无连通性数据)")
-        return
-
+    # ====== Section 1: Per-task breakdown ======
     print("\n" + "=" * 80)
-    print("  按设备分组连通性汇总")
+    print("  任务执行明细")
     print("=" * 80)
 
-    for group_name in sorted(groups.keys()):
-        g = groups[group_name]
-        total_dev = len(g["devices"])
-        bmc_with_ip = len(g["bmc_devices_with_ip"])
-        ssh_with_ip = len(g["ssh_devices_with_ip"])
+    bmc_tasks = [(n, s) for n, s in task_stats.items() if s["task_type"] in ("BMC", "BMC_URL", "BMC_ACTIONS")]
+    ssh_tasks = [(n, s) for n, s in task_stats.items() if s["task_type"] in ("SSH", "SSH_CMD", "TELNET", "TELNET_CMD")]
 
-        print(f"\n  [{group_name}]  ({total_dev} 台设备)")
+    def _print_task_group(title, task_list):
+        if not task_list:
+            return
+        print(f"\n  ── {title} ──")
+        for name, stats in sorted(task_list):
+            fail_total = sum(len(v) for v in stats["fail"].values())
+            icon = "PASS" if fail_total == 0 else "FAIL"
+            print(f"    [{icon}] {name}")
+            print(f"          设备总数: {stats['total']}  成功: {stats['ok']}  失败: {fail_total}")
+            if fail_total > 0:
+                for cat, items in sorted(stats["fail"].items(), key=lambda x: -len(x[1])):
+                    print(f"          └ {cat}: {len(items)} 台")
+                    for r in items[:3]:
+                        print(f"             · {r.device_name}: {r.execution_failure_reason[:100]}")
+                    if len(items) > 3:
+                        print(f"             · ... 及其他 {len(items) - 3} 台")
 
-        # BMC section
-        bmc_total = g["bmc_ok"] + sum(len(v) for v in g["bmc_no_ip"].values()) + sum(len(v) for v in g["bmc_fail"].values())
-        bmc_fail_count = sum(len(v) for v in g["bmc_fail"].values())
-        print(f"    ── 带外 (BMC) ──")
-        print(f"    设备总数: {total_dev}  已配置BMC IP: {bmc_with_ip}")
-        print(f"    连通成功: {g['bmc_ok']}")
-        print(f"    未配置IP: {total_dev - bmc_with_ip} 台（仅带内设备）")
-        if bmc_fail_count > 0:
-            print(f"    不通过: {bmc_fail_count}")
-            for cat, items in sorted(g["bmc_fail"].items(), key=lambda x: -len(x[1])):
-                print(f"      └ {cat}: {len(items)} 台")
-                for r in items[:3]:
-                    reason = r.execution_failure_reason[:80] if r.execution_failure_reason else "(无详情)"
-                    print(f"         · {r.device_name}: {reason}")
-                if len(items) > 3:
-                    print(f"         · ... 及其他 {len(items) - 3} 台")
-        else:
-            print(f"    不通过: 0")
+    _print_task_group("BMC 任务 (带外浏览器)", bmc_tasks)
+    _print_task_group("SSH 任务 (带内命令行)", ssh_tasks)
 
-        # SSH section
-        ssh_total = g["ssh_ok"] + sum(len(v) for v in g["ssh_no_ip"].values()) + sum(len(v) for v in g["ssh_fail"].values())
-        ssh_fail_count = sum(len(v) for v in g["ssh_fail"].values())
-        print(f"    ── 带内 (SSH) ──")
-        print(f"    设备总数: {total_dev}  已配置带内IP: {ssh_with_ip}")
-        print(f"    连通成功: {g['ssh_ok']}")
-        print(f"    未配置IP: {total_dev - ssh_with_ip} 台（仅带外设备）")
-        if ssh_fail_count > 0:
-            print(f"    不通过: {ssh_fail_count}")
-            for cat, items in sorted(g["ssh_fail"].items(), key=lambda x: -len(x[1])):
-                print(f"      └ {cat}: {len(items)} 台")
-                for r in items[:3]:
-                    reason = r.execution_failure_reason[:80] if r.execution_failure_reason else "(无详情)"
-                    print(f"         · {r.device_name}: {reason}")
-                if len(items) > 3:
-                    print(f"         · ... 及其他 {len(items) - 3} 台")
-        else:
-            print(f"    不通过: 0")
+    # ====== Section 2: Per-group summary ======
+    if group_stats:
+        print(f"\n  {'─' * 70}")
+        print(f"  按设备分组汇总")
+        print(f"  {'─' * 70}")
+        for group_name in sorted(group_stats.keys()):
+            g = group_stats[group_name]
+            total_dev = len(g["devices"])
+            bmc_ok, bmc_fail = g["bmc_ok"], len(g["bmc_fail"])
+            ssh_ok, ssh_fail = g["ssh_ok"], len(g["ssh_fail"])
+            print(f"\n  [{group_name}]  ({total_dev} 台设备)")
+            if bmc_ok + bmc_fail > 0:
+                print(f"    带外(BMC): 成功={bmc_ok}  失败={bmc_fail}")
+            if ssh_ok + ssh_fail > 0:
+                print(f"    带内(SSH): 成功={ssh_ok}  失败={ssh_fail}")
 
-    # Overall totals
-    print(f"\n  {'─' * 70}")
-    all_bmc_ok = sum(g["bmc_ok"] for g in groups.values())
-    all_bmc_fail = sum(sum(len(v) for v in g["bmc_fail"].values()) for g in groups.values())
-    all_ssh_ok = sum(g["ssh_ok"] for g in groups.values())
-    all_ssh_fail = sum(sum(len(v) for v in g["ssh_fail"].values()) for g in groups.values())
-    print(f"  总计:  BMC OK={all_bmc_ok} 失败={all_bmc_fail}  |  带内 成功={all_ssh_ok} 失败={all_ssh_fail}")
     print("=" * 80)
 
 
