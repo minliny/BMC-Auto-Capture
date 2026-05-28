@@ -695,9 +695,9 @@ class BMCExecutor(AbstractExecutor):
                     ))
                 elif action_type == "save_html":
                     html = await page.content()
-                    html_path = write_html_file(output_dir, f"step_{i:03d}.html", html)
-                    if not result.html_file:
-                        result.html_file = html_path
+                    file_base = f"{device.bmc_ip}-{device.device_name}"
+                    html_path = write_html_file(output_dir, f"{file_base}.html", html)
+                    result.html_file = html_path
                 elif action_type == "assert_visible":
                     el = await page.query_selector(selector)
                     if not el or not await el.is_visible():
