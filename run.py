@@ -196,14 +196,17 @@ def main():
         from src.loader.excel_reader import load_all as _load
         from src.connectivity.preflight import check_all as _preflight_all, PreflightStatus
         devices, tasks = _load(str(excel_path))
-        enabled = [d for d in devices if d.enabled]
-        print(f"\nPreflight check: {len(enabled)} devices (TCP 443/22)...\n")
-        report = _preflight_all(enabled, timeout=config.tcp_connect_timeout)
+        print(f"\nPreflight: loaded {len(devices)} rows from Excel, checking unique enabled devices...\n")
+        report = _preflight_all(devices, timeout=config.tcp_connect_timeout)
+        print(f"\n{'Device':<30s}  {'BMC':<25s}  {'SSH':<25s}")
+        print("-" * 85)
         for r in report.results:
             bmc = "OK" if r.bmc_status == "OK" else f"FAIL({r.bmc_status})"
             ssh = "OK" if r.ssh_status == "OK" else f"FAIL({r.ssh_status})"
-            print(f"  {r.device_name:<25s}  BMC: {bmc:<20s}  SSH: {ssh:<20s}")
-        print(f"\nBMC: {report.bmc_ok}/{report.bmc_ok+report.bmc_fail}  SSH: {report.ssh_ok}/{report.ssh_ok+report.ssh_fail}")
+            print(f"  {r.device_name:<28s}  BMC: {bmc:<22s}  SSH: {ssh:<22s}")
+        print(f"\n  Unique devices: {report.total}")
+        print(f"  BMC: {report.bmc_ok}/{report.bmc_ok+report.bmc_fail} OK")
+        print(f"  SSH: {report.ssh_ok}/{report.ssh_ok+report.ssh_fail} OK")
         sys.exit(0)
 
     # Run

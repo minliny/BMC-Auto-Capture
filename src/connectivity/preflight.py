@@ -2,7 +2,8 @@
 Connectivity Preflight — TCP-level probe of BMC (443) and SSH (22) ports.
 
 Uses Python socket only (satisfies security policy — Python is on the allowlist).
-Distinguishes between: network-unreachable, connection-refused, port-blocked, timeout.
+Distinguishes between: network-unreachable, connection-refused, port-blocked, timeout,
+host-resolve-failed, ip-empty.
 """
 
 
@@ -11,6 +12,7 @@ import logging
 import socket
 import time
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 from ..models.device import Device
 from ..models.task_plan import TaskPlan
@@ -25,6 +27,7 @@ class PreflightStatus:
     CONNECTION_REFUSED = "CONNECTION_REFUSED"
     PORT_BLOCKED = "PORT_BLOCKED"
     IP_EMPTY = "IP_EMPTY"
+    HOST_RESOLVE_FAILED = "HOST_RESOLVE_FAILED"
     UNKNOWN = "UNKNOWN"
 
 
@@ -49,10 +52,28 @@ class PreflightReport:
     ssh_fail: int = 0
 
 
-def _tcp_probe(host: str, port: int, timeout: float) -> tuple[str, str, float]:
+def _resolve_host(raw: str) -> str:
+    """Extract a valid hostname/IP from a raw field value.
+    Handles URLs (https://...), paths (/...), and bare IPs.
+    """
+    raw = raw.strip()
+    if not raw:
+        return ""
+    if raw.startswith("http://") or raw.startswith("https://"):
+        parsed = urlparse(raw)
+        return parsed.hostname or ""
+    # Bare IP or hostname
+    if raw.startswith("/"):
+        return ""
+    return raw
+
+
+def _tcp_probe(host_raw: str, port: int, timeout: float) -> tuple[str, str, float]:
     """Probe a single TCP endpoint. Returns (status, error_message, latency_ms)."""
-    if not host.strip():
-        return PreflightStatus.IP_EMPTY, "IP为空", 0.0
+    host = _resolve_host(host_raw)
+
+    if not host:
+        return PreflightStatus.IP_EMPTY, f"IP为空 (raw={host_raw[:60]!r})", 0.0
 
     start = time.perf_counter()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -68,12 +89,16 @@ def _tcp_probe(host: str, port: int, timeout: float) -> tuple[str, str, float]:
         return PreflightStatus.CONNECTION_REFUSED, "连接被拒绝", 0.0
     except PermissionError:
         return PreflightStatus.PORT_BLOCKED, "端口被安全策略拦截 (EACCES)", 0.0
+    except socket.gaierror as e:
+        return PreflightStatus.HOST_RESOLVE_FAILED, f"DNS解析失败: {e}", 0.0
     except OSError as e:
         errno = getattr(e, "errno", 0) or getattr(e, "winerror", 0)
-        if errno == 10013:  # WSAEACCES on Windows
+        if errno in (10013,):  # WSAEACCES on Windows
             return PreflightStatus.PORT_BLOCKED, "端口被安全策略拦截", 0.0
         if errno in (10051, 10065):  # Network unreachable / No route to host
             return PreflightStatus.UNREACHABLE, f"网络不可达: {e}", 0.0
+        if errno in (11001,):  # WSAHOST_NOT_FOUND on Windows
+            return PreflightStatus.HOST_RESOLVE_FAILED, f"DNS解析失败: {e}", 0.0
         return PreflightStatus.UNKNOWN, str(e), 0.0
     finally:
         sock.close()
@@ -82,6 +107,15 @@ def _tcp_probe(host: str, port: int, timeout: float) -> tuple[str, str, float]:
 def check_device(device: Device, timeout: float = 5.0) -> PreflightResult:
     bmc_status, bmc_error, bmc_lat = _tcp_probe(device.bmc_ip, 443, timeout)
     ssh_status, ssh_error, ssh_lat = _tcp_probe(device.inband_ip, 22, timeout)
+    # Log with raw Excel values for debugging
+    bmc_host = _resolve_host(device.bmc_ip) or "(empty)"
+    ssh_host = _resolve_host(device.inband_ip) or "(empty)"
+    logger.info(
+        "Preflight %s: BMC raw=%r resolved=%s:443 status=%s  |  SSH raw=%r resolved=%s:22 status=%s",
+        device.device_name,
+        device.bmc_ip[:60], bmc_host, bmc_status,
+        device.inband_ip[:60], ssh_host, ssh_status,
+    )
     return PreflightResult(
         device_name=device.device_name,
         bmc_status=bmc_status,
@@ -94,28 +128,32 @@ def check_device(device: Device, timeout: float = 5.0) -> PreflightResult:
 
 
 def check_all(devices: list[Device], timeout: float = 5.0) -> PreflightReport:
-    report = PreflightReport(total=len(devices))
-    enabled = [d for d in devices if d.enabled]
-    total = len(enabled)
-    for i, device in enumerate(enabled):
-        if i % 10 == 0 or i == total - 1:
-            logger.info("Preflight progress: %d/%d devices probed", i + 1, total)
+    # Dedup by device name — each unique device probed once
+    seen: set[str] = set()
+    unique: list[Device] = []
+    for d in devices:
+        if d.enabled and d.device_name not in seen:
+            seen.add(d.device_name)
+            unique.append(d)
+
+    report = PreflightReport(total=len(unique))
+    for i, device in enumerate(unique):
+        if i % 10 == 0 or i == len(unique) - 1:
+            logger.info("Preflight progress: %d/%d devices probed", i + 1, len(unique))
         r = check_device(device, timeout)
         report.results.append(r)
         if r.bmc_status != PreflightStatus.OK:
             report.bmc_fail += 1
-            logger.info("BMC %s → %s: %s", device.device_name, r.bmc_status, r.bmc_error)
         else:
             report.bmc_ok += 1
-
         if r.ssh_status != PreflightStatus.OK:
             report.ssh_fail += 1
-            logger.info("SSH %s → %s: %s", device.device_name, r.ssh_status, r.ssh_error)
         else:
             report.ssh_ok += 1
 
     logger.info(
-        "Preflight complete: BMC %d/%d OK, SSH %d/%d OK",
+        "Preflight complete: %d unique devices, BMC %d/%d OK, SSH %d/%d OK",
+        len(unique),
         report.bmc_ok, report.bmc_ok + report.bmc_fail,
         report.ssh_ok, report.ssh_ok + report.ssh_fail,
     )
