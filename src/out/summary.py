@@ -5,10 +5,13 @@ Summary builder — device × task pivot table for reporting.
 
 from __future__ import annotations
 import csv
+import logging
 import os
 from typing import Sequence
 
 from ..models.execution_result import ExecutionResult
+
+logger = logging.getLogger("bmc_auto_capture.summary")
 
 
 def build_pivot_csv(
@@ -113,43 +116,41 @@ def _categorize_failure(status: str, reason: str) -> str:
 
 
 def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
-    """Print per-device-group BMC/SSH connectivity summary."""
+    """Print per-device-group BMC/SSH connectivity summary with failure details."""
     from collections import defaultdict
 
-    # Group by device_group
     groups: dict[str, dict] = defaultdict(lambda: {
         "devices": set(),
-        # BMC stats
-        "bmc_total_devices": set(),       # devices with BMC IP
-        "bmc_ok": 0, "bmc_fail": defaultdict(int),
-        # SSH stats
-        "ssh_total_devices": set(),       # devices with inband IP
-        "ssh_ok": 0, "ssh_fail": defaultdict(int),
+        "bmc_devices_with_ip": set(),
+        "bmc_ok": 0, "bmc_fail": defaultdict(list),
+        "ssh_devices_with_ip": set(),
+        "ssh_ok": 0, "ssh_fail": defaultdict(list),
     })
 
     for r in results:
-        g = groups[r.device_group]
+        g = groups[r.device_group or "(unknown)"]
         g["devices"].add(r.device_name)
 
         if r.task_type in ("BMC", "BMC_URL", "BMC_ACTIONS"):
             if r.bmc_ip:
-                g["bmc_total_devices"].add(r.device_name)
+                g["bmc_devices_with_ip"].add(r.device_name)
             if r.execution_status == "EXEC_SUCCESS":
                 g["bmc_ok"] += 1
             else:
                 cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
-                g["bmc_fail"][cat] += 1
+                g["bmc_fail"][cat].append(r)
 
         elif r.task_type in ("SSH", "SSH_CMD", "TELNET", "TELNET_CMD"):
             if r.inband_ip:
-                g["ssh_total_devices"].add(r.device_name)
+                g["ssh_devices_with_ip"].add(r.device_name)
             if r.execution_status == "EXEC_SUCCESS":
                 g["ssh_ok"] += 1
             else:
                 cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
-                g["ssh_fail"][cat] += 1
+                g["ssh_fail"][cat].append(r)
 
     if not groups:
+        print("\n  (No connectivity data available)")
         return
 
     print("\n" + "=" * 80)
@@ -159,34 +160,75 @@ def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
     for group_name in sorted(groups.keys()):
         g = groups[group_name]
         total_dev = len(g["devices"])
-        bmc_with_ip = len(g["bmc_total_devices"])
-        ssh_with_ip = len(g["ssh_total_devices"])
+        bmc_with_ip = len(g["bmc_devices_with_ip"])
+        ssh_with_ip = len(g["ssh_devices_with_ip"])
 
         print(f"\n  [{group_name}]  ({total_dev} devices)")
 
         # BMC section
-        bmc_total = g["bmc_ok"] + sum(g["bmc_fail"].values())
-        if bmc_total > 0:
-            print(f"    ── 带外 (BMC) ──")
-            print(f"    设备总数: {total_dev}  有BMC IP: {bmc_with_ip}  任务总数: {bmc_total}")
-            print(f"    连通成功: {g['bmc_ok']}")
-            for cat, count in sorted(g["bmc_fail"].items(), key=lambda x: -x[1]):
-                print(f"      └ {cat}: {count}")
+        bmc_total = g["bmc_ok"] + sum(len(v) for v in g["bmc_fail"].values())
+        print(f"    ── 带外 (BMC) ──")
+        print(f"    设备总数: {total_dev}  有BMC IP: {bmc_with_ip}  任务总数: {bmc_total}")
+        print(f"    连通成功: {g['bmc_ok']}")
+        if g["bmc_fail"]:
+            print(f"    不通过: {sum(len(v) for v in g['bmc_fail'].values())}")
+            for cat, items in sorted(g["bmc_fail"].items(), key=lambda x: -len(x[1])):
+                print(f"      └ {cat}: {len(items)} 台")
+                # Show first 3 device examples
+                for r in items[:3]:
+                    reason = r.execution_failure_reason[:80] if r.execution_failure_reason else "(no detail)"
+                    print(f"         · {r.device_name}: {reason}")
+                if len(items) > 3:
+                    print(f"         · ... and {len(items) - 3} more")
+        else:
+            print(f"    不通过: 0")
 
         # SSH section
-        ssh_total = g["ssh_ok"] + sum(g["ssh_fail"].values())
-        if ssh_total > 0:
-            print(f"    ── 带内 (SSH) ──")
-            print(f"    设备总数: {total_dev}  有带内IP: {ssh_with_ip}  任务总数: {ssh_total}")
-            print(f"    连通成功: {g['ssh_ok']}")
-            for cat, count in sorted(g["ssh_fail"].items(), key=lambda x: -x[1]):
-                print(f"      └ {cat}: {count}")
+        ssh_total = g["ssh_ok"] + sum(len(v) for v in g["ssh_fail"].values())
+        print(f"    ── 带内 (SSH) ──")
+        print(f"    设备总数: {total_dev}  有带内IP: {ssh_with_ip}  任务总数: {ssh_total}")
+        print(f"    连通成功: {g['ssh_ok']}")
+        if g["ssh_fail"]:
+            print(f"    不通过: {sum(len(v) for v in g['ssh_fail'].values())}")
+            for cat, items in sorted(g["ssh_fail"].items(), key=lambda x: -len(x[1])):
+                print(f"      └ {cat}: {len(items)} 台")
+                for r in items[:3]:
+                    reason = r.execution_failure_reason[:80] if r.execution_failure_reason else "(no detail)"
+                    print(f"         · {r.device_name}: {reason}")
+                if len(items) > 3:
+                    print(f"         · ... and {len(items) - 3} more")
+        else:
+            print(f"    不通过: 0")
 
     # Overall totals
     print(f"\n  {'─' * 70}")
     all_bmc_ok = sum(g["bmc_ok"] for g in groups.values())
-    all_bmc_fail = sum(sum(g["bmc_fail"].values()) for g in groups.values())
+    all_bmc_fail = sum(sum(len(v) for v in g["bmc_fail"].values()) for g in groups.values())
     all_ssh_ok = sum(g["ssh_ok"] for g in groups.values())
-    all_ssh_fail = sum(sum(g["ssh_fail"].values()) for g in groups.values())
+    all_ssh_fail = sum(sum(len(v) for v in g["ssh_fail"].values()) for g in groups.values())
     print(f"  TOTAL: BMC OK={all_bmc_ok} FAIL={all_bmc_fail}  |  SSH OK={all_ssh_ok} FAIL={all_ssh_fail}")
     print("=" * 80)
+
+
+def write_connectivity_csv(results: Sequence[ExecutionResult], output_dir: str,
+                           filename: str = "connectivity_summary.csv") -> str:
+    """Write per-task failure categorization CSV."""
+    path = os.path.join(output_dir, filename)
+    os.makedirs(output_dir, exist_ok=True)
+
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "设备分类", "设备名称", "BMC IP", "带内IP",
+            "任务名称", "任务类型", "执行状态", "失败分类", "失败原因",
+        ])
+        for r in sorted(results, key=lambda r: (r.device_group, r.device_name, r.task_name)):
+            cat = _categorize_failure(r.execution_status, r.execution_failure_reason) if r.execution_status != "EXEC_SUCCESS" else "OK"
+            writer.writerow([
+                r.device_group, r.device_name, r.bmc_ip, r.inband_ip,
+                r.task_name, r.task_type, r.execution_status, cat,
+                r.execution_failure_reason,
+            ])
+
+    logger.info("Wrote connectivity summary to %s", path)
+    return path

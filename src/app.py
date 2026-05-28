@@ -25,7 +25,7 @@ from .executor.ssh_executor import SSHExecutor
 from .executor.bmc_executor import BMCExecutor
 from .executor.browser_manager import BrowserManager
 from .out.collector import write_result_csv, write_final_result_csv, compute_summary
-from .out.summary import build_pivot_csv, print_terminal_summary
+from .out.summary import build_pivot_csv, print_terminal_summary, write_connectivity_csv
 
 logger = logging.getLogger("bmc_auto_capture.app")
 
@@ -148,6 +148,11 @@ class App:
             build_pivot_csv(self._results, str(output_dir))
         except Exception as e:
             logger.warning("Failed to build pivot table: %s", e)
+
+        try:
+            write_connectivity_csv(self._results, str(output_dir))
+        except Exception as e:
+            logger.warning("Failed to write connectivity summary: %s", e)
 
         summary = compute_summary(self._results)
         logger.info("Summary: %s", summary)
