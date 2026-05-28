@@ -53,14 +53,109 @@ def _parse_tags(raw: str) -> tuple[str, ...]:
     return tuple(parts)
 
 
+# Column name → canonical field name mapping (header-based, order-independent)
+DEVICE_HEADER_MAP: dict[str, str] = {}
+
+def _build_header_map(headers: list[str]) -> dict[str, int]:
+    """Build header_name → column_index map from the header row.
+    Headers are matched by looking up canonical field names via DEVICE_HEADER_MAP."""
+    if not DEVICE_HEADER_MAP:
+        _init_header_map()
+
+    col_map: dict[str, int] = {}
+    for idx, h in enumerate(headers):
+        h_clean = _str(h)
+        field = DEVICE_HEADER_MAP.get(h_clean, "")
+        if field:
+            col_map[field] = idx
+        else:
+            # Try case-insensitive match
+            for key, val in DEVICE_HEADER_MAP.items():
+                if key.lower() == h_clean.lower():
+                    col_map[val] = idx
+                    break
+    return col_map
+
+
+def _init_header_map():
+    """One-time init of header name → field mapping."""
+    DEVICE_HEADER_MAP.update({
+        # device_group
+        "设备分类": "device_group",
+        "device_group": "device_group",
+        # device_name
+        "设备名称": "device_name",
+        "device_name": "device_name",
+        # bmc_ip
+        "带外管理IP": "bmc_ip",
+        "bmc_ip": "bmc_ip",
+        "oob_ip": "bmc_ip",
+        "BMC IP": "bmc_ip",
+        "BMC IP地址": "bmc_ip",
+        # enabled
+        "设备是否启用": "enabled",
+        "是否启用": "enabled",
+        "enabled": "enabled",
+        # bmc_username
+        "带外管理用户名": "bmc_username",
+        "bmc_username": "bmc_username",
+        "BMC用户名": "bmc_username",
+        "BMC账号": "bmc_username",
+        # bmc_password
+        "带外管理密码": "bmc_password",
+        "bmc_password": "bmc_password",
+        "BMC密码": "bmc_password",
+        # inband_ip
+        "带内管理IP": "inband_ip",
+        "inband_ip": "inband_ip",
+        "ib_ip": "inband_ip",
+        "SSH IP": "inband_ip",
+        # inband_username
+        "带内管理用户名": "inband_username",
+        "inband_username": "inband_username",
+        "SSH用户名": "inband_username",
+        "带内账号": "inband_username",
+        # inband_password
+        "带内管理密码": "inband_password",
+        "inband_password": "inband_password",
+        "SSH密码": "inband_password",
+        "带内密码": "inband_password",
+        # tags
+        "标签": "tags",
+        "tags": "tags",
+    })
+
+
 def load_devices(filepath: str | Path, sheet_name: str = "设备信息") -> list[Device]:
     wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
     if sheet_name not in wb.sheetnames:
         raise ValueError(f"Sheet '{sheet_name}' not found. Available: {wb.sheetnames}")
 
     ws = wb[sheet_name]
+
+    # Read header row (row 1)
+    header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+    headers = [_str(v) for v in header_row] if header_row else []
+    col_map = _build_header_map(headers)
+
+    if not col_map:
+        wb.close()
+        raise ValueError(
+            f"No recognized headers in '{sheet_name}'. "
+            f"Found: {headers}. Expected headers like 设备名称, 带外管理IP, etc."
+        )
+
+    logger.info("Device sheet headers: %s → mapped fields: %s",
+                headers, list(col_map.keys()))
+
     rows = list(ws.iter_rows(min_row=2, values_only=True))
     wb.close()
+
+    def _get(field: str) -> str:
+        idx = col_map.get(field, -1)
+        if idx >= 0 and idx < len(vals):
+            return vals[idx]
+        return ""
 
     devices: list[Device] = []
     for i, row in enumerate(rows):
@@ -68,19 +163,29 @@ def load_devices(filepath: str | Path, sheet_name: str = "设备信息") -> list
             continue
 
         vals = [_str(v) for v in row]
-        tags = _parse_tags(vals[9]) if len(vals) > 9 else ()
+        tags = _parse_tags(_get("tags"))
+
+        # Validate BMC IP: reject obvious non-IP values
+        bmc_raw = _get("bmc_ip")
+        enabled_raw = _get("enabled")
+        if bmc_raw in ("是", "否", "启用", "禁用", "yes", "no", "true", "false"):
+            logger.warning(
+                "Row %d: bmc_ip='%s' looks like an enabled flag — "
+                "possible column misalignment. Check Excel header order.",
+                i + 2, bmc_raw,
+            )
 
         device = Device(
             row_index=i + 2,
-            device_group=vals[0] if len(vals) > 0 else "",
-            device_name=vals[1] if len(vals) > 1 else "",
-            bmc_ip=vals[2] if len(vals) > 2 else "",
-            enabled=_bool(vals[3]) if len(vals) > 3 else True,
-            bmc_username=vals[4] if len(vals) > 4 else "",
-            bmc_password=vals[5] if len(vals) > 5 else "",
-            inband_ip=vals[6] if len(vals) > 6 else "",
-            inband_username=vals[7] if len(vals) > 7 else "",
-            inband_password=vals[8] if len(vals) > 8 else "",
+            device_group=_get("device_group"),
+            device_name=_get("device_name"),
+            bmc_ip=bmc_raw,
+            enabled=_bool(enabled_raw) if enabled_raw else True,
+            bmc_username=_get("bmc_username"),
+            bmc_password=_get("bmc_password"),
+            inband_ip=_get("inband_ip"),
+            inband_username=_get("inband_username"),
+            inband_password=_get("inband_password"),
             tags=tags,
         )
         devices.append(device)

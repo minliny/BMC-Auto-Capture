@@ -53,17 +53,23 @@ class PreflightReport:
     ssh_fail: int = 0
 
 
+_INVALID_HOST_VALUES = {"是", "否", "启用", "禁用", "yes", "no", "true", "false", "1", "0"}
+
+
 def _resolve_host(raw: str) -> str:
     """Extract a valid hostname/IP from a raw field value.
     Handles URLs (https://...), paths (/...), and bare IPs.
+    Returns empty string for values that look like boolean flags
+    (likely column misalignment in Excel).
     """
     raw = raw.strip()
     if not raw:
         return ""
+    if raw.lower() in _INVALID_HOST_VALUES:
+        return ""
     if raw.startswith("http://") or raw.startswith("https://"):
         parsed = urlparse(raw)
         return parsed.hostname or ""
-    # Bare IP or hostname
     if raw.startswith("/"):
         return ""
     return raw
