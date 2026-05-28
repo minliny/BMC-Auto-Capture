@@ -260,6 +260,10 @@ class BMCExecutor(AbstractExecutor):
             logger.error("[%s] %s", device.device_name, reason)
             return False, reason
 
+        # Handle self-signed cert warning: "您的连接不是专用连接"
+        if await self._bypass_cert_warning(page, device):
+            await asyncio.sleep(2)
+
         await asyncio.sleep(2)  # Allow redirect to login page
 
         # Check for "account already logged in elsewhere" before login
@@ -332,6 +336,64 @@ class BMCExecutor(AbstractExecutor):
                 return False, "BMC登录失败: 账户已在其他地方登录"
 
         return True, ""
+
+    async def _bypass_cert_warning(self, page, device) -> bool:
+        """Handle self-signed cert warning: 您的连接不是专用连接 → 高级 → 继续访问."""
+        cert_indicators = [
+            'text=您的连接不是专用连接',
+            'text=Your connection is not private',
+            'text=not private',
+            '#details-button',
+            '#proceed-link',
+        ]
+        found = False
+        for sel in cert_indicators:
+            try:
+                el = await page.query_selector(sel)
+                if el:
+                    found = True
+                    break
+            except Exception:
+                continue
+        if not found:
+            return False
+
+        logger.info("[%s] 检测到证书警告页面，尝试跳过...", device.device_name)
+        # Click "Advanced" / "高级"
+        advanced_selectors = [
+            '#details-button',
+            'button:has-text("高级")',
+            'button:has-text("Advanced")',
+        ]
+        for sel in advanced_selectors:
+            try:
+                el = await page.query_selector(sel)
+                if el and await el.is_visible():
+                    await el.click()
+                    await asyncio.sleep(1)
+                    break
+            except Exception:
+                continue
+
+        # Click "Proceed to ... (unsafe)" / "继续访问...（不安全）"
+        proceed_selectors = [
+            '#proceed-link',
+            'a:has-text("继续")',
+            'a:has-text("Proceed")',
+            'text=继续访问',
+            'text=Proceed to',
+        ]
+        for sel in proceed_selectors:
+            try:
+                el = await page.query_selector(sel)
+                if el and await el.is_visible():
+                    await el.click()
+                    logger.info("[%s] 已跳过证书警告", device.device_name)
+                    return True
+            except Exception:
+                continue
+
+        return False
 
     async def _detect_account_conflict(self, page, device) -> bool:
         """Check if BMC shows 'account already logged in elsewhere' message."""
