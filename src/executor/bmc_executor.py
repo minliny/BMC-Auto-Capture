@@ -28,8 +28,12 @@ logger = logging.getLogger("bmc_auto_capture.bmc")
 
 # --- Common post-login popup patterns ---
 POPUP_DISMISS_SELECTORS = [
-    # "Password expiring" / "Password insecure" warnings
+    # "Password risk" / "Password expiring" / "Password insecure" warnings
+    '#bt-modify-later',
+    '#bt-modify-noever',
     'button:has-text("暂不修改")',
+    'button:has-text("立即修改")',
+    'button:has-text("不再提示")',
     'button:has-text("忽略")',
     'button:has-text("稍后")',
     'button:has-text("取消")',
@@ -351,6 +355,76 @@ class BMCExecutor(AbstractExecutor):
                 continue
         return False
 
+    async def _detect_target_blocker(self, page, target_url: str) -> str:
+        """Check if page is blocked from reaching the target.
+        Returns error message string if blocked, empty string if OK.
+        """
+        current_url = page.url
+
+        # Check 1: still on login page
+        login_indicators = [
+            '#login-container', '#login-input', '#btLogin',
+            'input[name="username"]', 'input[name="password"]',
+        ]
+        on_login = False
+        for sel in login_indicators:
+            try:
+                el = await page.query_selector(sel)
+                if el and await el.is_visible():
+                    on_login = True
+                    break
+            except Exception:
+                continue
+
+        if on_login or '/login' in current_url:
+            # Check for password risk prompt
+            risk_selectors = [
+                '#bt-modify-later', '#bt-modify-noever', '#bt-modify-now',
+                'button:has-text("暂不修改")', 'button:has-text("立即修改")',
+                'button:has-text("不再提示")',
+                'text=您的账号存在安全风险', 'text=建议修改密码',
+            ]
+            for sel in risk_selectors:
+                try:
+                    el = await page.query_selector(sel)
+                    if el and await el.is_visible():
+                        return (
+                            f"目标页面未到达: 当前仍在登录页，存在密码风险提示({sel})。"
+                            f"target_url={target_url} current_url={current_url}"
+                        )
+                except Exception:
+                    continue
+
+            # Generic login block
+            return (
+                f"目标页面未到达: 当前仍在登录页。"
+                f"target_url={target_url} current_url={current_url}"
+            )
+
+        # Check 2: password risk prompt on target page
+        try:
+            el = await page.query_selector('#bt-modify-later')
+            if el and await el.is_visible():
+                return (
+                    f"目标页面存在密码风险提示，未自动关闭。"
+                    f"target_url={target_url} current_url={current_url}"
+                )
+        except Exception:
+            pass
+
+        # Check 3: target URL path not in current URL
+        if target_url:
+            from urllib.parse import urlparse
+            target_path = urlparse(target_url).path
+            current_path = urlparse(current_url).path
+            if target_path and target_path not in current_path:
+                return (
+                    f"目标页面路径不匹配: 期望={target_path} 实际={current_path}。"
+                    f"target_url={target_url} current_url={current_url}"
+                )
+
+        return ""
+
     async def _dismiss_popups(self, page) -> None:
         """Try to dismiss common post-login popups."""
         for _ in range(5):  # max 5 popups
@@ -383,6 +457,14 @@ class BMCExecutor(AbstractExecutor):
             except Exception:
                 await page.goto(target_url, wait_until="domcontentloaded", timeout=self._page_timeout * 1000)
             await asyncio.sleep(2)
+
+            # Re-dismiss any popups that appeared on the target page
+            await self._dismiss_popups(page)
+
+        # Verify we're on the target page, not still stuck at login
+        blocker = await self._detect_target_blocker(page, target_url)
+        if blocker:
+            raise Exception(blocker)
 
         # Full-page screenshot
         ss_filename = (task.image_name_template
