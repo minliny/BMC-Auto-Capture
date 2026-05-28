@@ -150,6 +150,54 @@ class AssertElementTextHandler(RuleActionHandler):
             )
 
 
+class ExtractCssHandler(RuleActionHandler):
+    """Extract element text via CSS selector and store in context.variables."""
+    action_type = "extract_css"
+
+    async def execute(self, action, context) -> None:
+        selector = context.resolve_var(action.selector)
+        el = await context.page.query_selector(selector)
+        if el:
+            context.variables[action.value] = (await el.inner_text()).strip()
+            logger.debug("Extracted CSS %s → %s", action.value, context.variables[action.value])
+        else:
+            logger.warning("ExtractCss: element not found: %s", selector)
+
+
+class ExtractRegexHandler(RuleActionHandler):
+    """Extract first regex match from context.text_output and store in context.variables."""
+    action_type = "extract_regex"
+
+    async def execute(self, action, context) -> None:
+        import re
+        text = context.text_output or ""
+        pattern = context.resolve_var(action.selector)
+        match = re.search(pattern, text)
+        if match:
+            context.variables[action.value] = match.group(1)
+            logger.debug("Extracted regex group(1) '%s' → %s", pattern, context.variables[action.value])
+        else:
+            logger.warning("ExtractRegex: no match for pattern: %s", pattern)
+
+
+class ExtractTextHandler(RuleActionHandler):
+    """Extract all text matching a substring from context.text_output."""
+    action_type = "extract_text"
+
+    async def execute(self, action, context) -> None:
+        text = context.text_output or ""
+        key = context.resolve_var(action.selector)
+        idx = text.find(key)
+        if idx >= 0:
+            # Extract surrounding context (50 chars each side)
+            start = max(0, idx - 50)
+            end = min(len(text), idx + len(key) + 50)
+            context.variables[action.value] = text[start:end].strip()
+            logger.debug("Extracted text at index %d → %s", idx, action.value)
+        else:
+            logger.warning("ExtractText: substring not found: %s", key)
+
+
 # Register all built-in handlers
 def _register_all():
     for cls in [
@@ -166,6 +214,9 @@ def _register_all():
         AssertNoTextHandler,
         AssertNoElementHandler,
         AssertElementTextHandler,
+        ExtractCssHandler,
+        ExtractRegexHandler,
+        ExtractTextHandler,
     ]:
         register(cls.action_type, cls)
 

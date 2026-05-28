@@ -23,6 +23,9 @@ from .schemas import (
     ExecuteStartResponse,
     ExecutionStatus,
     SummaryResponse,
+    TaskPushRequest,
+    WebhookRegisterRequest,
+    WebhookResponse,
 )
 
 logger = logging.getLogger("bmc_auto_capture.api")
@@ -104,13 +107,11 @@ async def upload_excel(file: UploadFile = File(...)):
 
 @router.post("/execute/start", response_model=ExecuteStartResponse)
 async def execute_start(req: ExecuteStartRequest):
-    """Start a new execution. Returns execution_id for tracking."""
+    """Start a new execution. Returns execution_id for tracking.
+    Accepts either excel_path (loads from Excel) or plans_json (in-memory plans).
+    """
     from ..src.models.app_config import AppConfig
     from ..src.app import App
-
-    excel_path = req.excel_path
-    if not os.path.exists(excel_path):
-        raise HTTPException(status_code=404, detail=f"Excel file not found: {excel_path}")
 
     config = AppConfig()
     if req.config_path and os.path.exists(req.config_path):
@@ -119,7 +120,7 @@ async def execute_start(req: ExecuteStartRequest):
     exec_id = uuid.uuid4().hex[:12]
     _executions[exec_id] = {
         "phase": "starting",
-        "excel_path": excel_path,
+        "excel_path": req.excel_path,
         "config": config,
         "results": [],
         "thread": None,
@@ -129,14 +130,59 @@ async def execute_start(req: ExecuteStartRequest):
 
     # Wire event bus for progress tracking
     app.event_bus.subscribe("plan_completed", lambda **kw: _executions[exec_id].setdefault("completed", 0))
-    # Count plans first
-    from ..src.loader.excel_reader import load_all
-    from ..src.scheduler.plan_generator import generate_plans
-    devices, tasks = load_all(excel_path)
-    plans = generate_plans(devices, tasks)
+
+    plans = None
+
+    if req.plans_json:
+        # In-memory plans — parse and execute directly without Excel
+        from ..src.models.task_plan import TaskPlan
+        from ..src.models.device import Device
+        from ..src.models.task import Task
+
+        plans_data = json.loads(req.plans_json)
+        if isinstance(plans_data, list):
+            parsed: list[TaskPlan] = []
+            for item in plans_data:
+                dev = Device(**item["device"])
+                tsk = Task(**item["task"])
+                parsed.append(TaskPlan(device=dev, task=tsk))
+            plans = parsed
+
+    if plans is None:
+        # Load from Excel
+        if not os.path.exists(req.excel_path):
+            raise HTTPException(status_code=404, detail=f"Excel file not found: {req.excel_path}")
+        from ..src.loader.excel_reader import load_all
+        from ..src.scheduler.plan_generator import generate_plans
+        devices, tasks = load_all(req.excel_path)
+        plans = generate_plans(devices, tasks)
 
     _executions[exec_id]["plan_count"] = len(plans)
     _executions[exec_id]["completed_count"] = 0
+
+    # Wire webhook dispatch into EventBus (non-blocking)
+    loop = asyncio.get_event_loop()
+    registry = _webhook_registry()
+    async def _dispatch_webhook(event: str, plan, result, **kw):
+        payload = {
+            "execution_id": exec_id,
+            "plan_id": plan.plan_id,
+            "device_name": plan.device.device_name,
+            "task_name": plan.task.task_name,
+            "execution_status": result.execution_status,
+            "rule_status": result.rule_status,
+            "checkpoint_status": result.checkpoint_status,
+            "final_verdict": result.final_verdict,
+            "runtime_context": result.runtime_context,
+        }
+        await registry.dispatch(event, payload)
+
+    def _webhook_callback(event: str, **kw):
+        if event in ("plan_completed", "plan_started", "execution.complete", "execution.error"):
+            loop.call_soon(asyncio.create_task, _dispatch_webhook(event, **kw))
+
+    app.event_bus.subscribe("plan_completed", lambda **kw: _webhook_callback("execution.complete", **kw))
+    app.event_bus.subscribe("plan_started", lambda **kw: _webhook_callback("execution.started", **kw))
 
     # Track completion via event bus
     def _on_complete(**kw):
@@ -144,7 +190,21 @@ async def execute_start(req: ExecuteStartRequest):
 
     app.event_bus.subscribe("plan_completed", _on_complete)
 
-    await _run_execution(app, excel_path, exec_id)
+    # Run execution in background thread with plans
+    def _run_with_plans():
+        try:
+            _executions[exec_id]["phase"] = "running"
+            results = app.run_with_plans(plans)
+            _executions[exec_id]["results"] = results
+            _executions[exec_id]["phase"] = "complete"
+        except Exception as e:
+            logger.error("Execution %s failed: %s", exec_id, e)
+            _executions[exec_id]["phase"] = "error"
+            _executions[exec_id]["error"] = str(e)
+
+    thread = threading.Thread(target=_run_with_plans, daemon=True)
+    _executions[exec_id]["thread"] = thread
+    thread.start()
 
     return ExecuteStartResponse(
         execution_id=exec_id,
@@ -265,3 +325,95 @@ async def pause_execution(exec_id: str):
         raise HTTPException(status_code=404, detail="Execution not found")
     _executions[exec_id]["phase"] = "paused"
     return {"status": "paused"}
+
+
+# ---------------------------------------------------------------------------
+# Task push — agent integration
+# ---------------------------------------------------------------------------
+
+@router.post("/tasks/push")
+async def push_tasks(req: TaskPushRequest):
+    """Push tasks JSON to hot-reload the in-memory task cache.
+    mode='merge' merges with existing tasks.json; mode='replace' overwrites.
+    """
+    from ..src.app import App
+
+    tasks_path = Path(__file__).parent.parent / "tasks.json"
+
+    if req.mode == "replace":
+        tasks_path.write_text(req.tasks_json, encoding="utf-8")
+        return {"status": "replaced", "path": str(tasks_path)}
+
+    # merge mode: load existing, deep-merge by task_name, rewrite
+    existing = {}
+    if tasks_path.exists():
+        try:
+            existing = json.loads(tasks_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    incoming = json.loads(req.tasks_json)
+    if isinstance(incoming, list):
+        for task in incoming:
+            existing[task["task_name"]] = task
+    elif isinstance(incoming, dict):
+        existing.update(incoming)
+
+    tasks_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"status": "merged", "path": str(tasks_path), "task_count": len(existing)}
+
+
+# ---------------------------------------------------------------------------
+# Webhook management — agent integration
+# ---------------------------------------------------------------------------
+
+def _webhook_registry():
+    from .webhook import get_registry
+    return get_registry()
+
+
+@router.get("/webhook/list", response_model=list[WebhookResponse])
+async def list_webhooks():
+    """List all registered webhooks (secrets omitted)."""
+    registry = _webhook_registry()
+    return [
+        WebhookResponse(
+            id=h.id,
+            url=h.url,
+            events=list(h.events),
+            secret="***",
+            enabled=h.enabled,
+            created_at=h.created_at,
+        )
+        for h in registry.list_all()
+    ]
+
+
+@router.post("/webhook/register", response_model=WebhookResponse)
+async def register_webhook(req: WebhookRegisterRequest):
+    """Register a new webhook callback."""
+    registry = _webhook_registry()
+    invalid = [e for e in req.events if e not in ("execution.started", "execution.complete",
+                                                   "execution.error", "plan.started",
+                                                   "plan.completed", "plan.failed")]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unknown event types: {invalid}")
+
+    hook = registry.register(req.url, req.events, req.secret)
+    return WebhookResponse(
+        id=hook.id,
+        url=hook.url,
+        events=list(hook.events),
+        secret=req.secret,
+        enabled=hook.enabled,
+        created_at=hook.created_at,
+    )
+
+
+@router.delete("/webhook/{hook_id}")
+async def unregister_webhook(hook_id: str):
+    """Unregister a webhook by ID."""
+    registry = _webhook_registry()
+    if not registry.unregister(hook_id):
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    return {"status": "unregistered", "hook_id": hook_id}

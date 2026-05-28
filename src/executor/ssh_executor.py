@@ -4,6 +4,7 @@ SSH/Telnet executor using Paramiko (pure Python socket — satisfies security po
 
 
 from __future__ import annotations
+import json
 import logging
 import os
 import re
@@ -16,6 +17,7 @@ import paramiko
 from .base import AbstractExecutor
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult, StepResult
+from ..models.checkpoint import CheckpointSpec
 from ..out.file_writer import write_text_file, write_log_file
 from ..out.screenshot import render_text_to_image
 
@@ -36,6 +38,14 @@ def _resolve_template(tmpl: str, device, task) -> str:
             .replace("{带内管理IP}", device.inband_ip)
             .replace("{带内管理用户名}", device.inband_username)
             .replace("{带内管理密码}", device.inband_password))
+
+
+def _resolve_var(template: str, variables: dict) -> str:
+    """Replace {{var.X}} placeholders with extracted variable values."""
+    def _replace(m):
+        key = m.group(1)
+        return variables.get(key, m.group(0))
+    return re.sub(r'\{\{var\.(\w+)\}\}', _replace, template)
 
 
 logger = logging.getLogger("bmc_auto_capture.ssh")
@@ -92,8 +102,11 @@ class SSHExecutor(AbstractExecutor):
         output_dir = self._build_output_dir(output_root, device, task)
         os.makedirs(output_dir, exist_ok=True)
 
-        # Build command list (split by line or semicolon)
-        commands = self._parse_commands(task.command_or_url)
+        # Parse command spec (new JSON format or legacy static format)
+        cmd_spec = self._parse_command_spec(task)
+        commands = cmd_spec["commands"]  # list of (name, resolved_cmd)
+        cmd_outputs: dict[str, str] = {}  # cmd_name → output
+        variables: dict[str, str] = {}   # runtime variables
 
         client = None
         all_output: list[str] = []
@@ -117,8 +130,8 @@ class SSHExecutor(AbstractExecutor):
             # Per-task hard deadline: prevent any single SSH task from blocking forever
             task_deadline = time.time() + max(self.command_timeout * len(commands), self.command_timeout) * 2
 
-            for cmd in commands:
-                step_name = f"cmd_{step_index}"
+            for cmd_name, cmd in commands:
+                step_name = cmd_name or f"cmd_{step_index}"
                 logger.info(f"[{device.device_name}] 正在执行:  {cmd[:60]}...")
 
                 try:
@@ -198,7 +211,15 @@ class SSHExecutor(AbstractExecutor):
                     if err:
                         combined += f"\n[STDERR]\n{err}"
 
+                    cmd_outputs[cmd_name] = combined
                     all_output.append(f"$ {cmd}\n{combined}")
+
+                    # Run extractors after this command if any are defined
+                    if cmd_spec.get("extractors"):
+                        for ex in cmd_spec["extractors"]:
+                            if ex.get("from") == f"cmd:{cmd_name}" or not ex.get("from"):
+                                self._run_extractor(ex, combined, variables)
+
                     result.step_results.append(StepResult(
                         step_index=step_index,
                         step_name=step_name,
@@ -233,6 +254,7 @@ class SSHExecutor(AbstractExecutor):
             # Generate terminal-style screenshot
             ss_path = render_text_to_image(full_output, output_dir, f"{file_base}.png")
             result.screenshots = (ss_path,)
+            result.artifact_status = "ARTIFACT_SAVED"
             result.step_results.append(StepResult(
                 step_index=step_index,
                 step_name="ssh_terminal_screenshot",
@@ -242,6 +264,14 @@ class SSHExecutor(AbstractExecutor):
             ))
 
             result.execution_status = "EXEC_SUCCESS"
+
+            # Evaluate evidence checkpoints (non-blocking, after artifacts saved)
+            if cmd_spec.get("checkpoints"):
+                import asyncio
+                asyncio.get_event_loop().run_until_complete(
+                    self._evaluate_ssh_checkpoints(cmd_spec["checkpoints"], cmd_outputs, variables,
+                                                    result, txt_path, ss_path)
+                )
 
         except socket.error as e:
             result.execution_status = self._classify_socket_error(e)
@@ -303,6 +333,41 @@ class SSHExecutor(AbstractExecutor):
         return result
 
     # ------------------------------------------------------------------
+    def _parse_command_spec(self, task) -> dict:
+        """Parse command_or_url as either:
+        - New JSON format: {"commands": [{"cmd":..., "name":...}], "extractors": [...], "checkpoints": [...]}
+        - Legacy static format: "cmd1; cmd2" or "cmd1\\ncmd2"
+        Returns {"commands": [(name, resolved_cmd)], "extractors": [...], "checkpoints": [...]}
+        """
+        raw = task.command_or_url.strip()
+        if not raw:
+            return {"commands": [], "extractors": [], "checkpoints": []}
+
+        # Try JSON object format first
+        if raw.startswith("{"):
+            try:
+                spec = json.loads(raw)
+                commands = []
+                for item in spec.get("commands", []):
+                    name = item.get("name", "")
+                    cmd = _resolve_var(item.get("cmd", ""), {})
+                    commands.append((name, cmd))
+                return {
+                    "commands": commands,
+                    "extractors": spec.get("extractors", []),
+                    "checkpoints": spec.get("checkpoints", []),
+                }
+            except json.JSONDecodeError:
+                pass
+
+        # Legacy static format
+        cmd_list = self._parse_commands(raw)
+        return {
+            "commands": [(f"cmd_{i}", c) for i, c in enumerate(cmd_list)],
+            "extractors": [],
+            "checkpoints": [],
+        }
+
     def _parse_commands(self, raw: str) -> list[str]:
         if not raw.strip():
             return []
@@ -310,6 +375,73 @@ class SSHExecutor(AbstractExecutor):
         if "\n" in raw:
             return [c.strip() for c in raw.split("\n") if c.strip()]
         return [c.strip() for c in raw.split(";") if c.strip()]
+
+    def _run_extractor(self, ex: dict, output: str, variables: dict) -> None:
+        """Run a single extractor against command output."""
+        import re
+        ex_type = ex.get("type", "")
+        pattern = ex.get("pattern", ex.get("selector", ""))
+        var_name = ex.get("var", "")
+        if not var_name:
+            return
+
+        if ex_type == "regex":
+            match = re.search(pattern, output)
+            if match:
+                variables[var_name] = match.group(1) if match.groups() else match.group(0)
+                logger.debug("SSH extractor regex '%s' → %s=%s", pattern, var_name, variables[var_name])
+        elif ex_type == "text_contains":
+            idx = output.find(pattern)
+            if idx >= 0:
+                start = max(0, idx - 50)
+                end = min(len(output), idx + len(pattern) + 50)
+                variables[var_name] = output[start:end].strip()
+                logger.debug("SSH extractor text '%s' → %s", var_name, variables[var_name])
+
+    async def _evaluate_ssh_checkpoints(
+        self,
+        checkpoints: list,
+        cmd_outputs: dict,
+        variables: dict,
+        result: ExecutionResult,
+        txt_path: str,
+        ss_path: str,
+    ) -> None:
+        """Evaluate evidence checkpoints against SSH command outputs."""
+        from ..rules.checkpoint_engine import CheckpointEngine
+        from ..rules.engine import RuleContext
+
+        specs = [CheckpointSpec.from_dict(c) for c in checkpoints]
+
+        # Build a synthetic text output from all command outputs
+        combined_output = "\n\n".join(
+            f"[{name}]\n{out}" for name, out in cmd_outputs.items()
+        )
+        ctx = RuleContext()
+        ctx.text_output = combined_output
+        ctx.variables = dict(variables)
+        ctx.artifacts["txt"] = txt_path
+        ctx.artifacts["screenshot"] = ss_path
+
+        engine = CheckpointEngine()
+        eval_result = await engine.evaluate(specs, ctx, evidence_ref=txt_path)
+
+        result.checkpoint_results = eval_result.results
+        result.checkpoint_status = eval_result.rollup_status()
+
+        for cp in eval_result.results:
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name=f"checkpoint_{cp.checkpoint_name}",
+                status="SUCCESS" if cp.status == "CHECK_PASS" else
+                       "FAILED" if cp.status == "CHECK_FAIL" else
+                       "WARN" if cp.status == "CHECK_WARN" else "SKIP",
+                details=cp.details,
+                step_type="checkpoint",
+            ))
+
+        if ctx.variables:
+            result.runtime_context = json.dumps(ctx.variables, ensure_ascii=False)
 
     def _build_output_dir(self, root: str, device, task) -> str:
         return os.path.join(root, _resolve_template(task.output_dir_template, device, task))

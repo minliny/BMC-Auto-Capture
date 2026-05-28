@@ -29,6 +29,7 @@ class UploadResponse(BaseModel):
 class ExecuteStartRequest(BaseModel):
     excel_path: str
     config_path: Optional[str] = None
+    plans_json: Optional[str] = Field(None, description="Optional JSON array of in-memory plans to execute directly, bypassing Excel")
 
 
 class ExecuteStartResponse(BaseModel):
@@ -72,3 +73,23 @@ class SummaryResponse(BaseModel):
     skipped_route: int
     rule_passed: int
     rule_failed: int
+
+
+class TaskPushRequest(BaseModel):
+    tasks_json: str = Field(..., description="JSON string of tasks array")
+    mode: str = Field("merge", description="'merge' or 'replace'")
+
+
+class WebhookRegisterRequest(BaseModel):
+    url: str
+    events: list[str]
+    secret: str = ""
+
+
+class WebhookResponse(BaseModel):
+    id: str
+    url: str
+    events: list[str]
+    secret: str = ""
+    enabled: bool = True
+    created_at: float = 0.0

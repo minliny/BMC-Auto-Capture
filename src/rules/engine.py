@@ -55,10 +55,22 @@ class RuleContext:
         self.html_file: str = ""
         self.txt_file: str = ""
         self.text_output: str = ""
+        # Runtime variables extracted during execution_flow (shared across steps)
+        self.variables: dict[str, str] = {}
+        # Artifact paths available to checkpoints (screenshot, html, txt)
+        self.artifacts: dict[str, str] = {}
 
     def resolve_path(self, filename: str) -> str:
         import os
         return os.path.join(self.output_dir, filename)
+
+    def resolve_var(self, template: str) -> str:
+        """Replace {{var.X}} placeholders with extracted variable values."""
+        import re
+        def _replace(m):
+            key = m.group(1)
+            return self.variables.get(key, m.group(0))
+        return re.sub(r'\{\{var\.(\w+)\}\}', _replace, template)
 
     def add_screenshot(self, path: str):
         self.screenshots.append(path)

@@ -22,6 +22,7 @@ from .browser_manager import BrowserManager
 from .captcha_handler import detect_captcha, handle_captcha, CaptchaDetected
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult, StepResult
+from ..models.checkpoint import CheckpointSpec
 from ..out.file_writer import write_html_file, write_log_file
 
 logger = logging.getLogger("bmc_auto_capture.bmc")
@@ -614,9 +615,13 @@ class BMCExecutor(AbstractExecutor):
         html_content = await page.content()
         html_path = write_html_file(output_dir, f"{file_base}.html", html_content)
         result.html_file = html_path
+        result.artifact_status = "ARTIFACT_SAVED"
 
         # Run rules (basic = blocking, advanced = validation only)
         await self._evaluate_rules(page, task, device, output_dir, result)
+
+        # Evaluate evidence checkpoints (non-blocking, after artifacts saved)
+        await self._evaluate_checkpoints(page, task, output_dir, result, ss_path)
 
     async def _evaluate_rules(self, page, task, device, output_dir: str, result: ExecutionResult) -> None:
         """Run task rules (basic first, then advanced) against the captured page."""
@@ -663,6 +668,66 @@ class BMCExecutor(AbstractExecutor):
             )
         else:
             result.rule_status = "RULE_PASSED" if eval_result.advanced_results else "RULE_DISABLED"
+
+    async def _evaluate_checkpoints(
+        self,
+        page,
+        task,
+        output_dir: str,
+        result: ExecutionResult,
+        primary_screenshot: str = "",
+    ) -> None:
+        """Evaluate evidence checkpoints (non-blocking, runs after artifacts are saved)."""
+        from ..rules.checkpoint_engine import CheckpointEngine
+        from ..rules.engine import RuleContext
+        import json
+
+        # Load checkpoints from tasks.json
+        checkpoints_json = None
+        if hasattr(task, '_task_def') and task._task_def:
+            checkpoints_json = task._task_def.get("checkpoints")
+        if not checkpoints_json:
+            return
+
+        try:
+            specs = [CheckpointSpec.from_dict(c) for c in checkpoints_json]
+        except Exception:
+            logger.warning("Failed to parse checkpoints for task %s", task.task_name)
+            return
+
+        if not specs:
+            return
+
+        ctx = RuleContext(
+            page=page,
+            device=getattr(task, '_device', None),
+            task=task,
+            output_dir=output_dir,
+        )
+        ctx.artifacts["screenshot"] = primary_screenshot
+        ctx.artifacts["html"] = result.html_file
+
+        engine = CheckpointEngine()
+        eval_result = await engine.evaluate(specs, ctx, evidence_ref=primary_screenshot)
+
+        result.checkpoint_results = eval_result.results
+        result.checkpoint_status = eval_result.rollup_status()
+
+        for cp in eval_result.results:
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name=f"checkpoint_{cp.checkpoint_name}",
+                status="SUCCESS" if cp.status == "CHECK_PASS" else
+                       "FAILED" if cp.status == "CHECK_FAIL" else
+                       "WARN" if cp.status == "CHECK_WARN" else "SKIP",
+                details=cp.details,
+                step_type="checkpoint",
+            ))
+
+        # Serialize runtime variables
+        if ctx.variables:
+            import json as _json
+            result.runtime_context = _json.dumps(ctx.variables, ensure_ascii=False)
 
     # ------------------------------------------------------------------
     # BMC_ACTIONS mode (DSL)
@@ -743,6 +808,19 @@ class BMCExecutor(AbstractExecutor):
                 if action_type in ("screenshot", "save_html"):
                     raise  # Critical actions fail the task
                 logger.warning("BMC action '%s' failed (non-critical): %s", action_type, e)
+
+        # Run legacy checkpoints for old-format actions (if any)
+        if result.execution_status != "EXEC_FAILED":
+            await self._evaluate_checkpoints(page, task, output_dir, result,
+                                              primary_screenshot=(result.screenshots[-1] if result.screenshots else ""))
+
+    def _resolve_var(self, template: str, variables: dict) -> str:
+        """Replace {{var.X}} placeholders with extracted variable values."""
+        import re
+        def _replace(m):
+            key = m.group(1)
+            return variables.get(key, m.group(0))
+        return re.sub(r'\{\{var\.(\w+)\}\}', _replace, template)
 
     # ------------------------------------------------------------------
     # Helpers

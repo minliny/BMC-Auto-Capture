@@ -288,3 +288,83 @@ class App:
             logger.warning("... and %d more warnings", len(report.warnings) - 10)
         for msg in report.errors:
             logger.error("[%s row %d] %s: %s", msg.source, msg.row, msg.field, msg.message)
+
+    # ------------------------------------------------------------------
+    # Run with pre-parsed plans (in-memory execution via API)
+    # ------------------------------------------------------------------
+    def run_with_plans(self, plans: list[TaskPlan]) -> list[ExecutionResult]:
+        """Execute pre-parsed plans directly without loading Excel.
+        Called by the API when plans_json is provided to /execute/start.
+        """
+        # Set up timestamped output root
+        run_ts = time.strftime("%Y%m%d_%H%M%S")
+        self.config.output_root = str(Path(self.config.output_root) / run_ts)
+        logger.info("输出目录 (in-memory):  %s", self.config.output_root)
+
+        self.event_bus.emit("plans_generated", count=len(plans))
+
+        # Connectivity preflight (same as run())
+        if self.config.preflight_enabled:
+            logger.info("正在执行网络连通性预检...")
+            pr = preflight_check_all([p.device for p in plans],
+                                     timeout=self.config.tcp_connect_timeout,
+                                     max_workers=self.config.max_bmc_workers + self.config.max_ssh_workers)
+            plans = apply_preflight(plans, pr)
+            for p in plans:
+                if p.status.startswith("EXEC_SKIPPED"):
+                    reason = p.skip_reason or "网络预检不通"
+                    logger.info("Skip: %s / %s → %s", p.device.device_name, p.task.task_name, reason)
+                    self._results.append(ExecutionResult(
+                        plan_id=p.plan_id,
+                        device_name=p.device.device_name,
+                        device_group=p.device.device_group,
+                        bmc_ip=p.device.bmc_ip,
+                        inband_ip=p.device.inband_ip,
+                        task_name=p.task.task_name,
+                        task_type=p.task.task_type,
+                        execution_mode=p.task.execution_mode,
+                        execution_status=p.status,
+                        execution_failure_reason=reason,
+                        started_at=time.time(),
+                        ended_at=time.time(),
+                    ))
+            skipped_count = sum(1 for p in plans if p.status.startswith("EXEC_SKIPPED"))
+            logger.info("预检: %d 个计划已跳过 (%d 个就绪)", skipped_count, len(plans) - skipped_count)
+
+        # Route guard
+        route_guard = None
+        if self.config.route_guard_enabled:
+            route_guard = RouteGuard(check_interval=self.config.route_guard_check_interval)
+            route_guard.on_change = self._on_route_change
+            route_guard.start()
+
+        # Execute
+        ready_plans = [p for p in plans if not p.status.startswith("EXEC_SKIPPED")]
+        logger.info("正在执行 %d 个计划", len(ready_plans))
+
+        self._execute_sequential(ready_plans)
+
+        # Route guard cleanup
+        if route_guard:
+            route_guard.stop()
+
+        # Collect
+        output_dir = self._ensure_writable_output_dir()
+        write_result_csv(self._results, str(output_dir))
+        write_final_result_csv(self._results, str(output_dir))
+
+        try:
+            build_pivot_csv(self._results, str(output_dir))
+        except Exception as e:
+            logger.warning("Failed to build pivot table: %s", e)
+
+        try:
+            write_failure_csv(self._results, str(output_dir))
+        except Exception as e:
+            logger.warning("Failed to write connectivity summary: %s", e)
+
+        summary = compute_summary(self._results)
+        logger.info("汇总:  %s", summary)
+        print_terminal_summary(self._results)
+
+        return self._results

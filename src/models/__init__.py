@@ -3,6 +3,7 @@ from .task import Task, Rule, RuleAction
 from .task_plan import TaskPlan
 from .execution_result import ExecutionResult, StepResult
 from .app_config import AppConfig
+from .checkpoint import CheckpointResult, CheckpointSpec, CheckpointEvaluationResult
 
 __all__ = [
     "Device",
@@ -13,4 +14,7 @@ __all__ = [
     "ExecutionResult",
     "StepResult",
     "AppConfig",
+    "CheckpointResult",
+    "CheckpointSpec",
+    "CheckpointEvaluationResult",
 ]
