@@ -18,6 +18,7 @@ class Device:
     inband_ip: str = ""
     inband_username: str = ""
     inband_password: str = ""
+    device_model: str = ""
     enabled: bool = True
     tags: tuple[str, ...] = ()
 

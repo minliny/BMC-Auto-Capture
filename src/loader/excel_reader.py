@@ -102,6 +102,9 @@ def _init_header_map():
         "oob_ip": "bmc_ip",
         "BMC IP": "bmc_ip",
         "BMC IP地址": "bmc_ip",
+        # device_model (between device_name and enabled)
+        "设备型号": "device_model",
+        "device_model": "device_model",
         # enabled
         "设备是否启用": "enabled",
         "是否启用": "enabled",
@@ -189,6 +192,7 @@ def load_devices(filepath: str | Path, sheet_name: str = "设备信息") -> list
             row_index=i + 2,
             device_group=_get("device_group"),
             device_name=_get("device_name"),
+            device_model=_get("device_model"),
             bmc_ip=bmc_raw,
             enabled=_bool(enabled_raw) if enabled_raw else True,
             bmc_username=_get("bmc_username"),
