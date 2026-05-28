@@ -624,9 +624,7 @@ class BMCExecutor(AbstractExecutor):
                     await asyncio.sleep(float(value) if value else 1.0)
                 elif action_type == "screenshot":
                     file_base = f"{device.bmc_ip}-{device.device_name}"
-                    if action.get("value"):
-                        file_base += f"_{action['value']}"
-                    ss_path = os.path.join(output_dir, f"{file_base}_{i:03d}.png")
+                    ss_path = os.path.join(output_dir, f"{file_base}.png")
                     await page.screenshot(path=ss_path, full_page=True)
                     result.screenshots = result.screenshots + (ss_path,)
                     result.step_results.append(StepResult(
