@@ -93,7 +93,8 @@ class App:
         # 4. Connectivity preflight
         if self.config.preflight_enabled:
             logger.info("Running connectivity preflight...")
-            pr = preflight_check_all(devices, timeout=self.config.tcp_connect_timeout)
+            pr = preflight_check_all(devices, timeout=self.config.tcp_connect_timeout,
+                                     max_workers=self.config.max_bmc_workers + self.config.max_ssh_workers)
             plans = apply_preflight(plans, pr)
             # Count & record ALL skipped plans (both PRECHECK_FAILED and PORT_BLOCKED)
             for p in plans:

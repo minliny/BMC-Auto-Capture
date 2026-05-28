@@ -197,7 +197,8 @@ def main():
         from src.connectivity.preflight import check_all as _preflight_all, PreflightStatus
         devices, tasks = _load(str(excel_path))
         print(f"\nPreflight: loaded {len(devices)} rows from Excel, checking unique enabled devices...\n")
-        report = _preflight_all(devices, timeout=config.tcp_connect_timeout)
+        max_w = config.max_bmc_workers + config.max_ssh_workers
+        report = _preflight_all(devices, timeout=config.tcp_connect_timeout, max_workers=max_w)
         print(f"\n{'Device':<30s}  {'BMC':<25s}  {'SSH':<25s}")
         print("-" * 85)
         for r in report.results:

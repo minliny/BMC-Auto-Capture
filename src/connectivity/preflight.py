@@ -129,7 +129,7 @@ def check_device(device: Device, timeout: float = 5.0) -> PreflightResult:
 
 
 def check_all(devices: list[Device], timeout: float = 5.0,
-              max_workers: int = 20) -> PreflightReport:
+              max_workers: int = 12) -> PreflightReport:
     # Dedup by device name — each unique device probed once
     seen: set[str] = set()
     unique: list[Device] = []
