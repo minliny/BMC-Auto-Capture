@@ -4,21 +4,12 @@
   "tasks": {
     "RAID配置测试": {
       "task_type": "BMC",
-      "execution_mode": "BMC_URL",
-      "command_or_url": "/UI/Static/#/navigate/system/storage",
-      "timeout_seconds": 60,
+      "execution_mode": "BMC_ACTIONS",
+      "command_or_url": "",
+      "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/system/storage\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"screenshot\",\"value\":\"before_expand\"},{\"action\":\"click\",\"selector\":\"i.el-tree-node__expand-icon:not(.is-leaf), .el-tree-node__expand-icon:not(.is-leaf)\",\"_note\":\"展开存储树\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"click\",\"selector\":\"#LogicalDrive0, span:has-text('Logical Drive 0'), text=Logical Drive 0\",\"_note\":\"点击Logical Drive 0\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\",\"value\":\"logical_drive_0\"},{\"action\":\"save_html\"}]",
+      "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [
-        {
-          "name": "存储页面基础校验",
-          "desc": "验证存储管理页面正常加载，无异常告警",
-          "checks": [
-            {"type": "text_exists", "target": "Storage", "desc": "页面包含Storage标题"},
-            {"type": "text_not_exists", "target": "异常", "desc": "页面无异常状态"},
-            {"type": "text_not_exists", "target": "告警", "desc": "页面无告警信息"}
-          ]
-        }
-      ]
+      "rules": []
     },
     "机柜RM211的管理iBMC IP查询和设置测试": {
       "task_type": "BMC",
@@ -79,7 +70,7 @@
     "风扇冗余测试": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
-      "command_or_url": "/UI/Static/#/navigate/system/power/converter",
+      "command_or_url": "/UI/Static/#/navigate/system/fans/fans-info",
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": []

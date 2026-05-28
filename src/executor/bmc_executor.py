@@ -412,14 +412,26 @@ class BMCExecutor(AbstractExecutor):
         except Exception:
             pass
 
-        # Check 3: target URL path not in current URL
+        # Check 3: target URL not reached (check path + hash fragment)
         if target_url:
             from urllib.parse import urlparse
-            target_path = urlparse(target_url).path
-            current_path = urlparse(current_url).path
-            if target_path and target_path not in current_path:
+            tp = urlparse(target_url)
+            cp = urlparse(current_url)
+            # Extract the meaningful part: path + fragment (BMC uses hash routing)
+            target_route = (tp.path or "") + (tp.fragment or "")
+            current_route = (cp.path or "") + (cp.fragment or "")
+            # Also check: if target is NOT home but we landed on home, fail
+            target_is_home = "/navigate/home" in (tp.fragment or "")
+            current_is_home = "/navigate/home" in (cp.fragment or "") or current_route.endswith("/navigate/home")
+
+            if target_route and target_route not in current_route:
+                if current_is_home and not target_is_home:
+                    return (
+                        f"目标页面未到达: 当前在首页，期望在 {target_route}。"
+                        f"可能登录后未正确跳转。target_url={target_url}"
+                    )
                 return (
-                    f"目标页面路径不匹配: 期望={target_path} 实际={current_path}。"
+                    f"目标页面路径不匹配: 期望={target_route} 实际={current_route}。"
                     f"target_url={target_url} current_url={current_url}"
                 )
 
