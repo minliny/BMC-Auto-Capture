@@ -182,7 +182,7 @@ class BMCExecutor(AbstractExecutor):
             await self._dismiss_popups(page)
 
             if task.execution_mode == "BMC_URL":
-                await self._run_bmc_url(page, bmc_url, task, device.bmc_ip, output_dir, result)
+                await self._run_bmc_url(page, bmc_url, task, device, output_dir, result)
             elif task.execution_mode == "BMC_ACTIONS":
                 await self._run_bmc_actions(page, task, device.bmc_ip, output_dir, result)
             logger.info("[%s] Stage 5/6: capture done", dname)
@@ -372,11 +372,11 @@ class BMCExecutor(AbstractExecutor):
     # ------------------------------------------------------------------
     # BMC_URL mode
     # ------------------------------------------------------------------
-    async def _run_bmc_url(self, page, bmc_url: str, task, bmc_ip: str, output_dir: str, result: ExecutionResult) -> None:
-        """Navigate to target URL (may differ from login URL), screenshot, save HTML."""
-        target_url = self._resolve_url(task.command_or_url, bmc_ip)
+    async def _run_bmc_url(self, page, bmc_url: str, task, device, output_dir: str, result: ExecutionResult) -> None:
+        """Navigate to target URL (may differ from login URL), screenshot, save HTML, evaluate rules."""
+        target_url = self._resolve_url(task.command_or_url, device.bmc_ip)
         if target_url and target_url != bmc_url:
-            self._validate_goto_url(target_url, bmc_ip)
+            self._validate_goto_url(target_url, device.bmc_ip)
             logger.info("Navigating to target: %s", target_url)
             try:
                 await page.goto(target_url, wait_until="networkidle", timeout=self._page_timeout * 1000)
@@ -408,6 +408,55 @@ class BMCExecutor(AbstractExecutor):
         html_content = await page.content()
         html_path = write_html_file(output_dir, "page.html", html_content)
         result.html_file = html_path
+
+        # Run rules (basic = blocking, advanced = validation only)
+        await self._evaluate_rules(page, task, device, output_dir, result)
+
+    async def _evaluate_rules(self, page, task, device, output_dir: str, result: ExecutionResult) -> None:
+        """Run task rules (basic first, then advanced) against the captured page."""
+        rules = task.parsed_rules()
+        if not rules:
+            return
+
+        from ..rules.engine import RuleEngine, RuleContext
+        engine = RuleEngine()
+        ctx = RuleContext(
+            page=page, device=device, task=task, output_dir=output_dir,
+        )
+
+        eval_result = await engine.evaluate(list(rules), ctx)
+
+        # Record basic rule results
+        for r in eval_result.basic_results:
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name=f"rule_basic_{r.action_type}",
+                status="SUCCESS" if r.status == "PASS" else "FAILED",
+                details=r.message,
+            ))
+
+        # Record advanced rule results
+        for r in eval_result.advanced_results:
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name=f"rule_advanced_{r.action_type}",
+                status="SUCCESS" if r.status == "PASS" else "FAILED",
+                details=r.message,
+            ))
+
+        if not eval_result.basic_passed:
+            raise Exception(
+                f"基础规则校验失败: {sum(1 for r in eval_result.basic_results if r.status != 'PASS')} 项未通过"
+            )
+
+        if not eval_result.advanced_passed:
+            result.rule_status = "RULE_FAILED"
+            result.rule_failure_reason = (
+                f"高级规则校验失败: "
+                f"{sum(1 for r in eval_result.advanced_results if r.status != 'PASS')} 项未通过"
+            )
+        else:
+            result.rule_status = "RULE_PASSED" if eval_result.advanced_results else "RULE_DISABLED"
 
     # ------------------------------------------------------------------
     # BMC_ACTIONS mode (DSL)
