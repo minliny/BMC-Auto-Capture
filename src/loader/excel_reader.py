@@ -267,6 +267,7 @@ def load_tasks(
             match_group = vals[3] if len(vals) > 3 else ""
             match_models_raw = vals[4] if len(vals) > 4 else ""
             match_models = _parse_tags(match_models_raw)  # 设备型号, comma-separated
+            match_tags = ()  # 标签列已移除
             output_dir_template = vals[5] if len(vals) > 5 else "{device_group}/{device_name}/{task_name}"
             image_name_template = vals[6] if len(vals) > 6 else "{device_name}_{task_name}_{timestamp}"
             enabled = _bool(vals[7]) if len(vals) > 7 else True
