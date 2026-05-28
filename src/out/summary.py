@@ -78,3 +78,115 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
     print(f"  Rule passed:    {s['rule_passed']:>6}")
     print(f"  Rule failed:    {s['rule_failed']:>6}")
     print("=" * 60)
+
+    # Per-group connectivity summary
+    print_connectivity_summary(results)
+
+
+def _categorize_failure(status: str, reason: str) -> str:
+    """Categorize an execution failure into a human-readable type."""
+    if status == "EXEC_SUCCESS":
+        return "OK"
+    if "IP为空" in reason or "IP empty" in reason.lower():
+        return "IP为空"
+    if "认证失败" in reason or "Authentication" in reason or "Auth" in reason:
+        return "账号/密码错误"
+    if "登录失败" in reason or "Login fail" in reason.lower():
+        return "登录失败"
+    if "超时" in reason or "timeout" in reason.lower() or "Timeout" in reason:
+        return "连接超时"
+    if "拒绝" in reason or "refused" in reason.lower():
+        return "连接被拒绝"
+    if "拦截" in reason or "blocked" in reason.lower():
+        return "端口被拦截"
+    if "不可达" in reason or "unreachable" in reason.lower():
+        return "网络不可达"
+    if "DNS" in reason or "getaddrinfo" in reason or "resolve" in reason.lower():
+        return "DNS解析失败"
+    if "路由" in reason or "route" in reason.lower():
+        return "路由变更"
+    if status.startswith("EXEC_SKIPPED_PRECHECK"):
+        return "预检不通"
+    if status.startswith("EXEC_SKIPPED_PORT"):
+        return "端口被拦截"
+    return "其他错误"
+
+
+def print_connectivity_summary(results: Sequence[ExecutionResult]) -> None:
+    """Print per-device-group BMC/SSH connectivity summary."""
+    from collections import defaultdict
+
+    # Group by device_group
+    groups: dict[str, dict] = defaultdict(lambda: {
+        "devices": set(),
+        # BMC stats
+        "bmc_total_devices": set(),       # devices with BMC IP
+        "bmc_ok": 0, "bmc_fail": defaultdict(int),
+        # SSH stats
+        "ssh_total_devices": set(),       # devices with inband IP
+        "ssh_ok": 0, "ssh_fail": defaultdict(int),
+    })
+
+    for r in results:
+        g = groups[r.device_group]
+        g["devices"].add(r.device_name)
+
+        if r.task_type in ("BMC", "BMC_URL", "BMC_ACTIONS"):
+            if r.bmc_ip:
+                g["bmc_total_devices"].add(r.device_name)
+            if r.execution_status == "EXEC_SUCCESS":
+                g["bmc_ok"] += 1
+            else:
+                cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
+                g["bmc_fail"][cat] += 1
+
+        elif r.task_type in ("SSH", "SSH_CMD", "TELNET", "TELNET_CMD"):
+            if r.inband_ip:
+                g["ssh_total_devices"].add(r.device_name)
+            if r.execution_status == "EXEC_SUCCESS":
+                g["ssh_ok"] += 1
+            else:
+                cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
+                g["ssh_fail"][cat] += 1
+
+    if not groups:
+        return
+
+    print("\n" + "=" * 80)
+    print("  Per-Group Connectivity Summary")
+    print("=" * 80)
+
+    for group_name in sorted(groups.keys()):
+        g = groups[group_name]
+        total_dev = len(g["devices"])
+        bmc_with_ip = len(g["bmc_total_devices"])
+        ssh_with_ip = len(g["ssh_total_devices"])
+
+        print(f"\n  [{group_name}]  ({total_dev} devices)")
+
+        # BMC section
+        bmc_total = g["bmc_ok"] + sum(g["bmc_fail"].values())
+        if bmc_total > 0:
+            print(f"    ── 带外 (BMC) ──")
+            print(f"    设备总数: {total_dev}  有BMC IP: {bmc_with_ip}  任务总数: {bmc_total}")
+            print(f"    连通成功: {g['bmc_ok']}")
+            for cat, count in sorted(g["bmc_fail"].items(), key=lambda x: -x[1]):
+                print(f"      └ {cat}: {count}")
+
+        # SSH section
+        ssh_total = g["ssh_ok"] + sum(g["ssh_fail"].values())
+        if ssh_total > 0:
+            print(f"    ── 带内 (SSH) ──")
+            print(f"    设备总数: {total_dev}  有带内IP: {ssh_with_ip}  任务总数: {ssh_total}")
+            print(f"    连通成功: {g['ssh_ok']}")
+            for cat, count in sorted(g["ssh_fail"].items(), key=lambda x: -x[1]):
+                print(f"      └ {cat}: {count}")
+
+    # Overall totals
+    print(f"\n  {'─' * 70}")
+    all_bmc_ok = sum(g["bmc_ok"] for g in groups.values())
+    all_bmc_fail = sum(sum(g["bmc_fail"].values()) for g in groups.values())
+    all_ssh_ok = sum(g["ssh_ok"] for g in groups.values())
+    all_ssh_fail = sum(sum(g["ssh_fail"].values()) for g in groups.values())
+    print(f"  TOTAL: BMC OK={all_bmc_ok} FAIL={all_bmc_fail}  |  SSH OK={all_ssh_ok} FAIL={all_ssh_fail}")
+    print("=" * 80)

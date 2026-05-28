@@ -165,12 +165,12 @@ class BMCExecutor(AbstractExecutor):
             # --- Stage 4: login ---
             current_stage = "4/6 login"
             logger.info("[%s] Stage %s", dname, current_stage)
-            login_ok = await asyncio.wait_for(
+            login_ok, login_reason = await asyncio.wait_for(
                 self._bmc_login(page, bmc_url, device), timeout=self._connect_timeout + 30,
             )
             if not login_ok:
                 result.execution_status = "EXEC_FAILED"
-                result.execution_failure_reason = "BMC登录失败"
+                result.execution_failure_reason = login_reason or "BMC登录失败"
                 result.ended_at = time.time()
                 result.duration_seconds = result.ended_at - result.started_at
                 return
@@ -240,8 +240,10 @@ class BMCExecutor(AbstractExecutor):
     # ------------------------------------------------------------------
     # Login
     # ------------------------------------------------------------------
-    async def _bmc_login(self, page, bmc_url: str, device) -> bool:
-        """Navigate to BMC, detect login page, fill credentials, submit."""
+    async def _bmc_login(self, page, bmc_url: str, device) -> tuple[bool, str]:
+        """Navigate to BMC, detect login page, fill credentials, submit.
+        Returns (success, failure_reason).
+        """
         # Validate URL host matches device BMC IP before navigation
         self._validate_goto_url(bmc_url, device.bmc_ip)
         logger.info(f"[{device.device_name}] Navigating to BMC: {bmc_url}")
@@ -249,21 +251,22 @@ class BMCExecutor(AbstractExecutor):
         try:
             await page.goto(bmc_url, wait_until="domcontentloaded", timeout=self._connect_timeout * 1000)
         except Exception as e:
-            logger.error(f"[{device.device_name}] Failed to reach BMC page: {e}")
-            return False
+            reason = f"BMC页面无法访问: {e}"
+            logger.error("[%s] %s", device.device_name, reason)
+            return False, reason
 
         await asyncio.sleep(2)  # Allow redirect to login page
 
         # Check for "account already logged in elsewhere" before login
         if await self._detect_account_conflict(page, device):
-            return False
+            return False, "BMC登录失败: 账户已在其他地方登录"
 
         # Check for CAPTCHA before login
         captcha_seen = await detect_captcha(page)
         if captcha_seen and not self._bm.headless:
             solved = await handle_captcha(page, os.path.dirname(page.url), timeout=120)
             if not solved:
-                return False
+                return False, "BMC登录失败: 验证码处理失败"
 
         # Find login form elements
         username_el = await self._find_visible(page, LOGIN_USERNAME_SELECTORS)
@@ -279,10 +282,10 @@ class BMCExecutor(AbstractExecutor):
             if captcha_seen:
                 if self._bm.headless:
                     logger.error("CAPTCHA detected in headless mode — cannot proceed")
-                    return False
+                    return False, "BMC登录失败: 验证码拦截(headless模式)"
                 solved = await handle_captcha(page, os.path.dirname(page.url), timeout=120)
                 if not solved:
-                    return False
+                    return False, "BMC登录失败: 验证码处理失败"
 
             submit_el = await self._find_visible(page, LOGIN_SUBMIT_SELECTORS)
             if submit_el:
@@ -317,13 +320,13 @@ class BMCExecutor(AbstractExecutor):
                         pass
                 logger.error("[%s] Login failed: still on login page. Error: %s",
                              device.device_name, error_text or "unknown")
-                return False
+                return False, f"BMC登录失败: 账号或密码错误 ({error_text})" if error_text else "BMC登录失败: 账号或密码错误"
 
             # Check for account conflict message that may appear after redirect
             if await self._detect_account_conflict(page, device):
-                return False
+                return False, "BMC登录失败: 账户已在其他地方登录"
 
-        return True
+        return True, ""
 
     async def _detect_account_conflict(self, page, device) -> bool:
         """Check if BMC shows 'account already logged in elsewhere' message."""
