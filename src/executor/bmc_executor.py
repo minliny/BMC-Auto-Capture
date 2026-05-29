@@ -103,6 +103,7 @@ def _resolve_template(tmpl: str, device, task) -> str:
             .replace("{带内管理IP}", device.inband_ip)
             .replace("{带内管理用户名}", device.inband_username)
             .replace("{带内管理密码}", device.inband_password)
+            .replace("{设备标签}", getattr(device, "tags", ""))
             # English (legacy default / backward compat)
             .replace("{task_sequence}", seq)
             .replace("{task_name}", task.task_name)
@@ -112,7 +113,8 @@ def _resolve_template(tmpl: str, device, task) -> str:
             .replace("{device_ip}", device.bmc_ip)
             .replace("{bmc_ip}", device.bmc_ip)
             .replace("{step}", "final")
-            .replace("{timestamp}", ts))
+            .replace("{timestamp}", ts)
+            .replace("{tags}", getattr(device, "tags", "")))
 
 
 class BMCLoginError(Exception):

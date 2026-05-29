@@ -19,6 +19,7 @@ class Device:
     inband_username: str = ""
     inband_password: str = ""
     enabled: bool = True
+    tags: str = ""
 
     @property
     def bmc_port(self) -> int:

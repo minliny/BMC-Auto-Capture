@@ -175,6 +175,7 @@ def load_devices(filepath: str | Path, sheet_name: str = "设备信息") -> list
 
         vals = [_str(v) for v in row]
         tags = _parse_tags(_get("tags"))
+        tags_str = ", ".join(tags) if tags else ""
 
         # Validate BMC IP: reject obvious non-IP values
         bmc_raw = _get("bmc_ip")
@@ -197,6 +198,7 @@ def load_devices(filepath: str | Path, sheet_name: str = "设备信息") -> list
             inband_ip=_get("inband_ip"),
             inband_username=_get("inband_username"),
             inband_password=_get("inband_password"),
+            tags=tags_str,
         )
         devices.append(device)
 
