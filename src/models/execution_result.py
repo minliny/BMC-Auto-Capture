@@ -31,6 +31,8 @@ class ExecutionResult:
     rule_failure_reason: str = ""
     artifact_status: str = "ARTIFACT_PENDING"
     artifact_failure_reason: str = ""
+    ready_status: str = "READY_UNKNOWN"
+    ready_failure_reason: str = ""
     checkpoint_status: str = "CHECK_DISABLED"
     checkpoint_results: list = field(default_factory=list)
     runtime_context: str = ""
@@ -82,6 +84,8 @@ class ExecutionResult:
             _fmt_time(self.started_at),
             _fmt_time(self.ended_at),
             str(round(self.duration_seconds, 1)),
+            self.ready_status,
+            self.ready_failure_reason,
         ]
 
     @staticmethod
@@ -96,6 +100,7 @@ class ExecutionResult:
             "运行时上下文", "最终结论",
             "截图路径", "HTML路径", "文本路径", "日志路径",
             "输出目录", "开始时间", "结束时间", "耗时秒",
+            "就绪状态", "就绪失败原因",
         ]
 
 def _fmt_time(ts: float) -> str:

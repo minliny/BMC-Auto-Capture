@@ -137,3 +137,52 @@ class Task:
 
     def has_advanced_rules(self) -> bool:
         return len(self.advanced_rules()) > 0
+
+    def to_capture_flow(self) -> dict:
+        """Unify BMC_URL / BMC_ACTIONS into a single capture flow dict.
+
+        Returns dict with keys:
+          - target_url: str
+          - pre_capture_actions: list[dict]
+
+        BMC_URL  → target_url from command_or_url, pre_capture_actions=[]
+        BMC_ACTIONS → target_url from first goto action, pre_capture_actions=rest
+        """
+        if self.execution_mode == "BMC_URL":
+            return {
+                "target_url": self.command_or_url,
+                "pre_capture_actions": [],
+            }
+        if self.execution_mode == "BMC_ACTIONS":
+            return self._parse_actions_to_flow()
+        return {"target_url": "", "pre_capture_actions": []}
+
+    def _parse_actions_to_flow(self) -> dict:
+        """Extract target_url + pre_capture_actions from actions_json."""
+        import json
+        try:
+            actions = json.loads(self.actions_json) if self.actions_json else []
+        except json.JSONDecodeError:
+            return {"target_url": "", "pre_capture_actions": []}
+
+        if not isinstance(actions, list):
+            actions = [actions]
+
+        target_url = ""
+        pre_actions = []
+        for a in actions:
+            at = a.get("action", a.get("type", ""))
+            if at == "goto" and not target_url:
+                target_url = a.get("value", "")
+            elif at in ("screenshot", "save_html"):
+                # Downgrade to intermediate only
+                a_copy = dict(a)
+                a_copy["action"] = "intermediate_screenshot"
+                pre_actions.append(a_copy)
+            else:
+                pre_actions.append(dict(a))
+
+        return {
+            "target_url": target_url,
+            "pre_capture_actions": pre_actions,
+        }

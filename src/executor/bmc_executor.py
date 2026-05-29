@@ -203,16 +203,16 @@ class BMCExecutor(AbstractExecutor):
             logger.info("[%s] Stage %s", dname, current_stage)
             await self._dismiss_popups(page)
 
-            if task.execution_mode == "BMC_URL":
-                await self._run_bmc_url(page, bmc_url, task, device, output_dir, result)
-            elif task.execution_mode == "BMC_ACTIONS":
-                await self._run_bmc_actions(page, task, device.bmc_ip, output_dir, result)
+            if task.execution_mode in ("BMC_URL", "BMC_ACTIONS"):
+                await self._run_capture_flow(page, task, device, device.bmc_ip, output_dir, result)
             logger.info("[%s] 阶段 5/6: 采集完成", dname)
 
             # --- Stage 6: success ---
             current_stage = "6/6 done"
             logger.info("[%s] Stage %s", dname, current_stage)
-            result.execution_status = "EXEC_SUCCESS"
+            # Only set success if no error/partial status was already recorded by capture flow
+            if result.execution_status not in ("EXEC_FAILED", "EXEC_PARTIAL"):
+                result.execution_status = "EXEC_SUCCESS"
 
         _t0 = time.time()
         try:
@@ -812,6 +812,222 @@ class BMCExecutor(AbstractExecutor):
         if result.execution_status != "EXEC_FAILED":
             await self._evaluate_checkpoints(page, task, output_dir, result,
                                               primary_screenshot=(result.screenshots[-1] if result.screenshots else ""))
+
+    # ------------------------------------------------------------------
+    # Unified BMC_CAPTURE_FLOW (replaces _run_bmc_url + _run_bmc_actions)
+    # ------------------------------------------------------------------
+    async def _run_capture_flow(self, page, task, device, bmc_ip: str, output_dir: str, result: ExecutionResult) -> None:
+        """Unified capture pipeline for BMC_URL and BMC_ACTIONS.
+
+        Pipeline: goto target_url → pre_capture_actions → ready_conditions
+                  → final_capture (guaranteed) → rules → checkpoints.
+        """
+        flow = task.to_capture_flow()
+        file_base = _resolve_template(task.image_name_template, device, task)
+
+        # --- Step 1: goto target_url ---
+        target_url = self._resolve_url(flow.get("target_url", ""), bmc_ip)
+        if target_url:
+            self._validate_goto_url(target_url, bmc_ip)
+            try:
+                await page.goto(target_url, wait_until="domcontentloaded",
+                                timeout=self._page_timeout * 1000)
+            except Exception as e:
+                logger.warning("[%s] goto target_url failed: %s", device.device_name, e)
+                result.ready_status = "READY_NOT_READY"
+                result.ready_failure_reason = f"goto target_url failed: {e}"
+                # Do NOT return — continue to final_capture for debugging
+
+        await self._dismiss_all_blockers(page)
+
+        # --- Step 2: pre_capture_actions ---
+        pre_actions = flow.get("pre_capture_actions", [])
+        if pre_actions:
+            await self._execute_pre_capture_actions(
+                page, pre_actions, device, output_dir, result,
+            )
+
+        # --- Step 3: capture_ready_conditions (default: check not on login) ---
+        ready_ok, ready_reason = await self._evaluate_capture_ready_conditions(
+            page, device,
+        )
+        if not ready_ok:
+            if result.ready_status != "READY_NOT_READY":
+                result.ready_status = "READY_NOT_READY"
+            if not result.ready_failure_reason:
+                result.ready_failure_reason = ready_reason
+
+        # --- Step 4: final_capture (always runs if page is alive) ---
+        await self._execute_final_capture(page, file_base, output_dir, result)
+
+        # --- Step 5: rules ---
+        await self._evaluate_rules(page, task, device, output_dir, result)
+
+        # --- Step 6: evidence_checkpoints ---
+        primary_ss = result.screenshots[-1] if result.screenshots else ""
+        await self._evaluate_checkpoints(page, task, output_dir, result, primary_ss)
+
+    async def _execute_pre_capture_actions(self, page, actions: list, device, output_dir: str, result: ExecutionResult) -> None:
+        """Execute pre_capture_actions: click/fill/press/wait/wait_for_selector.
+
+        - required=True action failure → stop subsequent actions, set EXEC_PARTIAL
+        - required=False action failure → log and continue
+        - screenshot/save_html in actions → downgraded to intermediate only
+        """
+        for i, action in enumerate(actions):
+            action_type = action.get("action") or action.get("type", "")
+            selector = action.get("selector", "")
+            value = action.get("value", "")
+            timeout_ms = int(action.get("timeout_ms") or action.get("timeout") or 5000)
+            required = action.get("required", True)
+            description = action.get("description", "")
+
+            try:
+                if action_type == "click":
+                    await page.locator(selector).first.click(timeout=timeout_ms)
+                elif action_type == "fill":
+                    await page.locator(selector).first.fill(value, timeout=timeout_ms)
+                elif action_type == "press":
+                    await page.locator(selector).first.press(value)
+                elif action_type == "wait_for_selector":
+                    await page.locator(selector).first.wait_for(timeout=timeout_ms)
+                elif action_type in ("wait", "sleep"):
+                    await asyncio.sleep(float(value) if value else 1.0)
+                elif action_type == "intermediate_screenshot":
+                    # Action-level screenshot: intermediate debugging only, NOT final evidence
+                    ss_path = os.path.join(output_dir, f"intermediate_{i:02d}.png")
+                    await page.screenshot(path=ss_path, full_page=True)
+                    logger.debug("[%s] intermediate screenshot saved: %s", device.device_name, ss_path)
+                elif action_type == "goto":
+                    pass  # Already handled as target_url in _run_capture_flow
+                else:
+                    logger.warning("[%s] Unknown pre_capture action: %s", device.device_name, action_type)
+
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name=f"pre_{action_type}",
+                    status="SUCCESS",
+                    details=description or f"{action_type} {selector}".strip(),
+                ))
+
+            except Exception as e:
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name=f"pre_{action_type}",
+                    status="FAILED",
+                    details=f"{description or action_type}: {e}",
+                ))
+                logger.warning("[%s] pre_capture action[%d] '%s' failed: %s",
+                               device.device_name, i, action_type, e)
+
+                if required:
+                    result.execution_status = "EXEC_PARTIAL"
+                    result.ready_status = "READY_NOT_READY"
+                    result.ready_failure_reason = (
+                        f"required action failed at step {i}: "
+                        f"{action_type} {selector}: {e}"
+                    )
+                    # Stop subsequent actions, but continue to final_capture
+                    break
+                # optional action failure → continue next action
+
+    async def _evaluate_capture_ready_conditions(self, page, device) -> tuple:
+        """Check whether the live Playwright page has reached capturable state.
+
+        Default check: page URL is not on the login page.
+        Returns (ready_ok: bool, failure_reason: str).
+        """
+        try:
+            current_url = page.url
+            if '/login' in current_url.lower():
+                return False, f"page still on login page: {current_url}"
+            # page reached a non-login URL — considered ready
+            return True, ""
+        except Exception as e:
+            return False, f"ready check error: {e}"
+
+    async def _execute_final_capture(self, page, file_base: str, output_dir: str, result: ExecutionResult) -> None:
+        """Guaranteed final evidence: screenshot + HTML save.
+
+        Runs regardless of prior failures, as long as page is alive.
+        Sets artifact_status accordingly.
+        """
+        if page is None:
+            result.artifact_status = "ARTIFACT_FAILED"
+            if not result.artifact_failure_reason:
+                result.artifact_failure_reason = "page is None at final_capture"
+            return
+
+        try:
+            if page.is_closed():
+                result.artifact_status = "ARTIFACT_FAILED"
+                if not result.artifact_failure_reason:
+                    result.artifact_failure_reason = "page closed before final_capture"
+                return
+        except Exception:
+            pass
+
+        errors = []
+
+        # Final screenshot
+        ss_path = ""
+        try:
+            ss_path = os.path.join(output_dir, f"{file_base}.png")
+            await page.screenshot(path=ss_path, full_page=True)
+            # Overwrite screenshots with final evidence only
+            result.screenshots = (ss_path,)
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="final_screenshot",
+                status="SUCCESS",
+                screenshot=ss_path,
+            ))
+        except Exception as e:
+            errors.append(f"screenshot: {e}")
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="final_screenshot",
+                status="FAILED",
+                details=str(e),
+            ))
+
+        # Final HTML
+        try:
+            html_content = await page.content()
+            html_path = write_html_file(output_dir, f"{file_base}.html", html_content)
+            result.html_file = html_path
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="final_save_html",
+                status="SUCCESS",
+            ))
+        except Exception as e:
+            errors.append(f"html: {e}")
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="final_save_html",
+                status="FAILED",
+                details=str(e),
+            ))
+
+        # Set artifact_status
+        if not errors:
+            result.artifact_status = "ARTIFACT_SAVED"
+        elif ss_path or result.html_file:
+            result.artifact_status = "ARTIFACT_PARTIAL"
+            result.artifact_failure_reason = "; ".join(errors)
+        else:
+            result.artifact_status = "ARTIFACT_FAILED"
+            result.artifact_failure_reason = "; ".join(errors)
+
+    # --- Deprecated: kept for reference, not called by new pipeline ---
+    async def _deprecated_run_bmc_url(self, *args, **kwargs):
+        """Deprecated. Replaced by _run_capture_flow."""
+        return await self._run_bmc_url(*args, **kwargs)
+
+    async def _deprecated_run_bmc_actions(self, *args, **kwargs):
+        """Deprecated. Replaced by _run_capture_flow."""
+        return await self._run_bmc_actions(*args, **kwargs)
 
     def _resolve_var(self, template: str, variables: dict) -> str:
         """Replace {{var.X}} placeholders with extracted variable values."""

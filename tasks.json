@@ -6,7 +6,7 @@
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
-      "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/system/storage\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \"i.el-tree-node__expand-icon:not(.is-leaf), .el-tree-node__expand-icon:not(.is-leaf)\", \"_note\": \"展开存储树\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"click\", \"selector\": \"#LogicalDrive0, span:has-text('Logical Drive 0'), text=Logical Drive 0\", \"_note\": \"点击Logical Drive 0\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"screenshot\", \"value\": \"logical_drive_0\"}, {\"action\": \"save_html\"}]",
+      "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/system/storage\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \".el-tree-node__expand-icon:not(.is-leaf)\", \"_note\": \"展开存储树\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"click\", \"selector\": \"#LogicalDrive0\", \"_note\": \"点击Logical Drive 0\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"screenshot\", \"value\": \"logical_drive_0\"}, {\"action\": \"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
@@ -382,7 +382,7 @@
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
-      "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/system/storage\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \"i.el-tree-node__expand-icon:not(.is-leaf)\", \"_note\": \"展开存储树（如已展开则跳过，selector 只匹配可展开节点）\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"click\", \"selector\": \"#LogicalDrive0\", \"_note\": \"点击 Logical Drive 0\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"screenshot\", \"value\": \"logical_drive_0\"}, {\"action\": \"save_html\"}]",
+      "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/system/storage\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \".el-tree-node__expand-icon:not(.is-leaf)\", \"_note\": \"展开存储树（如已展开则跳过，selector 只匹配可展开节点）\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"click\", \"selector\": \"#LogicalDrive0\", \"_note\": \"点击 Logical Drive 0\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"screenshot\", \"value\": \"logical_drive_0\"}, {\"action\": \"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
@@ -390,20 +390,6 @@
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_4_a3_disk_redundancy_logical_drive)",
       "_migrated_to": "BMC_ACTIONS — goto storage → expand tree → click Logical Drive 0 → screenshot",
       "_note": "未在真实设备验证，默认禁用。只读查看，不涉及 RAID 配置变更。UI 控件可能因 BMC 版本不同而异。",
-      "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
-    },
-    "拔插硬盘后清除Foreign配置": {
-      "task_type": "BMC",
-      "execution_mode": "BMC_ACTIONS",
-      "command_or_url": "",
-      "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/system/storage\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \"button:has-text('设置')\", \"_note\": \"打开设置菜单\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"click\", \"selector\": \"#foreignConfig\", \"_note\": \"点击清除Foreign配置。如果按钮 disabled 则此步失败，任务报错但不执行清除。\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"click\", \"selector\": \"button:has-text('确定')\", \"_note\": \"确认清除操作\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"click\", \"selector\": \"#secondConfirm_ok_btn\", \"_note\": \"二次确认（如有）。若不存在则此步静默失败。\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"screenshot\", \"value\": \"after_confirm\"}, {\"action\": \"save_html\"}]",
-      "timeout_seconds": 120,
-      "retry_count": 0,
-      "rules": [],
-      "enabled": true,
-      "_high_risk": true,
-      "_warning": "高风险写操作：执行 RAID ClearForeign 配置清除。误执行会导致数据丢失。仅在以下条件全部满足时才可启用：(1) 用户明确了解操作后果 (2) 已确认目标设备状态 (3) 非批量执行 (4) 有操作审计记录。禁止 Agent 自动下发此任务。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}"
     }
