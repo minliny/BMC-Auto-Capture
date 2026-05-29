@@ -12,12 +12,20 @@ $EXCEL = Join-Path $APP "examples\task_template.xlsx"
 
 # ====== 自动解除网络下载文件的安全锁定 ======
 Write-Host "正在解除文件安全锁定..." -ForegroundColor Gray
-$dirs = @($ScriptDir)
-if (Test-Path $RUNTIME) { $dirs += $RUNTIME }
-if (Test-Path $APP) { $dirs += $APP }
-foreach ($dir in $dirs) {
-    Get-ChildItem -Path $dir -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
+
+# Unblock scripts dir (shallow — just .ps1/.bat)
+Get-ChildItem -Path $ScriptDir -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
+
+# Unblock runtime dir (shallow — bmc-engine.exe only, skip _internal/ to avoid hang)
+if (Test-Path $RUNTIME) {
+    Get-ChildItem -Path $RUNTIME -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
 }
+
+# Unblock app dir (recurse — only .py/.json/.yaml source files, small tree)
+if (Test-Path $APP) {
+    Get-ChildItem -Path $APP -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
+}
+
 Write-Host "完成。" -ForegroundColor Gray
 
 # ====== 环境检查 ======
