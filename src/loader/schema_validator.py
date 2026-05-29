@@ -109,27 +109,4 @@ def validate(devices: list[Device], tasks: list[Task]) -> ValidationReport:
                 f"设备 '{d.device_name}' 的设备分组 '{d.device_group}' 没有任务匹配"
             ))
 
-    # --- Cross-validation: check that enabled tasks have matching enabled devices ---
-    enabled_groups = {d.device_group for d in devices if d.enabled}
-    enabled_tags: set[str] = set()
-    for d in devices:
-        if d.enabled:
-            enabled_tags.update(d.tags)
-
-    for t in tasks:
-        if not t.enabled:
-            continue
-        if t.match_group and t.match_group not in enabled_groups:
-            report.messages.append(ValidationMessage(
-                "WARNING", "cross", t.row_index, "设备分组",
-                f"任务 '{t.task_name}' 匹配的设备分组 '{t.match_group}' 中没有启用的设备"
-            ))
-        if t.match_tags:
-            unmatched = [tag for tag in t.match_tags if tag not in enabled_tags]
-            if unmatched:
-                report.messages.append(ValidationMessage(
-                    "WARNING", "cross", t.row_index, "标签",
-                    f"任务 '{t.task_name}' 的标签 {unmatched} 在任何启用设备上都不存在"
-                ))
-
     return report

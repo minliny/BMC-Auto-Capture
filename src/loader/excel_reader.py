@@ -21,7 +21,7 @@ logger = logging.getLogger("bmc_auto_capture.loader")
 # Simplified Excel columns for tasks (v2.1):
 # 0:任务序号 1:任务名称 2:任务类型 3:设备分组 4:标签
 # 5:输出目录模板 6:图片命名格式 7:是否启用
-SIMPLIFIED_TASK_COLS = 8
+SIMPLIFIED_TASK_COLS = 7
 
 
 def _str(val: Any) -> str:
@@ -103,9 +103,6 @@ def _init_header_map():
         "oob_ip": "bmc_ip",
         "BMC IP": "bmc_ip",
         "BMC IP地址": "bmc_ip",
-        # device_model (between device_name and enabled)
-        "设备型号": "device_model",
-        "device_model": "device_model",
         # enabled
         "设备是否启用": "enabled",
         "是否启用": "enabled",
@@ -193,7 +190,6 @@ def load_devices(filepath: str | Path, sheet_name: str = "设备信息") -> list
             row_index=i + 2,
             device_group=_get("device_group"),
             device_name=_get("device_name"),
-            device_model=_get("device_model"),
             bmc_ip=bmc_raw,
             enabled=_bool(enabled_raw) if enabled_raw else True,
             bmc_username=_get("bmc_username"),
@@ -201,7 +197,6 @@ def load_devices(filepath: str | Path, sheet_name: str = "设备信息") -> list
             inband_ip=_get("inband_ip"),
             inband_username=_get("inband_username"),
             inband_password=_get("inband_password"),
-            tags=tags,
         )
         devices.append(device)
 
@@ -260,18 +255,15 @@ def load_tasks(
         rules_json = json.dumps(tdef.get("rules", [])) if tdef.get("rules") else ""
 
         # Excel columns depend on format:
-        # Simplified (8 cols):  seq | name | type | group | tags | outdir | imgname | enabled
-        # Full legacy (14 cols): seq | name | type | group | tags | mode | cmd | actions | outdir | imgname | timeout | retry | enabled | rules
+        # Simplified (7 cols):  seq | name | type | group | outdir | imgname | enabled
+        # Full legacy (14 cols): seq | name | type | group | mode | cmd | actions | outdir | imgname | timeout | retry | enabled | rules
         is_simplified = len(vals) <= SIMPLIFIED_TASK_COLS
 
         if is_simplified:
             match_group = vals[3] if len(vals) > 3 else ""
-            match_models_raw = vals[4] if len(vals) > 4 else ""
-            match_models = _parse_tags(match_models_raw)  # 设备型号, comma-separated
-            match_tags = ()  # 标签列已移除
-            output_dir_template = vals[5] if len(vals) > 5 else "{device_group}/{device_name}/{task_name}"
-            image_name_template = vals[6] if len(vals) > 6 else "{device_name}_{task_name}_{timestamp}"
-            enabled = _bool(vals[7]) if len(vals) > 7 else True
+            output_dir_template = vals[4] if len(vals) > 4 else "{device_group}/{device_name}/{task_name}"
+            image_name_template = vals[5] if len(vals) > 5 else "{device_name}_{task_name}_{timestamp}"
+            enabled = _bool(vals[6]) if len(vals) > 6 else True
             # Task definition overrides: actions_json, enabled (from JSON)
             actions_json = tdef.get("actions_json") or ""
             if "enabled" in tdef:
@@ -282,19 +274,17 @@ def load_tasks(
         else:
             # Legacy full-column format — Excel provides everything as before
             match_group = vals[3] if len(vals) > 3 else ""
-            match_tags = _parse_tags(vals[4]) if len(vals) > 4 else ()
-            match_models = ()
             if not execution_mode:
-                execution_mode = vals[5] if len(vals) > 5 else ""
+                execution_mode = vals[4] if len(vals) > 4 else ""
             if not command_or_url:
-                command_or_url = vals[6] if len(vals) > 6 else ""
+                command_or_url = vals[5] if len(vals) > 5 else ""
             if not tdef.get("timeout_seconds"):
-                timeout_seconds = _int(vals[10], 60) if len(vals) > 10 else 60
+                timeout_seconds = _int(vals[9], 60) if len(vals) > 9 else 60
             if not tdef.get("retry_count"):
-                retry_count = _int(vals[11], 0) if len(vals) > 11 else 0
-            output_dir_template = vals[8] if len(vals) > 8 else "{device_group}/{device_name}/{task_name}"
-            image_name_template = vals[9] if len(vals) > 9 else "{device_name}_{task_name}_{timestamp}"
-            enabled = _bool(vals[12]) if len(vals) > 12 else True
+                retry_count = _int(vals[10], 0) if len(vals) > 10 else 0
+            output_dir_template = vals[7] if len(vals) > 7 else "{device_group}/{device_name}/{task_name}"
+            image_name_template = vals[8] if len(vals) > 8 else "{device_name}_{task_name}_{timestamp}"
+            enabled = _bool(vals[11]) if len(vals) > 11 else True
 
         # CUSTOM_SCRIPT tasks are always disabled unless explicitly enabled in JSON
         if execution_mode == "CUSTOM_SCRIPT" and not tdef.get("enabled", False):
@@ -308,8 +298,6 @@ def load_tasks(
             task_name=task_name,
             task_type=task_type,
             match_group=match_group,
-            match_tags=match_tags,
-            match_models=match_models,
             execution_mode=execution_mode,
             command_or_url=command_or_url,
             actions_json=actions_json,

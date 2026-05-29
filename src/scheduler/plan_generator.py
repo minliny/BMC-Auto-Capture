@@ -47,17 +47,4 @@ def _matches(device: Device, task: Task) -> bool:
     if task.match_group:
         if device.device_group.lower() != task.match_group.lower():
             return False
-
-    # Device model matching: device must match ONE of the task's models (case-insensitive)
-    if task.match_models:
-        if device.device_model.lower() not in [m.lower() for m in task.match_models]:
-            return False
-
-    # Tag matching: device must have ALL task tags (case-insensitive)
-    if task.match_tags:
-        device_tag_set = {t.lower() for t in device.tags}
-        for tag in task.match_tags:
-            if tag.lower() not in device_tag_set:
-                return False
-
     return True

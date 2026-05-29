@@ -50,10 +50,9 @@ class Task:
     row_index: int
     sequence: int
     task_name: str
-    task_type: str  # "BMC" | "SSH" | "TELNET"  # "BMC" | "SSH" | "TELNET"
+    task_type: str  # "BMC" | "SSH" | "TELNET"
     execution_mode: str  # "BMC_URL" | "BMC_ACTIONS" | "SSH_CMD" | "TELNET_CMD"
     match_group: str = ""
-    match_tags: tuple[str, ...] = ()
     command_or_url: str = ""
     actions_json: str = ""
     rules_json: str = ""
@@ -63,7 +62,6 @@ class Task:
     retry_count: int = 0
     enabled: bool = True
     sequence_str: str = ""
-    match_models: tuple[str, ...] = ()
 
     def parsed_rules(self) -> tuple[Rule, ...]:
         """Parse rules_json into Rule objects.

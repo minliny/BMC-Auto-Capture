@@ -91,7 +91,6 @@ def _resolve_template(tmpl: str, device, task) -> str:
             .replace("{任务类型}", task.task_type)
             .replace("{设备分类}", device.device_group)
             .replace("{设备名称}", device.device_name)
-            .replace("{设备型号}", device.device_model)
             .replace("{带外管理IP}", device.bmc_ip)
             .replace("{带外管理用户名}", device.bmc_username)
             .replace("{带外管理密码}", device.bmc_password)
