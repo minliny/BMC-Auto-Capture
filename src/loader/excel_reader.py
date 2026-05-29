@@ -312,6 +312,9 @@ def load_tasks(
             enabled=enabled,
             rules_json=rules_json,
         )
+        # Attach tasks.json definition for runtime lookup (checkpoints, ready conditions, etc.)
+        if tdef:
+            object.__setattr__(task, '_task_def', tdef)
         tasks.append(task)
 
     return tasks

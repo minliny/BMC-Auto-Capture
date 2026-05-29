@@ -23,6 +23,11 @@ from .captcha_handler import detect_captcha, handle_captcha, CaptchaDetected
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
+from ..rules.condition_evaluator import (
+    evaluate_ready_conditions, evaluate_evidence_checkpoints,
+    parse_ready_specs, parse_checkpoint_specs,
+    ArtifactContext, ConditionResult, ConditionEvaluationResult,
+)
 from ..out.file_writer import write_html_file, write_log_file
 
 logger = logging.getLogger("bmc_auto_capture.bmc")
@@ -80,6 +85,17 @@ LOGIN_SUBMIT_SELECTORS = [
     'input[type="submit"]',
     'button.btn-primary',
 ]
+
+
+def _checkpoint_rollup_from_condition(eval_result: ConditionEvaluationResult) -> str:
+    """Map condition evaluator rollup to checkpoint_status values."""
+    mapping = {
+        "FAIL": "CHECK_FAIL",
+        "WARN": "CHECK_WARN",
+        "PASS": "CHECK_PASS",
+        "SKIP": "CHECK_SKIP",
+    }
+    return mapping.get(eval_result.rollup(), "CHECK_SKIP")
 
 
 def _resolve_template(tmpl: str, device, task) -> str:
@@ -692,19 +708,56 @@ class BMCExecutor(AbstractExecutor):
         task,
         output_dir: str,
         result: ExecutionResult,
-        primary_screenshot: str = "",
+        **_kwargs,  # tolerate legacy primary_screenshot kwarg
     ) -> None:
-        """Evaluate evidence checkpoints (non-blocking, runs after artifacts are saved)."""
-        from ..rules.checkpoint_engine import CheckpointEngine
-        from ..rules.engine import RuleContext
-        import json
+        """Evaluate evidence checkpoints (non-blocking, runs after artifacts are saved).
 
-        # Load checkpoints from tasks.json
-        checkpoints_json = None
-        if hasattr(task, '_task_def') and task._task_def:
-            checkpoints_json = task._task_def.get("checkpoints")
+        Supports two formats from tasks.json:
+          1. New: "evidence_checkpoints" → condition_evaluator.evaluate_evidence_checkpoints
+          2. Legacy: "checkpoints" → CheckpointEngine (backward compat)
+        """
+        tdef = getattr(task, '_task_def', None) or {}
+
+        # --- New format: evidence_checkpoints ---
+        raw = tdef.get("evidence_checkpoints")
+        if raw:
+            artifacts = ArtifactContext.from_execution_result(result)
+            # Extract page text for BMC tasks
+            page_text = ""
+            if page is not None:
+                try:
+                    if not page.is_closed():
+                        page_text = await page.inner_text("body")
+                except Exception:
+                    pass
+            artifacts.html_text = page_text  # Use page text as html_text for eval
+
+            specs = parse_checkpoint_specs(raw)
+            eval_result = evaluate_evidence_checkpoints(specs, artifacts, page_text)
+
+            result.checkpoint_status = _checkpoint_rollup_from_condition(eval_result)
+
+            for cr in eval_result.results:
+                status = "SUCCESS" if cr.status == "PASS" else \
+                         "FAILED" if cr.status == "FAIL" else \
+                         "WARN" if cr.status == "WARN" else "SKIP"
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name=f"checkpoint_{cr.condition_type}",
+                    status=status,
+                    details=f"{cr.details} target={cr.target}" if cr.details else f"target={cr.target}",
+                    step_type="checkpoint",
+                ))
+            return
+
+        # --- Legacy format: checkpoints (CheckpointEngine) ---
+        checkpoints_json = tdef.get("checkpoints")
         if not checkpoints_json:
             return
+
+        from ..rules.checkpoint_engine import CheckpointEngine
+        from ..rules.engine import RuleContext
+        import json as _json
 
         try:
             specs = [CheckpointSpec.from_dict(c) for c in checkpoints_json]
@@ -715,17 +768,18 @@ class BMCExecutor(AbstractExecutor):
         if not specs:
             return
 
+        primary_ss = result.screenshots[-1] if result.screenshots else ""
         ctx = RuleContext(
             page=page,
             device=getattr(task, '_device', None),
             task=task,
             output_dir=output_dir,
         )
-        ctx.artifacts["screenshot"] = primary_screenshot
+        ctx.artifacts["screenshot"] = primary_ss
         ctx.artifacts["html"] = result.html_file
 
         engine = CheckpointEngine()
-        eval_result = await engine.evaluate(specs, ctx, evidence_ref=primary_screenshot)
+        eval_result = await engine.evaluate(specs, ctx, evidence_ref=primary_ss)
 
         result.checkpoint_results = eval_result.results
         result.checkpoint_status = eval_result.rollup_status()
@@ -865,15 +919,20 @@ class BMCExecutor(AbstractExecutor):
                 page, pre_actions, device, output_dir, result,
             )
 
-        # --- Step 3: capture_ready_conditions (default: check not on login) ---
-        ready_ok, ready_reason = await self._evaluate_capture_ready_conditions(
-            page, device,
-        )
-        if not ready_ok:
+        # --- Step 3: capture_ready_conditions ---
+        ready_eval = await self._evaluate_capture_ready_conditions(page, task, device)
+        for cr in ready_eval.results:
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name=f"ready_{cr.condition_type}",
+                status="SUCCESS" if cr.is_pass else "FAILED",
+                details=cr.details or f"{cr.target} → {cr.actual[:60]}",
+            ))
+        if ready_eval.rollup() == "FAIL":
             if result.ready_status != "READY_NOT_READY":
                 result.ready_status = "READY_NOT_READY"
             if not result.ready_failure_reason:
-                result.ready_failure_reason = ready_reason
+                result.ready_failure_reason = f"ready conditions failed: {ready_eval.summary()}"
 
         # --- Step 4: final_capture (always runs if page is alive) ---
         await self._execute_final_capture(page, file_base, output_dir, result)
@@ -882,8 +941,7 @@ class BMCExecutor(AbstractExecutor):
         await self._evaluate_rules(page, task, device, output_dir, result)
 
         # --- Step 6: evidence_checkpoints ---
-        primary_ss = result.screenshots[-1] if result.screenshots else ""
-        await self._evaluate_checkpoints(page, task, output_dir, result, primary_ss)
+        await self._evaluate_checkpoints(page, task, output_dir, result)
 
     async def _execute_pre_capture_actions(self, page, actions: list, device, output_dir: str, result: ExecutionResult) -> None:
         """Execute pre_capture_actions: click/fill/press/wait/wait_for_selector.
@@ -949,20 +1007,26 @@ class BMCExecutor(AbstractExecutor):
                     break
                 # optional action failure → continue next action
 
-    async def _evaluate_capture_ready_conditions(self, page, device) -> tuple:
-        """Check whether the live Playwright page has reached capturable state.
+    async def _evaluate_capture_ready_conditions(self, page, task, device) -> ConditionEvaluationResult:
+        """Evaluate capture_ready_conditions from tasks.json (or defaults) against live page.
 
-        Default check: page URL is not on the login page.
-        Returns (ready_ok: bool, failure_reason: str).
+        Defaults: page_alive + not_login_page when no conditions configured.
         """
-        try:
-            current_url = page.url
-            if '/login' in current_url.lower():
-                return False, f"page still on login page: {current_url}"
-            # page reached a non-login URL — considered ready
-            return True, ""
-        except Exception as e:
-            return False, f"ready check error: {e}"
+        import json
+        raw = None
+        if hasattr(task, '_task_def') and task._task_def:
+            raw = task._task_def.get("capture_ready_conditions")
+
+        specs = parse_ready_specs(raw)
+        eval_result = await evaluate_ready_conditions(page, specs)
+
+        # Record each condition as a step result for traceability
+        for cr in eval_result.results:
+            result = getattr(self, '_current_result', None)
+            # Step recording is done in _run_capture_flow caller
+            pass
+
+        return eval_result
 
     async def _execute_final_capture(self, page, file_base: str, output_dir: str, result: ExecutionResult) -> None:
         """Guaranteed final evidence: screenshot + HTML save.

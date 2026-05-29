@@ -11,7 +11,25 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "capture_ready_conditions": [
+        {
+          "type": "url_contains",
+          "target": "/navigate/system/storage"
+        },
+        {
+          "type": "selector_visible",
+          "selector": "#LogicalDrive0"
+        }
+      ],
+      "evidence_checkpoints": [
+        {
+          "name": "logical_drive_info",
+          "type": "text_contains_any",
+          "target": "Logical Drive 0||RAID||Status||状态",
+          "severity": "WARNING"
+        }
+      ]
     },
     "机柜RM211的管理iBMC IP查询和设置测试": {
       "task_type": "BMC",
@@ -189,7 +207,22 @@
         }
       ],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带内管理IP}-{设备名称}"
+      "image_name_template": "{带内管理IP}-{设备名称}",
+      "capture_ready_conditions": [],
+      "evidence_checkpoints": [
+        {
+          "name": "no_interface_down",
+          "type": "not_contains_any",
+          "target": "down||DOWN||error-down",
+          "severity": "ERROR"
+        },
+        {
+          "name": "has_up_port",
+          "type": "text_contains",
+          "target": "up",
+          "severity": "WARNING"
+        }
+      ]
     },
     "计算节点光模块信息查询测试": {
       "task_type": "SSH",
@@ -357,7 +390,25 @@
       "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
       "_note": "未在真实设备验证，默认禁用。旧版同一脚本同时用于电源冗余和硬盘冗余-系统日志。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "capture_ready_conditions": [
+        {
+          "type": "url_contains",
+          "target": "/navigate/maintance/alarm"
+        },
+        {
+          "type": "text_contains",
+          "target": "系统事件"
+        }
+      ],
+      "evidence_checkpoints": [
+        {
+          "name": "alarm_page_content",
+          "type": "text_contains_any",
+          "target": "事件||时间||级别||描述||系统事件",
+          "severity": "WARNING"
+        }
+      ]
     },
     "硬盘冗余测试-系统日志": {
       "task_type": "BMC",
