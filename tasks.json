@@ -26,7 +26,12 @@
         {
           "name": "logical_drive_info",
           "type": "text_contains_any",
-          "target": "Logical Drive 0||RAID||Status||状态",
+          "values": [
+            "Logical Drive 0",
+            "RAID",
+            "Status",
+            "状态"
+          ],
           "severity": "WARNING"
         }
       ]
@@ -213,7 +218,11 @@
         {
           "name": "no_interface_down",
           "type": "not_contains_any",
-          "target": "down||DOWN||error-down",
+          "values": [
+            "down",
+            "DOWN",
+            "error-down"
+          ],
           "severity": "ERROR"
         },
         {
@@ -405,7 +414,13 @@
         {
           "name": "alarm_page_content",
           "type": "text_contains_any",
-          "target": "事件||时间||级别||描述||系统事件",
+          "values": [
+            "事件",
+            "时间",
+            "级别",
+            "描述",
+            "系统事件"
+          ],
           "severity": "WARNING"
         }
       ]

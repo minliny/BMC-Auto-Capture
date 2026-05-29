@@ -47,13 +47,18 @@ class ReadyConditionSpec:
     """
     condition_type: str       # url_contains | selector_visible | text_contains | ...
     target: str = ""          # URL fragment / CSS selector / text / ...
+    values: tuple = ()        # list of candidate values (text_contains_any)
     timeout_ms: int = 5000
 
     @classmethod
     def from_dict(cls, d: dict) -> "ReadyConditionSpec":
+        vals = d.get("values", [])
+        if isinstance(vals, list):
+            vals = tuple(vals)
         return cls(
             condition_type=str(d.get("type", "")),
             target=str(d.get("target", d.get("selector", ""))),
+            values=vals,
             timeout_ms=int(d.get("timeout_ms", d.get("timeout", 5000))),
         )
 
@@ -66,15 +71,20 @@ class CheckpointConditionSpec:
     """
     condition_type: str       # text_contains | regex_match | html_contains | ...
     name: str = ""            # human-readable checkpoint name
-    target: str = ""          # expected text / regex pattern / file path
+    target: str = ""          # expected text / regex pattern / artifact key
+    values: tuple = ()        # list of candidate values (text_contains_any, not_contains_any)
     severity: str = "ERROR"   # ERROR | WARNING | INFO
 
     @classmethod
     def from_dict(cls, d: dict) -> "CheckpointConditionSpec":
+        vals = d.get("values", [])
+        if isinstance(vals, list):
+            vals = tuple(vals)
         return cls(
             condition_type=str(d.get("type", "")),
             name=str(d.get("name", "")),
             target=str(d.get("target", "")),
+            values=vals,
             severity=str(d.get("severity", "ERROR")),
         )
 
@@ -137,26 +147,24 @@ class ArtifactContext:
         )
 
     def load_html_text(self) -> str:
-        if self.html_text:
-            return self.html_text
+        """Load HTML content from file. Always re-reads (no cache in evaluator)."""
         if self.html_path and os.path.exists(self.html_path):
             try:
                 with open(self.html_path, "r", encoding="utf-8") as f:
-                    self.html_text = f.read()
+                    return f.read()
             except Exception:
                 pass
-        return self.html_text
+        return self.html_text or ""
 
     def load_txt_content(self) -> str:
-        if self.txt_content:
-            return self.txt_content
+        """Load TXT content from file. Always re-reads."""
         if self.txt_path and os.path.exists(self.txt_path):
             try:
                 with open(self.txt_path, "r", encoding="utf-8") as f:
-                    self.txt_content = f.read()
+                    return f.read()
             except Exception:
                 pass
-        return self.txt_content
+        return self.txt_content or ""
 
 
 # ---------------------------------------------------------------------------
@@ -166,12 +174,21 @@ class ArtifactContext:
 async def evaluate_ready_conditions(
     page,
     specs: list[ReadyConditionSpec],
+    protocol: str = "BMC",
 ) -> ConditionEvaluationResult:
     """Evaluate capture_ready_conditions against a live Playwright page.
 
-    If specs is empty, runs default checks: page_alive + not_login_page.
+    - BMC tasks with empty specs: defaults to page_alive + not_login_page.
+    - SSH/TELNET tasks with empty specs: skip (READY_SKIP), no page checks.
     """
     if not specs:
+        if protocol.upper() in ("SSH", "TELNET"):
+            return ConditionEvaluationResult(
+                stage="ready",
+                results=[ConditionResult("ready_skip", "SKIP", "", "",
+                          "SSH/TELNET: no capture_ready_conditions configured")],
+            )
+        # BMC defaults
         specs = [
             ReadyConditionSpec("page_alive"),
             ReadyConditionSpec("not_login_page"),
@@ -265,12 +282,14 @@ async def _eval_one_ready(page, spec: ReadyConditionSpec) -> ConditionResult:
 
         elif ct == "text_contains_any":
             text = await page.inner_text("body")
-            candidates = [s.strip() for s in target.split("||") if s.strip()]
+            candidates = _resolve_candidates(spec)
+            if not candidates:
+                return ConditionResult(ct, "SKIP", target, "", "no candidates configured")
             for cand in candidates:
                 if cand in text:
                     return ConditionResult(ct, "PASS", target, cand, f"matched '{cand}'")
             return ConditionResult(
-                ct, "FAIL", target, _snippet(text, candidates[0] if candidates else "", 40),
+                ct, "FAIL", target, _snippet(text, candidates[0], 40),
                 f"none of {candidates} found"
             )
 
@@ -328,10 +347,10 @@ def _eval_one_checkpoint(
 
     try:
         if ct == "file_exists":
-            path = target or artifacts.screenshot_path or artifacts.html_path or artifacts.txt_path
+            path = _resolve_artifact_path(target, artifacts)
             ok = bool(path and os.path.exists(path))
             return ConditionResult(ct, "PASS" if ok else "FAIL", path,
-                                   "exists" if ok else "not found",
+                                   "exists" if ok else f"not found (key={target})",
                                    f"[{name}]" if name else "")
 
         elif ct == "html_contains":
@@ -368,7 +387,9 @@ def _eval_one_checkpoint(
             content = page_text or txt_content
             if not content:
                 return ConditionResult(ct, "SKIP", target, "", f"[{name}] no text content")
-            candidates = [s.strip() for s in target.split("||") if s.strip()]
+            candidates = _resolve_candidates(spec)
+            if not candidates:
+                return ConditionResult(ct, "SKIP", target, "", f"[{name}] no candidates configured")
             for cand in candidates:
                 if cand in content:
                     return ConditionResult(ct, "PASS", target, cand,
@@ -391,7 +412,9 @@ def _eval_one_checkpoint(
             content = page_text or txt_content
             if not content:
                 return ConditionResult(ct, "SKIP", target, "", f"[{name}] no text content")
-            candidates = [s.strip() for s in target.split("||") if s.strip()]
+            candidates = _resolve_candidates(spec)
+            if not candidates:
+                return ConditionResult(ct, "SKIP", target, "", f"[{name}] no candidates configured")
             found = [c for c in candidates if c in content]
             if found:
                 status = "FAIL" if severity == "ERROR" else "WARN"
@@ -424,6 +447,45 @@ def _eval_one_checkpoint(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _resolve_candidates(spec) -> list[str]:
+    """Resolve candidate values from spec: prefer 'values' array, fallback to target '||' split."""
+    vals = getattr(spec, "values", ())
+    if vals:
+        return [str(v).strip() for v in vals if str(v).strip()]
+    target = getattr(spec, "target", "")
+    if target:
+        return [s.strip() for s in target.split("||") if s.strip()]
+    return []
+
+
+def _resolve_artifact_path(target: str, artifacts: ArtifactContext) -> str:
+    """Resolve artifact key to actual file path.
+
+    Supported keys: screenshot, html_file, txt_file, log_file.
+    If target is empty, falls back to first available artifact.
+    If target is a literal path, returns as-is if it exists.
+    """
+    key_map = {
+        "screenshot": artifacts.screenshot_path,
+        "html_file": artifacts.html_path,
+        "txt_file": artifacts.txt_path,
+        "log_file": getattr(artifacts, "log_path", ""),
+    }
+    # Known key → resolve directly
+    if target in key_map:
+        return key_map[target] or ""
+    # Empty target → fallback to any available artifact
+    if not target:
+        for path in [artifacts.screenshot_path, artifacts.html_path, artifacts.txt_path]:
+            if path:
+                return path
+        return ""
+    # Literal path
+    if os.path.exists(target):
+        return target
+    return ""
+
 
 def _snippet(text: str, keyword: str, context: int = 40) -> str:
     """Extract a snippet around keyword from text."""

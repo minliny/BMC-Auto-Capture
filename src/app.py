@@ -294,26 +294,48 @@ class App:
 
     # ------------------------------------------------------------------
     def _compute_verdict(self, result: ExecutionResult) -> None:
-        """Derive final_verdict from execution + artifact + checkpoint status.
-        Rollup: FAIL > WARN > PASS > SKIP > DISABLED.
+        """Derive final_verdict from execution + artifact + checkpoint + ready status.
+
+        Rollup priority: FAIL > WARN > PASS.
+
+        FAIL triggers:
+          - EXEC_FAILED / EXEC_ERROR / EXEC_TIMEOUT
+          - ARTIFACT_FAILED
+          - CHECK_FAIL
+
+        WARN triggers:
+          - EXEC_PARTIAL
+          - READY_NOT_READY
+          - CHECK_WARN
+          - ARTIFACT_PARTIAL
         """
-        if result.execution_status not in ("EXEC_SUCCESS", "EXEC_RUNNING"):
+        # FAIL conditions
+        if result.execution_status in ("EXEC_FAILED", "EXEC_ERROR", "EXEC_TIMEOUT"):
             result.final_verdict = "FAIL"
             return
         if result.artifact_status == "ARTIFACT_FAILED":
             result.final_verdict = "FAIL"
             return
-        cp = result.checkpoint_status
-        if cp == "CHECK_FAIL":
+        if result.checkpoint_status == "CHECK_FAIL":
             result.final_verdict = "FAIL"
-        elif cp == "CHECK_WARN":
+            return
+
+        # WARN conditions
+        if result.execution_status == "EXEC_PARTIAL":
             result.final_verdict = "WARN"
-        elif cp == "CHECK_PASS":
-            result.final_verdict = "PASS"
-        elif cp in ("CHECK_SKIP", "CHECK_DISABLED"):
-            result.final_verdict = "PASS"
-        else:
-            result.final_verdict = "PASS"
+            return
+        if result.ready_status == "READY_NOT_READY":
+            result.final_verdict = "WARN"
+            return
+        if result.checkpoint_status == "CHECK_WARN":
+            result.final_verdict = "WARN"
+            return
+        if result.artifact_status == "ARTIFACT_PARTIAL":
+            result.final_verdict = "WARN"
+            return
+
+        # PASS — everything went fine
+        result.final_verdict = "PASS"
 
     # ------------------------------------------------------------------
     # Run with pre-parsed plans (in-memory execution via API)

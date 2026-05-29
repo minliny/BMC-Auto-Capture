@@ -1010,15 +1010,16 @@ class BMCExecutor(AbstractExecutor):
     async def _evaluate_capture_ready_conditions(self, page, task, device) -> ConditionEvaluationResult:
         """Evaluate capture_ready_conditions from tasks.json (or defaults) against live page.
 
-        Defaults: page_alive + not_login_page when no conditions configured.
+        BMC defaults: page_alive + not_login_page.
+        SSH/TELNET: skip (no Playwright page).
         """
-        import json
         raw = None
         if hasattr(task, '_task_def') and task._task_def:
             raw = task._task_def.get("capture_ready_conditions")
 
         specs = parse_ready_specs(raw)
-        eval_result = await evaluate_ready_conditions(page, specs)
+        protocol = getattr(task, "task_type", "BMC") or "BMC"
+        eval_result = await evaluate_ready_conditions(page, specs, protocol=protocol)
 
         # Record each condition as a step result for traceability
         for cr in eval_result.results:
