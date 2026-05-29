@@ -18,6 +18,18 @@ def generate_plans(devices: list[Device], tasks: list[Task]) -> list[TaskPlan]:
     enabled_devices = [d for d in devices if d.enabled]
     enabled_tasks = [t for t in tasks if t.enabled]
 
+    # Log disabled items so users know what was skipped
+    disabled_devices = [d for d in devices if not d.enabled]
+    disabled_tasks = [t for t in tasks if not t.enabled]
+    if disabled_devices:
+        logger.info("已禁用设备 (%d): %s",
+                    len(disabled_devices),
+                    ", ".join(d.device_name for d in disabled_devices))
+    if disabled_tasks:
+        logger.info("已禁用任务 (%d): %s",
+                    len(disabled_tasks),
+                    ", ".join(t.task_name for t in disabled_tasks))
+
     plans: list[TaskPlan] = []
 
     for device in enabled_devices:
@@ -37,6 +49,16 @@ def generate_plans(devices: list[Device], tasks: list[Task]) -> list[TaskPlan]:
         "计划生成:  %d devices × %d tasks = %d plans (%d unique devices)",
         len(enabled_devices), len(enabled_tasks), len(plans), total_devices,
     )
+
+    # Warn about tasks that matched zero devices
+    matched_task_names = {p.task.task_name for p in plans}
+    unmatched = [t for t in enabled_tasks if t.task_name not in matched_task_names]
+    if unmatched:
+        logger.warning(
+            "未匹配到任何设备的任务 (%d): %s",
+            len(unmatched),
+            ", ".join(f"{t.task_name}(group={t.match_group})" for t in unmatched),
+        )
 
     return plans
 
