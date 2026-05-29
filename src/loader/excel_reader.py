@@ -266,8 +266,10 @@ def load_tasks(
             enabled = _bool(vals[6]) if len(vals) > 6 else True
             # Task definition overrides: actions_json, enabled (from JSON)
             actions_json = tdef.get("actions_json") or ""
-            if "enabled" in tdef:
-                enabled = bool(tdef["enabled"])
+            # Only allow JSON to force-DISABLE (security gate).
+            # Excel is the user-facing toggle; JSON must not force-enable.
+            if tdef.get("enabled") is False:
+                enabled = False
             if not tdef:
                 execution_mode = vals[1]
                 logger.warning("No tasks.json definition for '%s', task may not execute", task_name)
