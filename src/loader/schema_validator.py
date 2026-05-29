@@ -87,6 +87,28 @@ def validate(devices: list[Device], tasks: list[Task]) -> ValidationReport:
         if t.execution_mode in ("SSH_CMD", "TELNET_CMD") and not t.command_or_url:
             report.messages.append(ValidationMessage("WARNING", "task", t.row_index, "执行命令", f"{t.execution_mode} 任务未填写命令"))
 
+    # --- Cross-validation: device_group vs task match_group consistency ---
+    device_groups = {d.device_group for d in devices if d.device_group}
+    task_match_groups = {t.match_group for t in tasks if t.match_group}
+
+    # Warn if any task match_group doesn't appear in any device's device_group
+    orphaned_groups = task_match_groups - device_groups
+    for t in tasks:
+        if t.match_group and t.match_group in orphaned_groups:
+            report.messages.append(ValidationMessage(
+                "WARNING", "cross", t.row_index, "设备分组",
+                f"任务 '{t.task_name}' 的设备分组 '{t.match_group}' 在设备信息表中不存在"
+            ))
+
+    # Warn if any device_group doesn't appear in any task's match_group (device never matched)
+    unmatched_device_groups = device_groups - task_match_groups
+    for d in devices:
+        if d.device_group and d.enabled and d.device_group in unmatched_device_groups:
+            report.messages.append(ValidationMessage(
+                "WARNING", "cross", d.row_index, "设备分类",
+                f"设备 '{d.device_name}' 的设备分类 '{d.device_group}' 没有任务匹配"
+            ))
+
     # --- Cross-validation: check that enabled tasks have matching enabled devices ---
     enabled_groups = {d.device_group for d in devices if d.enabled}
     enabled_tags: set[str] = set()
