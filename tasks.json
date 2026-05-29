@@ -321,7 +321,7 @@
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
-      "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/system/info/processor\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"click\",\"selector\":\"#tab-1\",\"_note\":\"NPU tab\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"click\",\"selector\":\"xpath=(//i[contains(@class,'el-icon')][.//*[local-name()='path' and starts-with(@d,'M340.864')]])[1]\",\"_note\":\"展开箭头\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\"},{\"action\":\"save_html\"}]",
+      "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/system/info/processor\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \"#tab-1\", \"_note\": \"NPU tab\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"screenshot\"}, {\"action\": \"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
