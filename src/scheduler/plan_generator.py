@@ -64,9 +64,16 @@ def generate_plans(devices: list[Device], tasks: list[Task]) -> list[TaskPlan]:
 
 
 def _matches(device: Device, task: Task) -> bool:
-    """Check if a task should run on a device."""
-    # Group matching (case-insensitive)
-    if task.match_group:
-        if device.device_group.lower() != task.match_group.lower():
-            return False
-    return True
+    """Check if a task should run on a device.
+
+    Group matching is case-insensitive and supports multi-group notation:
+      "L1/L2"  → matches device_group "L1" or "L2"
+      "A3"     → matches device_group "A3" only
+    """
+    if not task.match_group:
+        return True
+
+    device_group = device.device_group.lower()
+    # Split on "/" for multi-group tasks
+    task_groups = [g.strip().lower() for g in task.match_group.split("/") if g.strip()]
+    return device_group in task_groups

@@ -88,22 +88,30 @@ def validate(devices: list[Device], tasks: list[Task]) -> ValidationReport:
             report.messages.append(ValidationMessage("WARNING", "task", t.row_index, "执行命令", f"{t.execution_mode} 任务未填写命令"))
 
     # --- Cross-validation: device_group vs task match_group consistency ---
-    device_groups = {d.device_group for d in devices if d.device_group}
-    task_match_groups = {t.match_group for t in tasks if t.match_group}
+    device_groups_lower = {d.device_group.lower() for d in devices if d.device_group}
 
-    # Warn if any task match_group doesn't appear in any device's device_group (case-insensitive)
-    orphaned_groups = {g for g in task_match_groups if g.lower() not in {dg.lower() for dg in device_groups}}
+    # Expand multi-group tasks (e.g. "L1/L2" → {"l1", "l2"})
+    def _expand_groups(group: str) -> set[str]:
+        return {g.strip().lower() for g in group.split("/") if g.strip()}
+
     for t in tasks:
-        if t.match_group and t.match_group.lower() in {g.lower() for g in orphaned_groups}:
+        if not t.match_group:
+            continue
+        task_groups = _expand_groups(t.match_group)
+        if not task_groups & device_groups_lower:
             report.messages.append(ValidationMessage(
                 "WARNING", "cross", t.row_index, "设备分组",
                 f"任务 '{t.task_name}' 的设备分组 '{t.match_group}' 在设备信息表中不存在"
             ))
 
-    # Warn if any device_group doesn't appear in any task's match_group (device never matched)
-    unmatched_device_groups = {g for g in device_groups if g.lower() not in {tg.lower() for tg in task_match_groups}}
+    # Warn if any device_group doesn't appear in any task's match_group
+    all_task_groups: set[str] = set()
+    for t in tasks:
+        if t.match_group:
+            all_task_groups |= _expand_groups(t.match_group)
+
     for d in devices:
-        if d.device_group and d.enabled and d.device_group.lower() in {g.lower() for g in unmatched_device_groups}:
+        if d.device_group and d.enabled and d.device_group.lower() not in all_task_groups:
             report.messages.append(ValidationMessage(
                 "WARNING", "cross", d.row_index, "设备分组",
                 f"设备 '{d.device_name}' 的设备分组 '{d.device_group}' 没有任务匹配"
