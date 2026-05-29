@@ -83,9 +83,15 @@ LOGIN_SUBMIT_SELECTORS = [
 
 
 def _resolve_template(tmpl: str, device, task) -> str:
-    """Replace Excel header name variables with actual values."""
+    """Replace template variables with actual values.
+
+    Supports both Chinese (Excel header) and English (legacy default) names.
+    Unrecognized variables are left as-is.
+    """
     seq = task.sequence_str or str(task.sequence)
+    ts = time.strftime("%Y%m%d_%H%M%S")
     return (tmpl
+            # Chinese (Excel header names)
             .replace("{任务序号}", seq)
             .replace("{任务名称}", task.task_name)
             .replace("{任务类型}", task.task_type)
@@ -96,7 +102,17 @@ def _resolve_template(tmpl: str, device, task) -> str:
             .replace("{带外管理密码}", device.bmc_password)
             .replace("{带内管理IP}", device.inband_ip)
             .replace("{带内管理用户名}", device.inband_username)
-            .replace("{带内管理密码}", device.inband_password))
+            .replace("{带内管理密码}", device.inband_password)
+            # English (legacy default / backward compat)
+            .replace("{task_sequence}", seq)
+            .replace("{task_name}", task.task_name)
+            .replace("{task_type}", task.task_type)
+            .replace("{device_group}", device.device_group)
+            .replace("{device_name}", device.device_name)
+            .replace("{device_ip}", device.bmc_ip)
+            .replace("{bmc_ip}", device.bmc_ip)
+            .replace("{step}", "final")
+            .replace("{timestamp}", ts))
 
 
 class BMCLoginError(Exception):
