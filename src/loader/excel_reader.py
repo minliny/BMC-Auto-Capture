@@ -90,7 +90,8 @@ def _build_header_map(headers: list[str]) -> dict[str, int]:
 def _init_header_map():
     """One-time init of header name → field mapping."""
     DEVICE_HEADER_MAP.update({
-        # device_group
+        # device_group — accepts both "设备分组" and legacy "设备分类"
+        "设备分组": "device_group",
         "设备分类": "device_group",
         "device_group": "device_group",
         # device_name
