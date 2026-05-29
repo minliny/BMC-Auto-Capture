@@ -12,9 +12,12 @@ $EXCEL = Join-Path $APP "examples\task_template.xlsx"
 
 # ====== 自动解除网络下载文件的安全锁定 ======
 Write-Host "正在解除文件安全锁定..." -ForegroundColor Gray
-Get-ChildItem -Path $ScriptDir -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
-Get-ChildItem -Path $RUNTIME -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
-Get-ChildItem -Path $APP -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
+$dirs = @($ScriptDir)
+if (Test-Path $RUNTIME) { $dirs += $RUNTIME }
+if (Test-Path $APP) { $dirs += $APP }
+foreach ($dir in $dirs) {
+    Get-ChildItem -Path $dir -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
+}
 Write-Host "完成。" -ForegroundColor Gray
 
 # ====== 环境检查 ======
