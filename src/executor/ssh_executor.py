@@ -21,6 +21,51 @@ from ..out.file_writer import write_text_file, write_log_file
 from ..out.screenshot import render_text_to_image
 from ..utils.template import resolve_template, check_unreplaced_vars
 
+# 最大翻页次数，防止无限循环
+MAX_MORE_PAGES = 200
+
+# 纯分页提示行（只有横线和 More，无实际内容）
+MORE_LINE_RE = re.compile(r'^\s*[-–—]*(?:More|more|MORE)[-–—\s]*$', re.IGNORECASE)
+# 行内分页提示（从文本中移除）
+MORE_INLINE_RE = re.compile(
+    r'[-–—]{2,}\s*(?:More|more|MORE)\s*[-–—]*', re.IGNORECASE
+)
+# ANSI 控制码
+ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+
+
+def _strip_pagination_markers(text: str) -> str:
+    """清理 SSH 输出中的分页提示和其他控制字符。
+
+    移除：
+    - 纯分页提示行（如 "---- More ----"）
+    - 行内分页提示
+    - ANSI escape 序列
+    - \r 回车
+    """
+    # 清理 ANSI
+    text = ANSI_RE.sub('', text)
+    # 规范化 \r\n 和孤立 \r
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    # 清理分页提示（按行处理）
+    lines = []
+    for line in text.split('\n'):
+        stripped = line.strip()
+        # 跳过纯分页提示行（如 "---- More ----"）
+        if MORE_LINE_RE.match(stripped):
+            continue
+        # 从行内移除分页提示
+        clean = MORE_INLINE_RE.sub('', stripped)
+        # 保留非空行
+        if clean:
+            lines.append(clean)
+        elif lines and lines[-1].strip():
+            lines.append('')  # 保留分隔
+    # 合并连续空行（最多2个）
+    result = '\n'.join(lines)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    return result.strip() + '\n'
+
 
 def _resolve_var(template: str, variables: dict) -> str:
     """Replace {{var.X}} placeholders with extracted variable values."""
@@ -111,6 +156,9 @@ class SSHExecutor(AbstractExecutor):
                 allow_agent=False,
             )
 
+            # 禁用分页（华为 VRP / Cisco / Linux）
+            self._disable_paging(client)
+
             step_index = 0
 
             # Per-task hard deadline: prevent any single SSH task from blocking forever
@@ -136,6 +184,7 @@ class SSHExecutor(AbstractExecutor):
                     err_chunks: list[bytes] = []
                     cmd_deadline = time.time() + self.command_timeout
                     last_data_at = time.time()
+                    more_count = 0  # 累计翻页次数
 
                     while time.time() < cmd_deadline:
                         got_data = False
@@ -158,10 +207,14 @@ class SSHExecutor(AbstractExecutor):
                         # Handle pagination: "---- More ----" / "----More----"
                         if out_chunks:
                             tail = b"".join(out_chunks[-2:]).decode("utf-8", errors="replace")
-                            if "----More----" in tail or "---- More ----" in tail:
+                            if "----More----" in tail or "---- More ----" in tail or "---more---" in tail or "--More--" in tail:
+                                if more_count >= MAX_MORE_PAGES:
+                                    logger.warning(f"[{device.device_name}] 翻页次数超限 ({more_count})，停止翻页")
+                                    break
                                 try:
                                     _stdin.write(" ")
                                     _stdin.flush()
+                                    more_count += 1
                                     last_data_at = time.time()
                                     got_data = True
                                 except Exception:
@@ -250,13 +303,13 @@ class SSHExecutor(AbstractExecutor):
             # File naming from template using unified resolve_template
             file_base = resolve_template(task.image_name_template, device, task)
 
-            # Write output
-            full_output = "\n\n".join(all_output)
-            txt_path = write_text_file(output_dir, f"{file_base}.txt", full_output)
+            # 清理分页提示后再写入
+            cleaned_output = _strip_pagination_markers("\n\n".join(all_output))
+            txt_path = write_text_file(output_dir, f"{file_base}.txt", cleaned_output)
             result.txt_file = txt_path
 
             # Generate terminal-style screenshot
-            ss_path = render_text_to_image(full_output, output_dir, f"{file_base}.png")
+            ss_path = render_text_to_image(cleaned_output, output_dir, f"{file_base}.png")
             result.screenshots = (ss_path,)
             result.artifact_status = "ARTIFACT_SAVED"
             result.step_results.append(StepResult(
@@ -462,6 +515,46 @@ class SSHExecutor(AbstractExecutor):
         if errno in (113, 101) or "unreachable" in msg:
             return "EXEC_SKIPPED_PRECHECK_FAILED"
         return "EXEC_ERROR"
+
+    def _disable_paging(self, client) -> bool:
+        """尝试禁用设备分页。
+
+        华为 VRP: screen-length 0 temporary
+        Cisco: terminal length 0
+        Linux: stty -echo
+
+        Returns:
+            True if paging disabled, False if failed (non-fatal)
+        """
+        disable_commands = [
+            "screen-length 0 temporary",
+            "screen-length 0",
+            "terminal length 0",
+            "stty -echo",
+        ]
+        for disable_cmd in disable_commands:
+            try:
+                logger.info(f"尝试禁用分页: {disable_cmd}")
+                stdin, stdout, stderr = client.exec_command(disable_cmd, timeout=2)
+                # 读取响应（不阻塞）
+                start = time.time()
+                response = b""
+                while time.time() - start < 2:
+                    if stdout.channel.recv_ready():
+                        response += stdout.channel.recv(4096)
+                    else:
+                        time.sleep(0.1)
+                resp_text = response.decode('utf-8', errors='replace').lower()
+                if 'error' not in resp_text and 'invalid' not in resp_text and 'unknown' not in resp_text:
+                    logger.info(f"分页已禁用: {disable_cmd}")
+                    return True
+                else:
+                    logger.debug(f"禁用分页命令响应含错误信息: {resp_text[:100]}")
+            except Exception as e:
+                logger.debug(f"禁用分页命令失败（可忽略）: {disable_cmd} ({e})")
+                continue
+        logger.warning("所有禁用分页命令均失败，继续执行（可能在不支持的设备上）")
+        return False
 
     def _build_log(self, result: ExecutionResult) -> str:
         lines = [
