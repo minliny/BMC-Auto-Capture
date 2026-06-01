@@ -100,9 +100,32 @@ def _setup_encoding():
         pass
 
 
+def _run_launcher_mode(args_list: list[str]) -> int:
+    """Run launcher.main() with the given args."""
+    app_dir = Path(__file__).resolve().parent
+    if str(app_dir) not in sys.path:
+        sys.path.insert(0, str(app_dir))
+
+    try:
+        from src.cli.launcher import main as launcher_main
+        return launcher_main()
+    except ImportError as e:
+        print(f"ERROR: launcher 模块不可用: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"ERROR: launcher 执行失败: {e}", file=sys.stderr)
+        return 1
+
+
 def main():
     _setup_browser_path()
     _setup_encoding()
+
+    # 检查是否为 launcher 模式 (由 启动.cmd 调用)
+    if "--launcher" in sys.argv:
+        clean_args = [a for a in sys.argv[1:] if a != "--launcher"]
+        sys.argv = [sys.argv[0]] + clean_args
+        return _run_launcher_mode(clean_args)
 
     parser = argparse.ArgumentParser(
         description="BMC Auto-Capture v0.2.1 — BMC/SSH 自动化测试证据采集平台",

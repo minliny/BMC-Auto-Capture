@@ -1,7 +1,7 @@
 """
 CLI entry point: python -m bmc_auto_capture --excel <path> [--config <path>]
+                或通过 启动.cmd 调用 bmc-auto-capture.exe --launcher [...]
 """
-
 
 from __future__ import annotations
 import argparse
@@ -21,7 +21,27 @@ def _bundle_dir() -> Path:
     return Path(__file__).parent.parent
 
 
+def _run_launcher(args: list[str]) -> int:
+    """Run launcher.main() with the given args."""
+    try:
+        from .cli.launcher import main as launcher_main
+        return launcher_main()
+    except ImportError as e:
+        print(f"ERROR: launcher 模块不可用: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"ERROR: launcher 执行失败: {e}", file=sys.stderr)
+        return 1
+
+
 def main():
+    # 检查是否为 launcher 模式 (由 启动.cmd 调用)
+    if "--launcher" in sys.argv:
+        # 移除 --launcher 标志，将剩余参数传给 launcher
+        clean_args = [a for a in sys.argv[1:] if a != "--launcher"]
+        sys.argv = [sys.argv[0]] + clean_args
+        return _run_launcher(clean_args)
+
     parser = argparse.ArgumentParser(
         description="BMC Auto-Capture v0.2.1 — 自动化测试证据采集平台",
     )
