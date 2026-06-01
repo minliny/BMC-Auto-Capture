@@ -2,7 +2,6 @@
 SSH/Telnet executor using Paramiko (pure Python socket — satisfies security policy).
 """
 
-
 from __future__ import annotations
 import json
 import logging
@@ -20,23 +19,7 @@ from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
 from ..out.file_writer import write_text_file, write_log_file
 from ..out.screenshot import render_text_to_image
-
-
-def _resolve_template(tmpl: str, device, task) -> str:
-    """Replace Excel header name variables with actual values."""
-    seq = task.sequence_str or str(task.sequence)
-    return (tmpl
-            .replace("{任务序号}", seq)
-            .replace("{任务名称}", task.task_name)
-            .replace("{任务类型}", task.task_type)
-            .replace("{设备分类}", device.device_group)
-            .replace("{设备名称}", device.device_name)
-            .replace("{带外管理IP}", device.bmc_ip)
-            .replace("{带外管理用户名}", device.bmc_username)
-            .replace("{带外管理密码}", device.bmc_password)
-            .replace("{带内管理IP}", device.inband_ip)
-            .replace("{带内管理用户名}", device.inband_username)
-            .replace("{带内管理密码}", device.inband_password))
+from ..utils.template import resolve_template, check_unreplaced_vars
 
 
 def _resolve_var(template: str, variables: dict) -> str:
@@ -97,7 +80,7 @@ class SSHExecutor(AbstractExecutor):
             result.duration_seconds = result.ended_at - result.started_at
             return result
 
-        # Build output directory
+        # Build output directory using unified resolve_template
         output_dir = self._build_output_dir(output_root, device, task)
         os.makedirs(output_dir, exist_ok=True)
 
@@ -109,6 +92,10 @@ class SSHExecutor(AbstractExecutor):
 
         client = None
         all_output: list[str] = []
+        has_failure = False
+        has_timeout = False
+        failure_reasons: list[str] = []
+
         try:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -199,9 +186,11 @@ class SSHExecutor(AbstractExecutor):
                     except Exception:
                         pass
 
-                    # Check if we hit the hard deadline
-                    if time.time() >= cmd_deadline and not channel.exit_status_ready():
+                    # Check if we hit the hard deadline (timeout)
+                    cmd_timed_out = time.time() >= cmd_deadline and not channel.exit_status_ready()
+                    if cmd_timed_out:
                         out_chunks.append("\n[WARNING] 硬超时 - 已保存部分输出".encode("utf-8"))
+                        has_timeout = True
 
                     out = b"".join(out_chunks).decode("utf-8", errors="replace")
                     err = b"".join(err_chunks).decode("utf-8", errors="replace")
@@ -225,13 +214,19 @@ class SSHExecutor(AbstractExecutor):
                         status="SUCCESS",
                         details=f"output {len(combined)} chars",
                     ))
+
                 except TimeoutError as e:
+                    has_timeout = True
+                    has_failure = True
+                    failure_reasons.append(f"命令超时: {cmd[:50]}... ({self.command_timeout}s)")
                     all_output.append(f"$ {cmd}\n[TIMEOUT] {e}")
                     result.step_results.append(StepResult(
                         step_index=step_index, step_name=step_name,
                         status="TIMEOUT", details=str(e),
                     ))
                 except Exception as e:
+                    has_failure = True
+                    failure_reasons.append(f"命令失败: {cmd[:50]}... ({e})")
                     all_output.append(f"$ {cmd}\n[ERROR] {e}")
                     result.step_results.append(StepResult(
                         step_index=step_index,
@@ -242,8 +237,18 @@ class SSHExecutor(AbstractExecutor):
 
                 step_index += 1
 
-            # File naming from template
-            file_base = _resolve_template(task.image_name_template, device, task)
+            # Determine final execution status based on failures
+            if has_timeout:
+                result.execution_status = "EXEC_PARTIAL"
+                result.execution_failure_reason = f"命令超时 ({len([s for s in result.step_results if s.status == 'TIMEOUT'])} 个命令超时)"
+            elif has_failure:
+                result.execution_status = "EXEC_PARTIAL"
+                result.execution_failure_reason = "; ".join(failure_reasons[:3])  # Limit to 3 reasons
+            else:
+                result.execution_status = "EXEC_SUCCESS"
+
+            # File naming from template using unified resolve_template
+            file_base = resolve_template(task.image_name_template, device, task)
 
             # Write output
             full_output = "\n\n".join(all_output)
@@ -262,8 +267,6 @@ class SSHExecutor(AbstractExecutor):
                 details=f"Terminal output {len(full_output)} chars",
             ))
 
-            result.execution_status = "EXEC_SUCCESS"
-
             # Evaluate evidence checkpoints (non-blocking, after artifacts saved)
             if cmd_spec.get("checkpoints"):
                 import asyncio
@@ -272,6 +275,10 @@ class SSHExecutor(AbstractExecutor):
                                                     result, txt_path, ss_path)
                 )
 
+        except socket.timeout as e:
+            result.execution_status = "EXEC_FAILED"
+            result.execution_failure_reason = f"SSH连接超时 ({self.connect_timeout}s): {e}"
+            logger.error(f"[{device.device_name}] SSH连接超时: {e}")
         except socket.error as e:
             result.execution_status = self._classify_socket_error(e)
             result.execution_failure_reason = str(e)
@@ -297,11 +304,7 @@ class SSHExecutor(AbstractExecutor):
 
         # Generate terminal screenshot for error paths too (partial output)
         if not result.screenshots and output_dir:
-            file_base = (task.image_name_template
-                         .replace("{device_ip}", device.inband_ip)
-                         .replace("{device_name}", device.device_name)
-                         .replace("{task_name}", task.task_name)
-                         .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
+            file_base = resolve_template(task.image_name_template, device, task)
             error_text = f"EXECUTION FAILED\n{'=' * 60}\n"
             error_text += f"Device: {device.device_name}\n"
             error_text += f"Task: {task.task_name}\n"
@@ -313,6 +316,7 @@ class SSHExecutor(AbstractExecutor):
             try:
                 ss_path = render_text_to_image(error_text, output_dir, f"{file_base}.png")
                 result.screenshots = (ss_path,)
+                result.artifact_status = "ARTIFACT_PARTIAL"
             except Exception:
                 pass
 
@@ -321,11 +325,7 @@ class SSHExecutor(AbstractExecutor):
         result.duration_seconds = result.ended_at - result.started_at
 
         # Write task log
-        file_base = (task.image_name_template
-                     .replace("{device_ip}", device.inband_ip or "noip")
-                     .replace("{device_name}", device.device_name)
-                     .replace("{task_name}", task.task_name)
-                     .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
+        file_base = resolve_template(task.image_name_template, device, task)
         log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result))
         result.log_file = log_path
 
@@ -443,7 +443,12 @@ class SSHExecutor(AbstractExecutor):
             result.runtime_context = json.dumps(ctx.variables, ensure_ascii=False)
 
     def _build_output_dir(self, root: str, device, task) -> str:
-        return os.path.join(root, _resolve_template(task.output_dir_template, device, task))
+        tmpl = task.output_dir_template
+        # Check for unreplaced variables
+        unreplaced = check_unreplaced_vars(tmpl)
+        if unreplaced:
+            logger.warning(f"SSH output_dir_template 残留未替换变量: {unreplaced} in '{tmpl}'")
+        return os.path.join(root, resolve_template(tmpl, device, task))
 
     def _classify_socket_error(self, e: socket.error) -> str:
         errno = e.errno if hasattr(e, "errno") else 0

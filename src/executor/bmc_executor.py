@@ -29,6 +29,7 @@ from ..rules.condition_evaluator import (
     ArtifactContext, ConditionResult, ConditionEvaluationResult,
 )
 from ..out.file_writer import write_html_file, write_log_file
+from ..utils.template import resolve_template, check_unreplaced_vars
 
 logger = logging.getLogger("bmc_auto_capture.bmc")
 
@@ -96,41 +97,6 @@ def _checkpoint_rollup_from_condition(eval_result: ConditionEvaluationResult) ->
         "SKIP": "CHECK_SKIP",
     }
     return mapping.get(eval_result.rollup(), "CHECK_SKIP")
-
-
-def _resolve_template(tmpl: str, device, task) -> str:
-    """Replace template variables with actual values.
-
-    Supports both Chinese (Excel header) and English (legacy default) names.
-    Unrecognized variables are left as-is.
-    """
-    seq = task.sequence_str or str(task.sequence)
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    return (tmpl
-            # Chinese (Excel header names)
-            .replace("{任务序号}", seq)
-            .replace("{任务名称}", task.task_name)
-            .replace("{任务类型}", task.task_type)
-            .replace("{设备分类}", device.device_group)
-            .replace("{设备名称}", device.device_name)
-            .replace("{带外管理IP}", device.bmc_ip)
-            .replace("{带外管理用户名}", device.bmc_username)
-            .replace("{带外管理密码}", device.bmc_password)
-            .replace("{带内管理IP}", device.inband_ip)
-            .replace("{带内管理用户名}", device.inband_username)
-            .replace("{带内管理密码}", device.inband_password)
-            .replace("{设备标签}", getattr(device, "tags", ""))
-            # English (legacy default / backward compat)
-            .replace("{task_sequence}", seq)
-            .replace("{task_name}", task.task_name)
-            .replace("{task_type}", task.task_type)
-            .replace("{device_group}", device.device_group)
-            .replace("{device_name}", device.device_name)
-            .replace("{device_ip}", device.bmc_ip)
-            .replace("{bmc_ip}", device.bmc_ip)
-            .replace("{step}", "final")
-            .replace("{timestamp}", ts)
-            .replace("{tags}", getattr(device, "tags", "")))
 
 
 class BMCLoginError(Exception):
@@ -288,7 +254,7 @@ class BMCExecutor(AbstractExecutor):
         result.ended_at = time.time()
         result.duration_seconds = result.ended_at - result.started_at
 
-        file_base = _resolve_template(task.image_name_template, device, task)
+        file_base = resolve_template(task.image_name_template, device, task)
         log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result))
         result.log_file = log_path
 
@@ -629,7 +595,7 @@ class BMCExecutor(AbstractExecutor):
                 )
 
         # File naming from template
-        file_base = _resolve_template(task.image_name_template, device, task)
+        file_base = resolve_template(task.image_name_template, device, task)
 
         # Full-page screenshot
         ss_path = os.path.join(output_dir, f"{file_base}.png")
@@ -895,7 +861,7 @@ class BMCExecutor(AbstractExecutor):
                   → final_capture (guaranteed) → rules → checkpoints.
         """
         flow = task.to_capture_flow()
-        file_base = _resolve_template(task.image_name_template, device, task)
+        file_base = resolve_template(task.image_name_template, device, task)
 
         # --- Step 1: goto target_url ---
         target_url = self._resolve_url(flow.get("target_url", ""), bmc_ip)
@@ -1160,7 +1126,11 @@ class BMCExecutor(AbstractExecutor):
             )
 
     def _build_output_dir(self, root: str, device, task) -> str:
-        return os.path.join(root, _resolve_template(task.output_dir_template, device, task))
+        tmpl = task.output_dir_template
+        unreplaced = check_unreplaced_vars(tmpl)
+        if unreplaced:
+            logger.warning(f"BMC output_dir_template 残留未替换变量: {unreplaced} in '{tmpl}'")
+        return os.path.join(root, resolve_template(tmpl, device, task))
 
     def _build_log(self, result: ExecutionResult) -> str:
         lines = [
