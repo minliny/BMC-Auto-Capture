@@ -237,7 +237,7 @@
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "display interface transceiver",
-      "timeout_seconds": 60,
+      "timeout_seconds": 900,
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",

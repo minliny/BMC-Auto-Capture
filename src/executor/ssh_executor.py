@@ -317,7 +317,7 @@ class SSHExecutor(AbstractExecutor):
                 step_name="ssh_terminal_screenshot",
                 status="SUCCESS",
                 screenshot=ss_path,
-                details=f"Terminal output {len(full_output)} chars",
+                details=f"Terminal output {len(cleaned_output)} chars",
             ))
 
             # Evaluate evidence checkpoints (non-blocking, after artifacts saved)
@@ -496,12 +496,13 @@ class SSHExecutor(AbstractExecutor):
             result.runtime_context = json.dumps(ctx.variables, ensure_ascii=False)
 
     def _build_output_dir(self, root: str, device, task) -> str:
-        tmpl = task.output_dir_template
         # Check for unreplaced variables
-        unreplaced = check_unreplaced_vars(tmpl)
+        tmpl = task.output_dir_template
+        resolved = resolve_template(tmpl, device, task)
+        unreplaced = check_unreplaced_vars(resolved)
         if unreplaced:
             logger.warning(f"SSH output_dir_template 残留未替换变量: {unreplaced} in '{tmpl}'")
-        return os.path.join(root, resolve_template(tmpl, device, task))
+        return os.path.join(root, resolved)
 
     def _classify_socket_error(self, e: socket.error) -> str:
         errno = e.errno if hasattr(e, "errno") else 0

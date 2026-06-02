@@ -864,8 +864,9 @@ class BMCExecutor(AbstractExecutor):
         file_base = resolve_template(task.image_name_template, device, task)
 
         # --- Step 1: goto target_url ---
-        target_url = self._resolve_url(flow.get("target_url", ""), bmc_ip)
-        if target_url:
+        raw_target = flow.get("target_url", "")
+        if raw_target:
+            target_url = self._resolve_url(raw_target, bmc_ip)
             self._validate_goto_url(target_url, bmc_ip)
             try:
                 await page.goto(target_url, wait_until="domcontentloaded",
@@ -875,6 +876,21 @@ class BMCExecutor(AbstractExecutor):
                 result.ready_status = "READY_NOT_READY"
                 result.ready_failure_reason = f"goto target_url failed: {e}"
                 # Do NOT return — continue to final_capture for debugging
+        else:
+            # No target_url from either command_or_url (BMC_URL) or actions_json goto (BMC_ACTIONS).
+            execution_mode = getattr(task, "execution_mode", "unknown")
+            logger.warning(
+                "[%s] capture flow has no target_url — mode=%s, cmd_or_url=%r, actions_json=%r",
+                device.device_name, execution_mode,
+                getattr(task, "command_or_url", ""),
+                getattr(task, "actions_json", "")[:120],
+            )
+            result.ready_status = "READY_NOT_READY"
+            if not result.ready_failure_reason:
+                result.ready_failure_reason = (
+                    f"no target URL configured: execution_mode={execution_mode}, "
+                    f"command_or_url is empty and actions_json has no goto"
+                )
 
         await self._dismiss_all_blockers(page)
 
@@ -1102,7 +1118,7 @@ class BMCExecutor(AbstractExecutor):
     def _resolve_url(self, raw: str, bmc_ip: str) -> str:
         raw = raw.strip()
         if not raw:
-            # For BMC_ACTIONS tasks with no URL, use the BMC root
+            # Base URL for login / root access — valid for login stage, not for capture target.
             return f"https://{bmc_ip}"
         raw = raw.replace("{带外管理IP}", bmc_ip)
         raw = raw.replace("{bmc_ip}", bmc_ip)
@@ -1127,10 +1143,11 @@ class BMCExecutor(AbstractExecutor):
 
     def _build_output_dir(self, root: str, device, task) -> str:
         tmpl = task.output_dir_template
-        unreplaced = check_unreplaced_vars(tmpl)
+        resolved = resolve_template(tmpl, device, task)
+        unreplaced = check_unreplaced_vars(resolved)
         if unreplaced:
             logger.warning(f"BMC output_dir_template 残留未替换变量: {unreplaced} in '{tmpl}'")
-        return os.path.join(root, resolve_template(tmpl, device, task))
+        return os.path.join(root, resolved)
 
     def _build_log(self, result: ExecutionResult) -> str:
         lines = [
