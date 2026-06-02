@@ -28,7 +28,7 @@ jobs:
       - name: Build PyInstaller (runtime only, no src/config)
         run: |
           python -m PyInstaller `
-            --onedir --name bmc-auto-capture `
+            --onedir --name bmc-engine `
             --hidden-import paramiko `
             --hidden-import playwright `
             --hidden-import openpyxl `
@@ -42,8 +42,6 @@ jobs:
             --hidden-import pydantic `
             --hidden-import aiofiles `
             --hidden-import python_multipart `
-            --hidden-import src.cli `
-            --hidden-import src.cli.launcher `
             --exclude-module tkinter `
             --exclude-module matplotlib `
             --exclude-module numpy `
@@ -55,150 +53,88 @@ jobs:
       - name: Copy Chromium into dist
         shell: cmd
         run: |
-          if not exist dist\bmc-auto-capture\playwright_browsers mkdir dist\bmc-auto-capture\playwright_browsers
+          if not exist dist\bmc-engine\playwright_browsers mkdir dist\bmc-engine\playwright_browsers
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\chromium-*") do (
-            robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+            robocopy "%%i" "dist\bmc-engine\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
             if %%ERRORLEVEL%% LEQ 1 (echo   OK) else (exit /b %%ERRORLEVEL%%)
           )
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\chromium_headless_shell-*") do (
-            robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+            robocopy "%%i" "dist\bmc-engine\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
             if %%ERRORLEVEL%% LEQ 1 (echo   OK) else (exit /b %%ERRORLEVEL%%)
           )
           for /d %%i in ("%USERPROFILE%\AppData\Local\ms-playwright\ffmpeg-*") do (
-            robocopy "%%i" "dist\bmc-auto-capture\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
+            robocopy "%%i" "dist\bmc-engine\playwright_browsers\%%~nxi" /E /NFL /NDL /NJH /NJS /nc /ns /np
             if %%ERRORLEVEL%% LEQ 1 (echo   OK) else (exit /b %%ERRORLEVEL%%)
           )
           exit /b 0
 
-      # ── Copy app files and launcher files ──────────────────
-      - name: Copy app and launcher files
+      # ── Smoke test: verify the built exe can start ─────────
+      - name: Prepare smoke test layout
         shell: cmd
         run: |
-          REM Copy src/ (包含 cli/launcher.py)
-          xcopy /E /I /Y src dist\bmc-auto-capture\src >nul
-          REM Copy config/
-          xcopy /E /I /Y config dist\bmc-auto-capture\config >nul
-          REM Copy examples/
-          xcopy /E /I /Y examples dist\bmc-auto-capture\examples >nul
-          REM Copy docs/LAUNCHER_USAGE.md
-          copy docs\LAUNCHER_USAGE.md dist\bmc-auto-capture\ >nul
-          REM Copy tasks.json
-          copy tasks.json dist\bmc-auto-capture\ >nul
-          REM Copy 启动.cmd
-          copy 启动.cmd dist\bmc-auto-capture\ >nul
-          echo App and launcher files copied
+          REM Simulate user directory: runtime/ + app/
+          mkdir dist\staging\runtime
+          mkdir dist\staging\app
+          REM Move PyInstaller output INTO runtime/ (bmc-engine.exe at runtime\)
+          xcopy /E /I /Y dist\bmc-engine dist\staging\runtime >nul
+          rd /s /q dist\bmc-engine
+          REM Copy app files
+          xcopy /E /I /Y src dist\staging\app\src >nul
+          xcopy /E /I /Y config dist\staging\app\config >nul
+          xcopy /E /I /Y examples dist\staging\app\examples >nul
+          copy tasks.json dist\staging\app\ >nul
+          echo Smoke test layout ready
 
-      # ── Smoke test: verify the built exe can start ─────────
       - name: Smoke test — engine help
         shell: cmd
         run: |
-          cd dist\bmc-auto-capture
-          bmc-auto-capture.exe --help
-          if %ERRORLEVEL% NEQ 0 exit /b 1
-
-      - name: Smoke test — launcher help
-        shell: cmd
-        run: |
-          cd dist\bmc-auto-capture
-          bmc-auto-capture.exe --launcher --help
+          cd dist\staging
+          runtime\bmc-engine.exe --help
           if %ERRORLEVEL% NEQ 0 exit /b 1
 
       - name: Smoke test — preflight with bundled Excel
         shell: cmd
         run: |
-          cd dist\bmc-auto-capture
-          bmc-auto-capture.exe --excel examples\task_template.xlsx --preflight-only
+          cd dist\staging
+          runtime\bmc-engine.exe --app-dir app --excel app\examples\task_template.xlsx --preflight-only
           if %ERRORLEVEL% NEQ 0 exit /b 1
 
-      # ── Package Windows ─────────────────────────────────────
-      - name: Package Windows
+      # ── Package ──────────────────────────────────────────
+      - name: Package runtime
         run: |
-          cd dist
-          7z a bmc-auto-capture-win-x64.7z bmc-auto-capture/
+          cd dist\staging
+          7z a ..\bmc-runtime-${{ github.ref_name }}-win-x64.7z runtime
 
-      - name: Upload Windows artifact
+      - name: Upload runtime artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bmc-auto-capture-win-x64
-          path: dist/bmc-auto-capture-win-x64.7z
+          name: runtime-win-x64
+          path: dist/bmc-runtime-${{ github.ref_name }}-win-x64.7z
           if-no-files-found: error
 
-  # ── macOS Build ──────────────────────────────────────────
-  build-macos:
-    runs-on: macos-latest
+  # ── App package (cross-platform, lightweight) ────────────
+  build-app:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
+      - name: Package app
         run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Install Playwright Chromium
-        run: python -m playwright install chromium
-
-      - name: Build PyInstaller
-        run: |
-          python -m PyInstaller \
-            --onedir --name bmc-auto-capture \
-            --hidden-import paramiko \
-            --hidden-import playwright \
-            --hidden-import openpyxl \
-            --hidden-import psutil \
-            --hidden-import yaml \
-            --hidden-import PIL \
-            --hidden-import textual \
-            --hidden-import rich \
-            --hidden-import fastapi \
-            --hidden-import uvicorn \
-            --hidden-import pydantic \
-            --hidden-import aiofiles \
-            --hidden-import python_multipart \
-            --hidden-import src.cli \
-            --hidden-import src.cli.launcher \
-            --exclude-module tkinter \
-            --exclude-module matplotlib \
-            --exclude-module numpy \
-            --exclude-module pandas \
-            --console \
-            run.py
-
-      - name: Copy Chromium into dist
-        run: |
-          mkdir -p dist/bmc-auto-capture/playwright_browsers
-          cp -r ~/Library/Caches/ms-playwright/chromium-* dist/bmc-auto-capture/playwright_browsers/ 2>/dev/null || true
-          cp -r ~/Library/Caches/ms-playwright/chromium_headless_shell-* dist/bmc-auto-capture/playwright_browsers/ 2>/dev/null || true
-          cp -r ~/Library/Caches/ms-playwright/ffmpeg-* dist/bmc-auto-capture/playwright_browsers/ 2>/dev/null || true
-
-      - name: Copy app and launcher files
-        run: |
-          cp -r src/ dist/bmc-auto-capture/src/
-          cp -r config/ dist/bmc-auto-capture/config/
-          cp -r examples/ dist/bmc-auto-capture/examples/
-          cp -r docs/LAUNCHER_USAGE.md dist/bmc-auto-capture/ 2>/dev/null || true
-          cp tasks.json dist/bmc-auto-capture/
-          cp 启动.cmd dist/bmc-auto-capture/ 2>/dev/null || true
-
-      - name: Package macOS
-        run: |
+          mkdir -p dist/app
+          cp -r src/ config/ examples/ tasks.json README.md dist/app/
+          cp scripts/start.bat scripts/start.ps1 dist/
           cd dist
-          tar -czf bmc-auto-capture-macos-arm64.tar.gz bmc-auto-capture/
+          zip -r ../bmc-app-${{ github.ref_name }}.zip app/ start.bat start.ps1 -x "*.pyc" "__pycache__/*"
 
-      - name: Upload macOS artifact
+      - name: Upload app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bmc-auto-capture-macos-arm64
-          path: dist/bmc-auto-capture-macos-arm64.tar.gz
-          if-no-files-found: error
+          name: app
+          path: bmc-app-${{ github.ref_name }}.zip
 
   # ── Release ──────────────────────────────────────────────
   release:
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -206,7 +142,7 @@ jobs:
       - uses: actions/download-artifact@v4
 
       - name: List downloaded artifacts
-        run: find . -type f \( -name "*.7z" -o -name "*.tar.gz" \) | sort
+        run: find . -type f \( -name "*.7z" -o -name "*.zip" \) | sort
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
@@ -215,5 +151,5 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'RC') }}
           files: |
-            bmc-auto-capture-win-x64/*
-            bmc-auto-capture-macos-arm64/*
+            runtime-win-x64/*
+            app/*
