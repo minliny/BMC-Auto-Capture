@@ -242,7 +242,6 @@ class SSHExecutor(AbstractExecutor):
                     # Check if we hit the hard deadline (timeout)
                     cmd_timed_out = time.time() >= cmd_deadline and not channel.exit_status_ready()
                     if cmd_timed_out:
-                        out_chunks.append("\n[WARNING] 硬超时 - 已保存部分输出".encode("utf-8"))
                         has_timeout = True
 
                     out = b"".join(out_chunks).decode("utf-8", errors="replace")
@@ -250,10 +249,10 @@ class SSHExecutor(AbstractExecutor):
 
                     combined = out
                     if err:
-                        combined += f"\n[STDERR]\n{err}"
+                        combined += f"\n{err}"
 
                     cmd_outputs[cmd_name] = combined
-                    all_output.append(f"$ {cmd}\n{combined}")
+                    all_output.append(combined)
 
                     # Run extractors after this command if any are defined
                     if cmd_spec.get("extractors"):
@@ -272,7 +271,7 @@ class SSHExecutor(AbstractExecutor):
                     has_timeout = True
                     has_failure = True
                     failure_reasons.append(f"命令超时: {cmd[:50]}... ({self.command_timeout}s)")
-                    all_output.append(f"$ {cmd}\n[TIMEOUT] {e}")
+                    # Do NOT inject timeout markers into final evidence — keep only real output.
                     result.step_results.append(StepResult(
                         step_index=step_index, step_name=step_name,
                         status="TIMEOUT", details=str(e),
@@ -280,7 +279,7 @@ class SSHExecutor(AbstractExecutor):
                 except Exception as e:
                     has_failure = True
                     failure_reasons.append(f"命令失败: {cmd[:50]}... ({e})")
-                    all_output.append(f"$ {cmd}\n[ERROR] {e}")
+                    # Do NOT inject error markers into final evidence — keep only real output.
                     result.step_results.append(StepResult(
                         step_index=step_index,
                         step_name=step_name,
@@ -358,20 +357,13 @@ class SSHExecutor(AbstractExecutor):
         # Generate terminal screenshot for error paths too (partial output)
         if not result.screenshots and output_dir:
             file_base = resolve_template(task.image_name_template, device, task)
-            error_text = f"EXECUTION FAILED\n{'=' * 60}\n"
-            error_text += f"Device: {device.device_name}\n"
-            error_text += f"Task: {task.task_name}\n"
-            error_text += f"Status: {result.execution_status}\n"
-            error_text += f"Reason: {result.execution_failure_reason}\n"
-            if all_output:
-                error_text += f"\n{'─' * 60}\nPartial output:\n"
-                error_text += "\n\n".join(all_output[-3:])  # Last 3 commands
-            try:
-                ss_path = render_text_to_image(error_text, output_dir, f"{file_base}.png")
-                result.screenshots = (ss_path,)
-                result.artifact_status = "ARTIFACT_PARTIAL"
-            except Exception:
-                pass
+            # Error info goes to log only — do NOT generate polluted evidence PNG/TXT.
+            logger.warning(
+                "[%s] SSH failed — no evidence generated. Status=%s Reason=%s",
+                device.device_name, result.execution_status, result.execution_failure_reason,
+            )
+            result.artifact_status = "ARTIFACT_FAILED"
+            result.artifact_failure_reason = result.execution_failure_reason or "SSH execution failed"
 
         result.output_dir = output_dir
         result.ended_at = time.time()
