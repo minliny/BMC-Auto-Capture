@@ -31,8 +31,13 @@ class AppConfig:
     browser_max_age_seconds: int = 1800
     browser_headless: bool = True
 
-    # --- Preflight ---
+    # --- Timeouts ---
     tcp_connect_timeout: float = 5.0
+    ssh_command_timeout: float = 60.0
+    ssh_idle_timeout: float = 5.0
+    bmc_page_timeout: float = 60.0
+
+    # --- Preflight ---
     preflight_enabled: bool = True
     route_guard_enabled: bool = True
     route_guard_check_interval: float = 30.0
@@ -43,6 +48,40 @@ class AppConfig:
     # --- API ---
     api_host: str = "0.0.0.0"
     api_port: int = 8080
+
+    def apply_cli_overrides(
+        self,
+        *,
+        output_root: str | None = None,
+        max_bmc_workers: int | None = None,
+        max_ssh_workers: int | None = None,
+        ssh_command_timeout: float | None = None,
+        ssh_idle_timeout: float | None = None,
+        bmc_page_timeout: float | None = None,
+    ) -> list[str]:
+        """Apply CLI overrides on top of YAML config.
+        Returns list of human-readable change descriptions.
+        """
+        changes: list[str] = []
+        if output_root is not None:
+            self.output_root = output_root
+            changes.append(f"output_root = {output_root} (CLI)")
+        if max_bmc_workers is not None:
+            self.max_bmc_workers = max_bmc_workers
+            changes.append(f"max_bmc_workers = {max_bmc_workers} (CLI)")
+        if max_ssh_workers is not None:
+            self.max_ssh_workers = max_ssh_workers
+            changes.append(f"max_ssh_workers = {max_ssh_workers} (CLI)")
+        if ssh_command_timeout is not None:
+            self.ssh_command_timeout = ssh_command_timeout
+            changes.append(f"ssh_command_timeout = {ssh_command_timeout} (CLI)")
+        if ssh_idle_timeout is not None:
+            self.ssh_idle_timeout = ssh_idle_timeout
+            changes.append(f"ssh_idle_timeout = {ssh_idle_timeout} (CLI)")
+        if bmc_page_timeout is not None:
+            self.bmc_page_timeout = bmc_page_timeout
+            changes.append(f"bmc_page_timeout = {bmc_page_timeout} (CLI)")
+        return changes
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "AppConfig":
@@ -64,6 +103,9 @@ class AppConfig:
             browser_max_age_seconds=int(data.get("browser_max_age_seconds", 1800)),
             browser_headless=bool(data.get("browser_headless", True)),
             tcp_connect_timeout=float(data.get("tcp_connect_timeout", 5.0)),
+            ssh_command_timeout=float(data.get("ssh_command_timeout", 60.0)),
+            ssh_idle_timeout=float(data.get("ssh_idle_timeout", 5.0)),
+            bmc_page_timeout=float(data.get("bmc_page_timeout", 60.0)),
             preflight_enabled=bool(data.get("preflight_enabled", True)),
             route_guard_enabled=bool(data.get("route_guard_enabled", True)),
             route_guard_check_interval=float(data.get("route_guard_check_interval", 30.0)),

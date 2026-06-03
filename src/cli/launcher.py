@@ -408,9 +408,18 @@ def run_execution(
         "--excel", excel_path,
     ])
 
-    # run.py 不支持 --output 和 --concurrency，使用 --app-dir 和环境变量或注释这些参数
-    # 如果需要自定义输出目录，可以在 app.yaml 中配置
-    # 并发控制由 app.yaml 中的 max_bmc_workers/max_ssh_workers 控制
+    # Pass CLI overrides to run.py
+    if output_dir is not None:
+        cmd.extend(["--output", str(output_dir)])
+    if concurrency and concurrency > 1:
+        # --concurrency deprecated: map to max_bmc_workers if no explicit worker args given
+        if args.max_bmc_workers is None and args.max_ssh_workers is None:
+            cmd.extend(["--max-bmc-workers", str(concurrency)])
+            log(f"[兼容] --concurrency {concurrency} → 映射为 --max-bmc-workers {concurrency}", "WARN")
+    if args.max_bmc_workers is not None:
+        cmd.extend(["--max-bmc-workers", str(args.max_bmc_workers)])
+    if args.max_ssh_workers is not None:
+        cmd.extend(["--max-ssh-workers", str(args.max_ssh_workers)])
 
     if precheck_only:
         cmd.append("--preflight-only")
@@ -505,7 +514,9 @@ def main():
     parser = argparse.ArgumentParser(description="BMC Auto Capture - 统一启动入口")
     parser.add_argument("--excel", "-e", help="Excel 文件路径")
     parser.add_argument("--output", "-o", help="输出目录")
-    parser.add_argument("--concurrency", "-c", type=int, default=1, help="并发数 (默认: 1)")
+    parser.add_argument("--concurrency", "-c", type=int, default=1, help="(已弃用) 并发数 — 建议使用 --max-bmc-workers / --max-ssh-workers")
+    parser.add_argument("--max-bmc-workers", type=int, default=None, help="BMC 最大并发数")
+    parser.add_argument("--max-ssh-workers", type=int, default=None, help="SSH 最大并发数")
     parser.add_argument("--strict", action="store_true", help="严格模式 (网络检测失败则中止)")
     parser.add_argument("--precheck-only", action="store_true", help="仅预检查模式")
     parser.add_argument("--yes", "-y", action="store_true", help="跳过确认直接执行")
@@ -573,8 +584,14 @@ def main():
     concurrency = args.concurrency
     if concurrency < 1:
         concurrency = 1
-    log(f"并发数: {concurrency}", "INFO")
-    log("提示: 首次验证建议 1，大规模需谨慎", "WARN")
+    log(f"并发数 (--concurrency, 已弃用): {concurrency}", "WARN")
+    if args.max_bmc_workers is not None:
+        log(f"BMC 最大并发用户: {args.max_bmc_workers}", "INFO")
+    if args.max_ssh_workers is not None:
+        log(f"SSH 最大并发用户: {args.max_ssh_workers}", "INFO")
+    if args.max_bmc_workers is None and args.max_ssh_workers is None:
+        log(f"未指定 --max-bmc-workers / --max-ssh-workers，将使用 YAML config 默认值", "INFO")
+    log("提示: 大规模运行建议 --max-bmc-workers 4 --max-ssh-workers 20", "INFO")
 
     # 七、执行计划确认
     summarize_plan(excel_summary, output_dir, concurrency, risks)

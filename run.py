@@ -43,9 +43,15 @@ def _setup_browser_path():
 
     # 1. Search bundled browsers
     search_dirs = [
-        _exe_dir() / "playwright_browsers",           # runtime/playwright_browsers/
+        _exe_dir() / "playwright_browsers",           # runtime/playwright_browsers/ (frozen: next to exe)
         _exe_dir().parent / "playwright_browsers",    # ../playwright_browsers/ (old layout)
     ]
+
+    # Source-run fallback: project_root/runtime/playwright_browsers
+    source_runtime = _exe_dir() / ".." / "runtime" / "playwright_browsers"
+    if source_runtime.is_dir():
+        search_dirs.insert(0, source_runtime)
+
     for d in search_dirs:
         if d.is_dir():
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(d)
@@ -132,8 +138,14 @@ def main():
     )
     parser.add_argument("--excel", "-e", default=None, help="Path to Excel V2 config (.xlsx)")
     parser.add_argument("--config", "-c", default=None, help="Path to YAML config")
+    parser.add_argument("--output", "-o", default=None, help="Output root directory (overrides YAML output_root)")
     parser.add_argument("--app-dir", default=None, help="App directory containing src/, config/, tasks.json")
     parser.add_argument("--mode", "-m", choices=["sequential", "full"], default="sequential")
+    parser.add_argument("--max-bmc-workers", type=int, default=None, help="Max BMC worker threads (overrides YAML)")
+    parser.add_argument("--max-ssh-workers", type=int, default=None, help="Max SSH worker threads (overrides YAML)")
+    parser.add_argument("--ssh-command-timeout", type=float, default=None, help="SSH single-command timeout seconds (overrides YAML)")
+    parser.add_argument("--ssh-idle-timeout", type=float, default=None, help="SSH idle read timeout seconds (overrides YAML)")
+    parser.add_argument("--bmc-page-timeout", type=float, default=None, help="BMC page load/selector timeout seconds (overrides YAML)")
     parser.add_argument("--preflight-only", action="store_true", help="Connectivity preflight only, no execution")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
@@ -163,6 +175,16 @@ def main():
         print(f"WARNING: Config not found at {config_path}, using defaults")
         config = AppConfig()
 
+    # --- Apply CLI overrides ---
+    cli_changes = config.apply_cli_overrides(
+        output_root=args.output,
+        max_bmc_workers=args.max_bmc_workers,
+        max_ssh_workers=args.max_ssh_workers,
+        ssh_command_timeout=args.ssh_command_timeout,
+        ssh_idle_timeout=args.ssh_idle_timeout,
+        bmc_page_timeout=args.bmc_page_timeout,
+    )
+
     # Logging
     level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
@@ -170,6 +192,24 @@ def main():
         format="%(asctime)s [%(levelname)-5s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    # --- Configuration summary ---
+    print("─" * 60)
+    print("  Configuration")
+    print("─" * 60)
+    print(f"  config file   : {config_path}")
+    print(f"  output_root   : {config.output_root}")
+    print(f"  mode          : {args.mode}")
+    print(f"  max_bmc_workers: {config.max_bmc_workers}")
+    print(f"  max_ssh_workers: {config.max_ssh_workers}")
+    print(f"  ssh_command_timeout: {config.ssh_command_timeout}s")
+    print(f"  ssh_idle_timeout   : {config.ssh_idle_timeout}s")
+    print(f"  bmc_page_timeout   : {config.bmc_page_timeout}s")
+    if cli_changes:
+        print(f"  CLI overrides ({len(cli_changes)}):")
+        for c in cli_changes:
+            print(f"    - {c}")
+    print("─" * 60)
 
     # Auto-find Excel
     excel_path = None

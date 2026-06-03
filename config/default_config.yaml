@@ -23,6 +23,13 @@ browser_headless: true
 
 # --- Connectivity preflight ---
 tcp_connect_timeout: 5.0
+
+# --- Per-protocol timeouts ---
+ssh_command_timeout: 60.0
+ssh_idle_timeout: 5.0
+bmc_page_timeout: 60.0
+
+# --- Preflight ---
 preflight_enabled: true
 route_guard_enabled: true
 route_guard_check_interval: 30.0

@@ -528,7 +528,12 @@ class SSHExecutor(AbstractExecutor):
         for disable_cmd in disable_commands:
             try:
                 logger.info(f"尝试禁用分页: {disable_cmd}")
-                stdin, stdout, stderr = client.exec_command(disable_cmd, timeout=2)
+                # P0-2 FIX: Use get_pty=False for disable-paging commands.
+                # Huawei VRP devices close the channel/transport immediately when
+                # screen-length 0 temporary is executed with a PTY, causing
+                # "EOF sent (0)" / "Ignoring message for dead channel" and
+                # rendering the entire SSH session inactive.
+                stdin, stdout, stderr = client.exec_command(disable_cmd, timeout=2, get_pty=False)
                 # 读取响应（不阻塞）
                 start = time.time()
                 response = b""
@@ -538,6 +543,15 @@ class SSHExecutor(AbstractExecutor):
                     else:
                         time.sleep(0.1)
                 resp_text = response.decode('utf-8', errors='replace').lower()
+                # Drain stdout/stderr completely to prevent channel leak
+                try:
+                    _ = stdout.read()
+                except Exception:
+                    pass
+                try:
+                    _ = stderr.read()
+                except Exception:
+                    pass
                 if 'error' not in resp_text and 'invalid' not in resp_text and 'unknown' not in resp_text:
                     logger.info(f"分页已禁用: {disable_cmd}")
                     return True
