@@ -31,55 +31,84 @@ def _exe_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _is_playwright_browsers_dir(d: Path) -> bool:
+    """检查目录是否实际包含 Playwright 浏览器文件。
+
+    有效目录必须包含至少一个 chromium-* / chrome-win / msedge-* / firefox-* / webkit-* 子目录。
+    仅存在空 ms-playwright 目录不算有效。
+    """
+    if not d.is_dir():
+        return False
+    try:
+        for child in d.iterdir():
+            if child.is_dir():
+                name = child.name.lower()
+                if any(name.startswith(prefix) for prefix in (
+                    "chromium-", "chrome-win", "msedge-", "firefox-", "webkit-",
+                )):
+                    return True
+    except (OSError, PermissionError):
+        return False
+    return False
+
+
 def _setup_browser_path():
     """Set PLAYWRIGHT_BROWSERS_PATH.
 
     Priority:
-    1. Bundled browsers — next to exe, or one level up
-    2. System ms-playwright cache
-    3. If all fail, UNSET stale env var so Playwright gives a clear error
+    1. runtime/playwright_browsers/ under exe dir (project-root runtime)
+    2. ../runtime/playwright_browsers/ (app/run.py layout)
+    3. playwright_browsers/ next to exe (flat frozen layout)
+    4. ../playwright_browsers/ (old frozen layout)
+    5. PLAYWRIGHT_BROWSERS_PATH env var (if already set AND valid)
+    6. System ms-playwright cache (must actually contain browser files)
+    7. If all fail, UNSET stale env var so Playwright gives a clear error
     """
     _print = print  # Use builtin print (logging may not be set up yet)
 
-    # 1. Search bundled browsers
+    # 1. Search bundled browsers — ordered by priority, all verified
     search_dirs = [
-        _exe_dir() / "playwright_browsers",           # runtime/playwright_browsers/ (frozen: next to exe)
-        _exe_dir().parent / "playwright_browsers",    # ../playwright_browsers/ (old layout)
+        _exe_dir() / "runtime" / "playwright_browsers",        # project_root/runtime/playwright_browsers/
+        _exe_dir().parent / "runtime" / "playwright_browsers", # app/run.py → ../runtime/playwright_browsers/
+        _exe_dir() / "playwright_browsers",                    # frozen: next to exe
+        _exe_dir().parent / "playwright_browsers",             # frozen: one level up
     ]
 
-    # Source-run fallback: project_root/runtime/playwright_browsers
-    source_runtime = _exe_dir() / ".." / "runtime" / "playwright_browsers"
-    if source_runtime.is_dir():
-        search_dirs.insert(0, source_runtime)
-
     for d in search_dirs:
-        if d.is_dir():
-            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(d)
-            _print(f"[browser] Using bundled: {d}")
+        if _is_playwright_browsers_dir(d):
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(d.resolve())
+            _print(f"[browser] Using bundled: {d.resolve()}")
             return
 
-    # 2. System cache
+    # 2. Existing env var — only if the path actually contains browsers
+    env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")
+    if env_path:
+        ep = Path(env_path)
+        if _is_playwright_browsers_dir(ep):
+            _print(f"[browser] Using env var: {ep.resolve()}")
+            return
+        else:
+            _print(f"[browser] WARNING: PLAYWRIGHT_BROWSERS_PATH={env_path} exists but has no browser files")
+
+    # 3. System ms-playwright cache — must contain actual browser files, not just an empty dir
     for cache in [
         Path.home() / "AppData" / "Local" / "ms-playwright",
         Path.home() / "Library" / "Caches" / "ms-playwright",
         Path.home() / ".cache" / "ms-playwright",
     ]:
-        if cache.is_dir():
-            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(cache)
-            _print(f"[browser] Using system cache: {cache}")
+        if _is_playwright_browsers_dir(cache):
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(cache.resolve())
+            _print(f"[browser] Using system cache: {cache.resolve()}")
             return
+        elif cache.is_dir():
+            _print(f"[browser] WARNING: system cache exists but has no browser files: {cache}")
 
-    # 3. Existing env var — only if the path actually exists
-    env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")
-    if env_path and Path(env_path).is_dir():
-        _print(f"[browser] Using env var: {env_path}")
-        return
-
-    # 4. Stale/broken env var — unset it so Playwright fails with a clear message
+    # 4. Last resort: if env var was set but invalid, unset it
     if env_path:
-        _print(f"[browser] WARNING: PLAYWRIGHT_BROWSERS_PATH={env_path} does not exist!")
-        _print("[browser] Unsetting it. Install Chromium: python -m playwright install chromium")
+        _print(f"[browser] WARNING: Unsetting stale PLAYWRIGHT_BROWSERS_PATH={env_path}")
         del os.environ["PLAYWRIGHT_BROWSERS_PATH"]
+
+    _print("[browser] WARNING: No Playwright browsers found. Install: python -m playwright install chromium")
 
 
 def _setup_encoding():
