@@ -6,12 +6,13 @@ from pathlib import Path
 _ROOT = Path(os.path.abspath(os.path.dirname(SPECPATH))).parent
 
 a = Analysis(
-    [str(_ROOT / "src" / "__main__.py")],
-    pathex=[str(_ROOT / "src")],
+    [str(_ROOT / "run.py")],
+    pathex=[str(_ROOT)],
     binaries=[],
     datas=[
         (str(_ROOT / "config" / "default_config.yaml"), "config"),
         (str(_ROOT / "config" / "logging.yaml"), "config"),
+        (str(_ROOT / "src"), "src"),
     ],
     hiddenimports=[
         "paramiko",

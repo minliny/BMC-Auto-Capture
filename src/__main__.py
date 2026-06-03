@@ -43,29 +43,20 @@ def main():
         return _run_launcher(clean_args)
 
     parser = argparse.ArgumentParser(
-        description="BMC Auto-Capture v0.2.1 — 自动化测试证据采集平台",
+        description="BMC Auto-Capture v0.2.2 — 自动化测试证据采集平台",
     )
-    parser.add_argument(
-        "--excel", "-e",
-        required=True,
-        help="Path to Excel V2 configuration file (.xlsx)",
-    )
-    parser.add_argument(
-        "--config", "-c",
-        default=None,
-        help="Path to YAML config file (default: config/default_config.yaml)",
-    )
-    parser.add_argument(
-        "--mode", "-m",
-        choices=["sequential", "full"],
-        default="sequential",
-        help="Execution mode (default: sequential)",
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable debug logging",
-    )
+    parser.add_argument("--excel", "-e", required=True, help="Path to Excel V2 config (.xlsx)")
+    parser.add_argument("--config", "-c", default=None, help="Path to YAML config")
+    parser.add_argument("--output", "-o", default=None, help="Output root directory (overrides YAML)")
+    parser.add_argument("--app-dir", default=None, help="App directory containing src/, config/, tasks.json")
+    parser.add_argument("--mode", "-m", choices=["sequential", "full"], default="sequential")
+    parser.add_argument("--max-bmc-workers", type=int, default=None, help="Max BMC workers (overrides YAML)")
+    parser.add_argument("--max-ssh-workers", type=int, default=None, help="Max SSH workers (overrides YAML)")
+    parser.add_argument("--ssh-command-timeout", type=float, default=None, help="SSH command timeout seconds")
+    parser.add_argument("--ssh-idle-timeout", type=float, default=None, help="SSH idle timeout seconds")
+    parser.add_argument("--bmc-page-timeout", type=float, default=None, help="BMC page timeout seconds")
+    parser.add_argument("--preflight-only", action="store_true", help="Preflight only, no execution")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
     # Load config — resolve bundled path if no explicit config given
@@ -76,6 +67,16 @@ def main():
     else:
         config = AppConfig()
         print(f"WARNING: Config not found at {config_path}, using defaults")
+
+    # --- Apply CLI overrides ---
+    config.apply_cli_overrides(
+        output_root=args.output,
+        max_bmc_workers=args.max_bmc_workers,
+        max_ssh_workers=args.max_ssh_workers,
+        ssh_command_timeout=args.ssh_command_timeout,
+        ssh_idle_timeout=args.ssh_idle_timeout,
+        bmc_page_timeout=args.bmc_page_timeout,
+    )
 
     # Setup logging
     level = logging.DEBUG if args.verbose else logging.INFO
