@@ -81,17 +81,20 @@ jobs:
           }
 
       # ── Build runtime (dependency) layer ─────────────────
-      # This layer: _internal/ + playwright_browsers/ + bmc-engine.exe
-      # Changes only when pip dependencies or Chromium version change.
-      # RC users download this ONCE, then only update the app layer.
+      # Directory layout:
+      #   runtime/
+      #     bmc-engine.exe
+      #     _internal/          ← Python + pip deps
+      #     playwright_browsers/ ← Chromium
+      # This layer changes only when pip deps or Chromium version change.
 
       - name: Assemble runtime (dependency) layer
         shell: cmd
         run: |
           mkdir runtime-layer
+          copy dist\bmc-engine\bmc-engine.exe runtime-layer\ >nul
           xcopy /E /I /Y dist\bmc-engine\_internal runtime-layer\_internal >nul
           xcopy /E /I /Y dist\bmc-engine\playwright_browsers runtime-layer\playwright_browsers >nul
-          copy dist\bmc-engine\bmc-engine.exe runtime-layer\ >nul
           echo [OK] runtime layer assembled: runtime-layer/
 
       - name: Package runtime (dependency) layer
@@ -106,9 +109,17 @@ jobs:
           if-no-files-found: error
 
       # ── Build app (script) layer ──────────────────────────
-      # This layer: app/ + run.py + 启动.bat
-      # Changes every RC. User downloads this, extracts into project root,
-      # overwriting old app/ files while keeping runtime/ intact.
+      # Directory layout (when extracted into project root):
+      #   app/                 ← scripts + config + tasks
+      #     src/
+      #     config/
+      #     examples/
+      #     tasks.json
+      #   run.py
+      #   启动.bat
+      # This layer changes every RC. User downloads, extracts into
+      # project root (where runtime/ already lives from first install),
+      # overwriting old app/ files.
 
       - name: Assemble app (script) layer
         shell: cmd
@@ -139,7 +150,18 @@ jobs:
           path: bmc-app-${{ github.ref_name }}.zip
           if-no-files-found: error
 
-      # ── Build full release (all-in-one, for official releases) ──
+      # ── Build full release (all-in-one, extract-and-run) ──
+      # Final layout user sees:
+      #   bmc-auto-capture/
+      #     runtime/
+      #       bmc-engine.exe
+      #       _internal/
+      #       playwright_browsers/
+      #     app/
+      #       src/ config/ examples/ tasks.json
+      #     run.py
+      #     启动.bat
+      #     README.txt
       - name: Assemble full release directory
         shell: cmd
         run: |
