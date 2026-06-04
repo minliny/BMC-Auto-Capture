@@ -134,6 +134,8 @@ class BMCExecutor(AbstractExecutor):
 
         result = ExecutionResult(
             plan_id=plan.plan_id,
+            task_id=plan.task_id,
+            client_task_id=plan.client_task_id,
             device_name=dname,
             device_group=device.device_group,
             bmc_ip=device.bmc_ip,

@@ -156,6 +156,26 @@ def main():
     _setup_browser_path()
     _setup_encoding()
 
+    # --- Server mode: minimal API boot for network validation ---
+    if "--server" in sys.argv:
+        # Extract server args without full argparse (server mode doesn't need --excel etc.)
+        server_parser = argparse.ArgumentParser(add_help=False)
+        server_parser.add_argument("--server", action="store_true", default=True)
+        server_parser.add_argument("--host", default="127.0.0.1")
+        server_parser.add_argument("--port", type=int, default=8080)
+        server_parser.add_argument("--app-dir", default=None)
+        server_parser.add_argument("--log-level", default="info")
+        server_args, _ = server_parser.parse_known_args()
+
+        from api.boot import start_minimal_server
+        start_minimal_server(
+            host=server_args.host,
+            port=server_args.port,
+            log_level=server_args.log_level,
+            app_dir=server_args.app_dir,
+        )
+        return 0
+
     # 检查是否为 launcher 模式 (由 启动.cmd 调用)
     if "--launcher" in sys.argv:
         clean_args = [a for a in sys.argv[1:] if a != "--launcher"]
@@ -163,20 +183,50 @@ def main():
         return _run_launcher_mode(clean_args)
 
     parser = argparse.ArgumentParser(
-        description="BMC Auto-Capture v0.2.1 — BMC/SSH 自动化测试证据采集平台",
+        description="BMC Auto-Capture v0.2.2 — BMC/SSH 自动化测试证据采集平台",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python run.py --app-dir app --excel app/examples/_test_one_per_group.xlsx
+  python run.py --app-dir app --excel my_tasks.xlsx --output ./results --no-preflight
+  bmc-engine.exe --app-dir app --excel tasks.xlsx --mode sequential
+        """,
     )
-    parser.add_argument("--excel", "-e", default=None, help="Path to Excel V2 config (.xlsx)")
-    parser.add_argument("--config", "-c", default=None, help="Path to YAML config")
-    parser.add_argument("--output", "-o", default=None, help="Output root directory (overrides YAML output_root)")
-    parser.add_argument("--app-dir", default=None, help="App directory containing src/, config/, tasks.json")
-    parser.add_argument("--mode", "-m", choices=["sequential", "full"], default="sequential")
-    parser.add_argument("--max-bmc-workers", type=int, default=None, help="Max BMC worker threads (overrides YAML)")
-    parser.add_argument("--max-ssh-workers", type=int, default=None, help="Max SSH worker threads (overrides YAML)")
-    parser.add_argument("--ssh-command-timeout", type=float, default=None, help="SSH single-command timeout seconds (overrides YAML)")
-    parser.add_argument("--ssh-idle-timeout", type=float, default=None, help="SSH idle read timeout seconds (overrides YAML)")
-    parser.add_argument("--bmc-page-timeout", type=float, default=None, help="BMC page load/selector timeout seconds (overrides YAML)")
-    parser.add_argument("--preflight-only", action="store_true", help="Connectivity preflight only, no execution")
-    parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument("--excel", "-e", default=None,
+                        help="Path to Excel config (.xlsx)")
+    parser.add_argument("--config", "-c", default=None,
+                        help="Path to YAML config (default: config/default_config.yaml)")
+    parser.add_argument("--output", "-o", default=None,
+                        help="Output root directory (overrides YAML output_root)")
+    parser.add_argument("--app-dir", default=None,
+                        help="App directory containing src/, config/, tasks.json (default: ./app)")
+    parser.add_argument("--mode", "-m", choices=["sequential", "full"], default="sequential",
+                        help="Execution mode: sequential (one-by-one) or full (dynamic scheduler)")
+    parser.add_argument("--max-bmc-workers", type=int, default=None,
+                        help="Max BMC concurrent workers (overrides YAML)")
+    parser.add_argument("--max-ssh-workers", type=int, default=None,
+                        help="Max SSH concurrent workers (overrides YAML)")
+    parser.add_argument("--ssh-command-timeout", type=float, default=None,
+                        help="SSH single-command timeout in seconds (overrides YAML)")
+    parser.add_argument("--ssh-idle-timeout", type=float, default=None,
+                        help="SSH idle read timeout in seconds (overrides YAML)")
+    parser.add_argument("--bmc-page-timeout", type=float, default=None,
+                        help="BMC page load/selector timeout in seconds (overrides YAML)")
+    parser.add_argument("--preflight-only", action="store_true",
+                        help="Connectivity preflight only, no task execution")
+    parser.add_argument("--no-preflight", action="store_true",
+                        help="Skip connectivity preflight entirely")
+    parser.add_argument("--server", action="store_true",
+                        help="Start as API server (minimal boot, no task execution)")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="API server bind host (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8080,
+                        help="API server bind port (default: 8080)")
+    parser.add_argument("--log-level", default="info",
+                        choices=["debug", "info", "warning", "error"],
+                        help="API server log level (default: info)")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Enable debug-level logging")
     args = parser.parse_args()
 
     # Resolve app directory
@@ -186,7 +236,17 @@ def main():
         # Frozen: app/ is ../app relative to exe (exe is in runtime/)
         app_dir = (_exe_dir().parent / "app").resolve()
     else:
-        app_dir = Path(__file__).resolve().parent
+        # Source repo: try ./app first (release layout), then project root (dev layout)
+        project_root = Path(__file__).resolve().parent
+        app_candidate = project_root / "app"
+        app_dir = app_candidate if app_candidate.is_dir() else project_root
+
+    if not app_dir.is_dir():
+        print(f"ERROR: app directory not found: {app_dir}", file=sys.stderr)
+        print(f"  Current working directory: {Path.cwd()}", file=sys.stderr)
+        print(f"  Tried: {app_dir}", file=sys.stderr)
+        print(f"  Usage: python run.py --app-dir <path_to_app>", file=sys.stderr)
+        sys.exit(1)
 
     if str(app_dir) not in sys.path:
         sys.path.insert(0, str(app_dir))
@@ -212,6 +272,7 @@ def main():
         ssh_command_timeout=args.ssh_command_timeout,
         ssh_idle_timeout=args.ssh_idle_timeout,
         bmc_page_timeout=args.bmc_page_timeout,
+        no_preflight=args.no_preflight,
     )
 
     # Logging
@@ -234,6 +295,7 @@ def main():
     print(f"  ssh_command_timeout: {config.ssh_command_timeout}s")
     print(f"  ssh_idle_timeout   : {config.ssh_idle_timeout}s")
     print(f"  bmc_page_timeout   : {config.bmc_page_timeout}s")
+    print(f"  preflight_enabled  : {config.preflight_enabled}")
     if cli_changes:
         print(f"  CLI overrides ({len(cli_changes)}):")
         for c in cli_changes:

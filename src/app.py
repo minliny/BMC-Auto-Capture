@@ -103,6 +103,8 @@ class App:
                     logger.info("Skip: %s / %s → %s", p.device.device_name, p.task.task_name, reason)
                     result = ExecutionResult(
                         plan_id=p.plan_id,
+                        task_id=p.task_id,
+                        client_task_id=p.client_task_id,
                         device_name=p.device.device_name,
                         device_group=p.device.device_group,
                         bmc_ip=p.device.bmc_ip,
@@ -242,6 +244,8 @@ class App:
                 else:
                     result = ExecutionResult(
                         plan_id=plan.plan_id,
+                        task_id=plan.task_id,
+                        client_task_id=plan.client_task_id,
                         device_name=plan.device.device_name,
                         task_name=plan.task.task_name,
                         execution_status="EXEC_FAILED",
@@ -364,6 +368,8 @@ class App:
                     logger.info("Skip: %s / %s → %s", p.device.device_name, p.task.task_name, reason)
                     result = ExecutionResult(
                         plan_id=p.plan_id,
+                        task_id=p.task_id,
+                        client_task_id=p.client_task_id,
                         device_name=p.device.device_name,
                         device_group=p.device.device_group,
                         bmc_ip=p.device.bmc_ip,

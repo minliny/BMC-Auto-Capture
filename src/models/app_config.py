@@ -58,6 +58,7 @@ class AppConfig:
         ssh_command_timeout: float | None = None,
         ssh_idle_timeout: float | None = None,
         bmc_page_timeout: float | None = None,
+        no_preflight: bool = False,
     ) -> list[str]:
         """Apply CLI overrides on top of YAML config.
         Returns list of human-readable change descriptions.
@@ -81,6 +82,9 @@ class AppConfig:
         if bmc_page_timeout is not None:
             self.bmc_page_timeout = bmc_page_timeout
             changes.append(f"bmc_page_timeout = {bmc_page_timeout} (CLI)")
+        if no_preflight:
+            self.preflight_enabled = False
+            changes.append("preflight_enabled = false (CLI --no-preflight)")
         return changes
 
     @classmethod

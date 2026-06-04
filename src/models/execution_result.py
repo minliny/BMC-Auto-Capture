@@ -18,6 +18,8 @@ class StepResult:
 class ExecutionResult:
     plan_id: str
     device_name: str
+    task_id: str = ""
+    client_task_id: str = ""
     device_group: str = ""
     bmc_ip: str = ""
     inband_ip: str = ""
@@ -58,6 +60,9 @@ class ExecutionResult:
 
     def to_csv_row(self) -> list:
         return [
+            self.plan_id,
+            self.task_id,
+            self.client_task_id,
             self.device_group,
             self.device_name,
             self.bmc_ip,
@@ -91,6 +96,7 @@ class ExecutionResult:
     @staticmethod
     def csv_header() -> list:
         return [
+            "计划ID", "任务ID", "客户端任务ID",
             "设备分类", "设备名称", "带外管理IP", "带内管理IP",
             "任务序号", "任务名称", "任务类型", "执行模式",
             "执行状态", "执行失败原因",

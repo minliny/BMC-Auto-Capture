@@ -112,12 +112,19 @@ async def execute_start(req: ExecuteStartRequest):
     """
     from ..src.models.app_config import AppConfig
     from ..src.app import App
+    from .schemas import validate_execution_id
 
-    config = AppConfig()
-    if req.config_path and os.path.exists(req.config_path):
-        config = AppConfig.from_yaml(req.config_path)
-
-    exec_id = uuid.uuid4().hex[:12]
+    # Validate or generate execution_id
+    if req.execution_id:
+        err = validate_execution_id(req.execution_id)
+        if err:
+            raise HTTPException(status_code=400, detail=f"Invalid execution_id: {err}")
+        exec_id = req.execution_id
+        # Reject duplicate execution_id
+        if exec_id in _executions and _executions[exec_id].get("phase") in ("starting", "running"):
+            raise HTTPException(status_code=409, detail=f"Execution {exec_id} is already running")
+    else:
+        exec_id = uuid.uuid4().hex[:12]
     _executions[exec_id] = {
         "phase": "starting",
         "excel_path": req.excel_path,
@@ -145,7 +152,14 @@ async def execute_start(req: ExecuteStartRequest):
             for item in plans_data:
                 dev = Device(**item["device"])
                 tsk = Task(**item["task"])
-                parsed.append(TaskPlan(device=dev, task=tsk))
+                plan = TaskPlan(
+                    device=dev,
+                    task=tsk,
+                    plan_id=item.get("plan_id", uuid.uuid4().hex[:12]),
+                    task_id=item.get("task_id", ""),
+                    client_task_id=item.get("client_task_id", ""),
+                )
+                parsed.append(plan)
             plans = parsed
 
     if plans is None:
@@ -167,6 +181,8 @@ async def execute_start(req: ExecuteStartRequest):
         payload = {
             "execution_id": exec_id,
             "plan_id": plan.plan_id,
+            "task_id": plan.task_id or plan.task.task_name,
+            "client_task_id": plan.client_task_id,
             "device_name": plan.device.device_name,
             "task_name": plan.task.task_name,
             "execution_status": result.execution_status,
@@ -242,10 +258,23 @@ async def stream_status(exec_id: str):
         while ex.get("phase") in ("starting", "running"):
             current = ex.get("completed_count", 0)
             if current > last_count:
-                yield f"data: {json.dumps({'completed': current, 'total': ex.get('plan_count', 0)})}\n\n"
+                last_result = ex["results"][-1] if ex.get("results") else None
+                event_data = {
+                    "execution_id": exec_id,
+                    "completed": current,
+                    "total": ex.get("plan_count", 0),
+                }
+                if last_result:
+                    event_data["plan_id"] = getattr(last_result, "plan_id", "")
+                    event_data["task_id"] = getattr(last_result, "task_id", "")
+                    event_data["device_name"] = getattr(last_result, "device_name", "")
+                    event_data["task_name"] = getattr(last_result, "task_name", "")
+                    event_data["execution_status"] = getattr(last_result, "execution_status", "")
+                    event_data["final_verdict"] = getattr(last_result, "final_verdict", "")
+                yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
                 last_count = current
             await asyncio.sleep(1)
-        yield f"data: {json.dumps({'completed': ex.get('completed_count', 0), 'total': ex.get('plan_count', 0), 'phase': ex.get('phase')})}\n\n"
+        yield f"data: {json.dumps({'execution_id': exec_id, 'completed': ex.get('completed_count', 0), 'total': ex.get('plan_count', 0), 'phase': ex.get('phase')})}\n\n"
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 

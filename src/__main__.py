@@ -44,19 +44,40 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="BMC Auto-Capture v0.2.2 — 自动化测试证据采集平台",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  bmc-engine --excel tasks.xlsx
+  bmc-engine --app-dir app --excel app/examples/_test_one_per_group.xlsx --no-preflight
+  python run.py --app-dir app --excel my_tasks.xlsx --output ./results
+        """,
     )
-    parser.add_argument("--excel", "-e", required=True, help="Path to Excel V2 config (.xlsx)")
-    parser.add_argument("--config", "-c", default=None, help="Path to YAML config")
-    parser.add_argument("--output", "-o", default=None, help="Output root directory (overrides YAML)")
-    parser.add_argument("--app-dir", default=None, help="App directory containing src/, config/, tasks.json")
-    parser.add_argument("--mode", "-m", choices=["sequential", "full"], default="sequential")
-    parser.add_argument("--max-bmc-workers", type=int, default=None, help="Max BMC workers (overrides YAML)")
-    parser.add_argument("--max-ssh-workers", type=int, default=None, help="Max SSH workers (overrides YAML)")
-    parser.add_argument("--ssh-command-timeout", type=float, default=None, help="SSH command timeout seconds")
-    parser.add_argument("--ssh-idle-timeout", type=float, default=None, help="SSH idle timeout seconds")
-    parser.add_argument("--bmc-page-timeout", type=float, default=None, help="BMC page timeout seconds")
-    parser.add_argument("--preflight-only", action="store_true", help="Preflight only, no execution")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
+    parser.add_argument("--excel", "-e", required=True,
+                        help="Path to Excel config (.xlsx)")
+    parser.add_argument("--config", "-c", default=None,
+                        help="Path to YAML config (default: config/default_config.yaml)")
+    parser.add_argument("--output", "-o", default=None,
+                        help="Output root directory (overrides YAML output_root)")
+    parser.add_argument("--app-dir", default=None,
+                        help="App directory containing src/, config/, tasks.json")
+    parser.add_argument("--mode", "-m", choices=["sequential", "full"], default="sequential",
+                        help="Execution mode: sequential or full (dynamic scheduler)")
+    parser.add_argument("--max-bmc-workers", type=int, default=None,
+                        help="Max BMC concurrent workers (overrides YAML)")
+    parser.add_argument("--max-ssh-workers", type=int, default=None,
+                        help="Max SSH concurrent workers (overrides YAML)")
+    parser.add_argument("--ssh-command-timeout", type=float, default=None,
+                        help="SSH single-command timeout in seconds")
+    parser.add_argument("--ssh-idle-timeout", type=float, default=None,
+                        help="SSH idle read timeout in seconds")
+    parser.add_argument("--bmc-page-timeout", type=float, default=None,
+                        help="BMC page timeout in seconds")
+    parser.add_argument("--preflight-only", action="store_true",
+                        help="Preflight only, no task execution")
+    parser.add_argument("--no-preflight", action="store_true",
+                        help="Skip connectivity preflight entirely")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Enable debug logging")
     args = parser.parse_args()
 
     # Load config — resolve bundled path if no explicit config given
@@ -76,6 +97,7 @@ def main():
         ssh_command_timeout=args.ssh_command_timeout,
         ssh_idle_timeout=args.ssh_idle_timeout,
         bmc_page_timeout=args.bmc_page_timeout,
+        no_preflight=args.no_preflight,
     )
 
     # Setup logging

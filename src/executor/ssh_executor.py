@@ -1,5 +1,10 @@
 """
 SSH/Telnet executor using Paramiko (pure Python socket — satisfies security policy).
+
+Two strategies:
+  - exec_command:    Linux OpenSSH / A3 devices. One channel per command, get_pty=False.
+  - interactive_shell: Huawei VRP / L1 / L2 devices. Single invoke_shell() channel,
+                       screen-length + all task commands share one transport session.
 """
 
 from __future__ import annotations
@@ -21,54 +26,34 @@ from ..out.file_writer import write_text_file, write_log_file
 from ..out.screenshot import render_text_to_image
 from ..utils.template import resolve_template, check_unreplaced_vars
 
-# 最大翻页次数，防止无限循环
 MAX_MORE_PAGES = 200
 
-# 纯分页提示行（只有横线和 More，无实际内容）
 MORE_LINE_RE = re.compile(r'^\s*[-–—]*(?:More|more|MORE)[-–—\s]*$', re.IGNORECASE)
-# 行内分页提示（从文本中移除）
 MORE_INLINE_RE = re.compile(
     r'[-–—]{2,}\s*(?:More|more|MORE)\s*[-–—]*', re.IGNORECASE
 )
-# ANSI 控制码
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 
 def _strip_pagination_markers(text: str) -> str:
-    """清理 SSH 输出中的分页提示和其他控制字符。
-
-    移除：
-    - 纯分页提示行（如 "---- More ----"）
-    - 行内分页提示
-    - ANSI escape 序列
-    - \r 回车
-    """
-    # 清理 ANSI
     text = ANSI_RE.sub('', text)
-    # 规范化 \r\n 和孤立 \r
     text = text.replace('\r\n', '\n').replace('\r', '\n')
-    # 清理分页提示（按行处理）
     lines = []
     for line in text.split('\n'):
         stripped = line.strip()
-        # 跳过纯分页提示行（如 "---- More ----"）
         if MORE_LINE_RE.match(stripped):
             continue
-        # 从行内移除分页提示
         clean = MORE_INLINE_RE.sub('', stripped)
-        # 保留非空行
         if clean:
             lines.append(clean)
         elif lines and lines[-1].strip():
-            lines.append('')  # 保留分隔
-    # 合并连续空行（最多2个）
+            lines.append('')
     result = '\n'.join(lines)
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip() + '\n'
 
 
 def _resolve_var(template: str, variables: dict) -> str:
-    """Replace {{var.X}} placeholders with extracted variable values."""
     def _replace(m):
         key = m.group(1)
         return variables.get(key, m.group(0))
@@ -85,23 +70,46 @@ class SSHError(Exception):
 class SSHExecutor(AbstractExecutor):
     """Execute SSH_CMD or TELNET_CMD tasks via Paramiko."""
 
-    # Matches common host-key / fingerprint prompts
     FINGERPRINT_PROMPTS = re.compile(
         r"(yes/no|\(yes/no|continue connecting|Are you sure)",
         re.IGNORECASE,
     )
+
+    # Device groups that require interactive shell (Huawei VRP / proprietary)
+    INTERACTIVE_SHELL_GROUPS = frozenset({"L1", "L2"})
 
     def __init__(self, connect_timeout: float = 15.0, command_timeout: float = 60.0, idle_timeout: float = 5.0):
         self.connect_timeout = connect_timeout
         self.command_timeout = command_timeout
         self.idle_timeout = idle_timeout
 
+    # ------------------------------------------------------------------
+    # SSH strategy detection
+    # ------------------------------------------------------------------
+    def _get_ssh_strategy(self, device) -> str:
+        """Determine SSH strategy based on device group.
+
+        L1 / L2 → interactive_shell (Huawei VRP / 灵衢)
+        Everything else → exec_command (Linux OpenSSH, Cisco, etc.)
+        """
+        group = (device.device_group or "").upper().strip()
+        if group in self.INTERACTIVE_SHELL_GROUPS:
+            logger.info("SSH strategy: interactive_shell (group=%s)", group)
+            return "interactive_shell"
+        logger.info("SSH strategy: exec_command (group=%s)", group)
+        return "exec_command"
+
+    # ------------------------------------------------------------------
+    # Main execute entry point
+    # ------------------------------------------------------------------
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         device = plan.device
         task = plan.task
 
         result = ExecutionResult(
             plan_id=plan.plan_id,
+            task_id=plan.task_id,
+            client_task_id=plan.client_task_id,
             device_name=device.device_name,
             device_group=device.device_group,
             bmc_ip=device.bmc_ip,
@@ -112,7 +120,6 @@ class SSHExecutor(AbstractExecutor):
             started_at=time.time(),
         )
 
-        # Determine host/port/credentials
         host = device.inband_ip
         port = 22 if task.task_type.upper() == "SSH" else 23
         username = device.inband_username
@@ -125,15 +132,13 @@ class SSHExecutor(AbstractExecutor):
             result.duration_seconds = result.ended_at - result.started_at
             return result
 
-        # Build output directory using unified resolve_template
         output_dir = self._build_output_dir(output_root, device, task)
         os.makedirs(output_dir, exist_ok=True)
 
-        # Parse command spec (new JSON format or legacy static format)
         cmd_spec = self._parse_command_spec(task)
-        commands = cmd_spec["commands"]  # list of (name, resolved_cmd)
-        cmd_outputs: dict[str, str] = {}  # cmd_name → output
-        variables: dict[str, str] = {}   # runtime variables
+        commands = cmd_spec["commands"]
+        cmd_outputs: dict[str, str] = {}
+        variables: dict[str, str] = {}
 
         client = None
         all_output: list[str] = []
@@ -145,7 +150,7 @@ class SSHExecutor(AbstractExecutor):
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-            logger.info(f"[{device.device_name}] 正在连接到 {host}:{port} as {username}")
+            logger.info("[%s] 正在连接到 %s:%s as %s", device.device_name, host, port, username)
             client.connect(
                 hostname=host,
                 port=port,
@@ -156,174 +161,44 @@ class SSHExecutor(AbstractExecutor):
                 allow_agent=False,
             )
 
-            # 禁用分页（华为 VRP / Cisco / Linux）
-            self._disable_paging(client)
+            strategy = self._get_ssh_strategy(device)
 
-            step_index = 0
+            all_output, has_failure, has_timeout, failure_reasons, cmd_outputs, step_results = (
+                self._execute_commands(
+                    client, device, commands, cmd_spec, strategy,
+                )
+            )
 
-            # Per-task hard deadline: prevent any single SSH task from blocking forever
-            task_deadline = time.time() + max(self.command_timeout * len(commands), self.command_timeout) * 2
+            result.step_results = step_results
 
-            for cmd_name, cmd in commands:
-                step_name = cmd_name or f"cmd_{step_index}"
-                logger.info(f"[{device.device_name}] 正在执行:  {cmd[:60]}...")
-
-                try:
-                    # Check task-level timeout before each command
-                    if time.time() > task_deadline:
-                        raise TimeoutError(f"Task deadline exceeded after {self.command_timeout * 2:.0f}s")
-
-                    # P0-1 FIX: get_pty=False avoids "SSH session not active"
-                    # on Huawei VRP / 灵衢 devices. PTY mode causes the remote
-                    # shell to close after command exit, breaking subsequent commands
-                    # that share the same SSH transport.
-                    _stdin, stdout, stderr = client.exec_command(
-                        cmd, timeout=self.command_timeout, get_pty=False,
-                    )
-
-                    channel = stdout.channel
-                    channel.settimeout(self.command_timeout)
-
-                    out_chunks: list[bytes] = []
-                    err_chunks: list[bytes] = []
-                    cmd_deadline = time.time() + self.command_timeout
-                    last_data_at = time.time()
-                    more_count = 0  # 累计翻页次数
-
-                    while time.time() < cmd_deadline:
-                        got_data = False
-
-                        if channel.recv_ready():
-                            chunk = channel.recv(65536)
-                            if chunk:
-                                out_chunks.append(chunk)
-                                last_data_at = time.time()
-                                got_data = True
-                            else:
-                                break  # EOF
-
-                        if channel.recv_stderr_ready():
-                            chunk = channel.recv_stderr(65536)
-                            if chunk:
-                                err_chunks.append(chunk)
-                                got_data = True
-
-                        # Handle pagination: "---- More ----" / "----More----"
-                        if out_chunks:
-                            tail = b"".join(out_chunks[-2:]).decode("utf-8", errors="replace")
-                            if "----More----" in tail or "---- More ----" in tail or "---more---" in tail or "--More--" in tail:
-                                if more_count >= MAX_MORE_PAGES:
-                                    logger.warning(f"[{device.device_name}] 翻页次数超限 ({more_count})，停止翻页")
-                                    break
-                                try:
-                                    _stdin.write(" ")
-                                    _stdin.flush()
-                                    more_count += 1
-                                    last_data_at = time.time()
-                                    got_data = True
-                                except Exception:
-                                    pass
-
-                        if channel.exit_status_ready():
-                            break  # Command process exited (Linux)
-
-                        # Idle detection: no data for idle_timeout → command output complete
-                        if time.time() - last_data_at > self.idle_timeout:
-                            break
-
-                        if not got_data:
-                            time.sleep(0.1)
-
-                    # Drain any remaining data after break
-                    try:
-                        channel.settimeout(0.5)
-                        remaining = stdout.read()
-                        if remaining:
-                            out_chunks.append(remaining)
-                    except Exception:
-                        pass
-
-                    # Check if we hit the hard deadline (timeout)
-                    cmd_timed_out = time.time() >= cmd_deadline and not channel.exit_status_ready()
-                    if cmd_timed_out:
-                        has_timeout = True
-
-                    out = b"".join(out_chunks).decode("utf-8", errors="replace")
-                    err = b"".join(err_chunks).decode("utf-8", errors="replace")
-
-                    combined = out
-                    if err:
-                        combined += f"\n{err}"
-
-                    cmd_outputs[cmd_name] = combined
-                    all_output.append(combined)
-
-                    # Run extractors after this command if any are defined
-                    if cmd_spec.get("extractors"):
-                        for ex in cmd_spec["extractors"]:
-                            if ex.get("from") == f"cmd:{cmd_name}" or not ex.get("from"):
-                                self._run_extractor(ex, combined, variables)
-
-                    result.step_results.append(StepResult(
-                        step_index=step_index,
-                        step_name=step_name,
-                        status="SUCCESS",
-                        details=f"output {len(combined)} chars",
-                    ))
-
-                except TimeoutError as e:
-                    has_timeout = True
-                    has_failure = True
-                    failure_reasons.append(f"命令超时: {cmd[:50]}... ({self.command_timeout}s)")
-                    # Do NOT inject timeout markers into final evidence — keep only real output.
-                    result.step_results.append(StepResult(
-                        step_index=step_index, step_name=step_name,
-                        status="TIMEOUT", details=str(e),
-                    ))
-                except Exception as e:
-                    has_failure = True
-                    failure_reasons.append(f"命令失败: {cmd[:50]}... ({e})")
-                    # Do NOT inject error markers into final evidence — keep only real output.
-                    result.step_results.append(StepResult(
-                        step_index=step_index,
-                        step_name=step_name,
-                        status="FAILED",
-                        details=str(e),
-                    ))
-
-                step_index += 1
-
-            # Determine final execution status based on failures
+            # Determine final status
             if has_timeout:
                 result.execution_status = "EXEC_PARTIAL"
-                result.execution_failure_reason = f"命令超时 ({len([s for s in result.step_results if s.status == 'TIMEOUT'])} 个命令超时)"
+                result.execution_failure_reason = f"命令超时 ({len([s for s in step_results if s.status == 'TIMEOUT'])} 个命令超时)"
             elif has_failure:
                 result.execution_status = "EXEC_PARTIAL"
-                result.execution_failure_reason = "; ".join(failure_reasons[:3])  # Limit to 3 reasons
+                result.execution_failure_reason = "; ".join(failure_reasons[:3])
             else:
                 result.execution_status = "EXEC_SUCCESS"
 
-            # File naming from template using unified resolve_template
+            # Write evidence
             file_base = resolve_template(task.image_name_template, device, task)
-
-            # 清理分页提示后再写入
             cleaned_output = _strip_pagination_markers("\n\n".join(all_output))
             txt_path = write_text_file(output_dir, f"{file_base}.txt", cleaned_output)
             result.txt_file = txt_path
 
-            # Generate terminal-style screenshot
             ss_path = render_text_to_image(cleaned_output, output_dir, f"{file_base}.png")
             result.screenshots = (ss_path,)
             result.artifact_status = "ARTIFACT_SAVED"
             result.step_results.append(StepResult(
-                step_index=step_index,
+                step_index=len(result.step_results),
                 step_name="ssh_terminal_screenshot",
                 status="SUCCESS",
                 screenshot=ss_path,
                 details=f"Terminal output {len(cleaned_output)} chars",
             ))
 
-            # Evaluate evidence checkpoints (non-blocking, after artifacts saved)
+            # Evaluate checkpoints
             if cmd_spec.get("checkpoints"):
                 import asyncio
                 asyncio.get_event_loop().run_until_complete(
@@ -334,23 +209,23 @@ class SSHExecutor(AbstractExecutor):
         except socket.timeout as e:
             result.execution_status = "EXEC_FAILED"
             result.execution_failure_reason = f"SSH连接超时 ({self.connect_timeout}s): {e}"
-            logger.error(f"[{device.device_name}] SSH连接超时: {e}")
+            logger.error("[%s] SSH连接超时: %s", device.device_name, e)
         except socket.error as e:
             result.execution_status = self._classify_socket_error(e)
             result.execution_failure_reason = str(e)
-            logger.error(f"[{device.device_name}] Socket错误: {e}")
+            logger.error("[%s] Socket错误: %s", device.device_name, e)
         except paramiko.AuthenticationException as e:
             result.execution_status = "EXEC_FAILED"
             result.execution_failure_reason = f"SSH认证失败: {e}"
-            logger.error(f"[{device.device_name}] Auth failed: {e}")
+            logger.error("[%s] Auth failed: %s", device.device_name, e)
         except paramiko.SSHException as e:
             result.execution_status = "EXEC_FAILED"
             result.execution_failure_reason = f"SSH错误: {e}"
-            logger.error(f"[{device.device_name}] SSH error: {e}")
+            logger.error("[%s] SSH error: %s", device.device_name, e)
         except Exception as e:
             result.execution_status = "EXEC_ERROR"
             result.execution_failure_reason = str(e)
-            logger.error(f"[{device.device_name}] 未知错误: {e}")
+            logger.error("[%s] 未知错误: %s", device.device_name, e)
         finally:
             if client is not None:
                 try:
@@ -358,10 +233,7 @@ class SSHExecutor(AbstractExecutor):
                 except Exception:
                     pass
 
-        # Generate terminal screenshot for error paths too (partial output)
         if not result.screenshots and output_dir:
-            file_base = resolve_template(task.image_name_template, device, task)
-            # Error info goes to log only — do NOT generate polluted evidence PNG/TXT.
             logger.warning(
                 "[%s] SSH failed — no evidence generated. Status=%s Reason=%s",
                 device.device_name, result.execution_status, result.execution_failure_reason,
@@ -373,7 +245,6 @@ class SSHExecutor(AbstractExecutor):
         result.ended_at = time.time()
         result.duration_seconds = result.ended_at - result.started_at
 
-        # Write task log
         file_base = resolve_template(task.image_name_template, device, task)
         log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result))
         result.log_file = log_path
@@ -381,17 +252,342 @@ class SSHExecutor(AbstractExecutor):
         return result
 
     # ------------------------------------------------------------------
+    # Command execution — router
+    # ------------------------------------------------------------------
+    def _execute_commands(self, client, device, commands, cmd_spec, strategy):
+        if strategy == "interactive_shell":
+            return self._execute_interactive_shell(client, device, commands, cmd_spec)
+        else:
+            return self._execute_exec_command(client, device, commands, cmd_spec)
+
+    # ------------------------------------------------------------------
+    # Strategy A: exec_command (Linux OpenSSH / A3 / Cisco)
+    # ------------------------------------------------------------------
+    def _execute_exec_command(self, client, device, commands, cmd_spec):
+        step_results: list[StepResult] = []
+        cmd_outputs: dict[str, str] = {}
+        variables: dict[str, str] = {}
+        all_output: list[str] = []
+        has_failure = False
+        has_timeout = False
+        failure_reasons: list[str] = []
+
+        # Disable paging via exec_command
+        self._disable_paging(client, device, strategy="exec_command")
+
+        task_deadline = time.time() + max(self.command_timeout * len(commands), self.command_timeout) * 2
+        step_index = 0
+
+        for cmd_name, cmd in commands:
+            step_name = cmd_name or f"cmd_{step_index}"
+            logger.info("[%s] exec_command: %s", device.device_name, cmd[:60])
+
+            try:
+                if time.time() > task_deadline:
+                    raise TimeoutError(f"Task deadline exceeded")
+
+                _stdin, stdout, stderr = client.exec_command(
+                    cmd, timeout=self.command_timeout, get_pty=False,
+                )
+
+                channel = stdout.channel
+                channel.settimeout(self.command_timeout)
+
+                out_chunks, err_chunks, cmd_timed_out, more_count = self._read_channel(
+                    channel, stdout, _stdin, device, cmd_deadline=None,
+                )
+
+                out = b"".join(out_chunks).decode("utf-8", errors="replace")
+                err = b"".join(err_chunks).decode("utf-8", errors="replace")
+
+                combined = out
+                if err:
+                    combined += f"\n{err}"
+
+                cmd_outputs[cmd_name] = combined
+                all_output.append(combined)
+
+                if cmd_spec.get("extractors"):
+                    for ex in cmd_spec["extractors"]:
+                        if ex.get("from") == f"cmd:{cmd_name}" or not ex.get("from"):
+                            self._run_extractor(ex, combined, variables)
+
+                if cmd_timed_out:
+                    has_timeout = True
+                    has_failure = True
+                    failure_reasons.append(f"命令超时: {cmd[:50]}... ({self.command_timeout}s)")
+                    step_results.append(StepResult(
+                        step_index=step_index, step_name=step_name,
+                        status="TIMEOUT", details=f"Timeout after {self.command_timeout}s",
+                    ))
+                else:
+                    step_results.append(StepResult(
+                        step_index=step_index, step_name=step_name,
+                        status="SUCCESS", details=f"output {len(combined)} chars",
+                    ))
+
+            except TimeoutError as e:
+                has_timeout = True
+                has_failure = True
+                failure_reasons.append(f"命令超时: {cmd[:50]}... ({self.command_timeout}s)")
+                step_results.append(StepResult(
+                    step_index=step_index, step_name=step_name,
+                    status="TIMEOUT", details=str(e),
+                ))
+            except Exception as e:
+                has_failure = True
+                failure_reasons.append(f"命令失败: {cmd[:50]}... ({e})")
+                step_results.append(StepResult(
+                    step_index=step_index, step_name=step_name,
+                    status="FAILED", details=str(e),
+                ))
+
+            step_index += 1
+
+        return all_output, has_failure, has_timeout, failure_reasons, cmd_outputs, step_results
+
+    # ------------------------------------------------------------------
+    # Strategy B: interactive_shell (Huawei VRP / L1 / L2 / 灵衢)
+    # ------------------------------------------------------------------
+    def _execute_interactive_shell(self, client, device, commands, cmd_spec):
+        step_results: list[StepResult] = []
+        cmd_outputs: dict[str, str] = {}
+        variables: dict[str, str] = {}
+        all_output: list[str] = []
+        has_failure = False
+        has_timeout = False
+        failure_reasons: list[str] = []
+
+        transport = client.get_transport()
+        if transport is None or not transport.is_active():
+            raise SSHError("SSH transport is not active — cannot open interactive shell")
+
+        logger.info("[%s] 打开 interactive shell (width=220, height=80)", device.device_name)
+        channel = transport.open_session()
+        channel.get_pty(width=220, height=80)
+        channel.invoke_shell()
+        channel.settimeout(self.command_timeout)
+
+        # Read banner / initial prompt
+        banner = self._read_until_prompt(channel, device, timeout=5.0)
+        all_output.append(banner)
+
+        # Run screen-length 0 temporary in the same channel
+        self._send_and_read(channel, "screen-length 0 temporary", device, timeout=3.0)
+
+        # Run each task command in the same channel
+        task_deadline = time.time() + max(self.command_timeout * len(commands), self.command_timeout) * 2
+        step_index = 0
+
+        for cmd_name, cmd in commands:
+            step_name = cmd_name or f"cmd_{step_index}"
+            logger.info("[%s] interactive_shell: %s", device.device_name, cmd[:60])
+
+            try:
+                if time.time() > task_deadline:
+                    raise TimeoutError("Task deadline exceeded")
+
+                if not transport.is_active():
+                    raise SSHError("SSH transport died during interactive session")
+
+                output = self._send_and_read(channel, cmd, device, timeout=self.command_timeout)
+                cmd_outputs[cmd_name] = output
+                all_output.append(output)
+
+                if cmd_spec.get("extractors"):
+                    for ex in cmd_spec["extractors"]:
+                        if ex.get("from") == f"cmd:{cmd_name}" or not ex.get("from"):
+                            self._run_extractor(ex, output, variables)
+
+                step_results.append(StepResult(
+                    step_index=step_index, step_name=step_name,
+                    status="SUCCESS", details=f"output {len(output)} chars",
+                ))
+
+            except TimeoutError as e:
+                has_timeout = True
+                has_failure = True
+                failure_reasons.append(f"命令超时: {cmd[:50]}... ({self.command_timeout}s)")
+                step_results.append(StepResult(
+                    step_index=step_index, step_name=step_name,
+                    status="TIMEOUT", details=str(e),
+                ))
+            except Exception as e:
+                has_failure = True
+                failure_reasons.append(f"命令失败: {cmd[:50]}... ({e})")
+                step_results.append(StepResult(
+                    step_index=step_index, step_name=step_name,
+                    status="FAILED", details=str(e),
+                ))
+
+            step_index += 1
+
+        try:
+            channel.close()
+        except Exception:
+            pass
+
+        return all_output, has_failure, has_timeout, failure_reasons, cmd_outputs, step_results
+
+    # ------------------------------------------------------------------
+    # Interactive shell helpers
+    # ------------------------------------------------------------------
+    def _read_until_prompt(self, channel, device, timeout: float) -> str:
+        """Read initial banner/prompt from interactive shell."""
+        deadline = time.time() + timeout
+        chunks: list[bytes] = []
+        last_data = time.time()
+        while time.time() < deadline:
+            if channel.recv_ready():
+                chunk = channel.recv(65536)
+                if chunk:
+                    chunks.append(chunk)
+                    last_data = time.time()
+            elif time.time() - last_data > 2.0:
+                break  # idle — prompt received
+            else:
+                time.sleep(0.1)
+        # Drain any final bytes
+        try:
+            channel.settimeout(0.3)
+            while True:
+                chunk = channel.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except Exception:
+            pass
+        channel.settimeout(self.command_timeout)
+        return b"".join(chunks).decode("utf-8", errors="replace")
+
+    def _send_and_read(self, channel, cmd: str, device, timeout: float) -> str:
+        """Send a command through the interactive shell and read back the output."""
+        channel.send(cmd + "\n")
+        deadline = time.time() + timeout
+        chunks: list[bytes] = []
+        last_data = time.time()
+        more_count = 0
+
+        while time.time() < deadline:
+            got_data = False
+            if channel.recv_ready():
+                chunk = channel.recv(65536)
+                if chunk:
+                    chunks.append(chunk)
+                    last_data = time.time()
+                    got_data = True
+
+            # Handle pagination in interactive mode
+            tail = b"".join(chunks[-2:]).decode("utf-8", errors="replace") if len(chunks) >= 1 else ""
+            if tail and ("----More----" in tail or "---- More ----" in tail or "---more---" in tail or "--More--" in tail):
+                if more_count >= MAX_MORE_PAGES:
+                    logger.warning("[%s] 翻页次数超限 (%s)，停止翻页", device.device_name, more_count)
+                    break
+                try:
+                    channel.send(" ")
+                    more_count += 1
+                    last_data = time.time()
+                    got_data = True
+                except Exception:
+                    pass
+
+            # Idle detection
+            if time.time() - last_data > self.idle_timeout:
+                break
+
+            if not got_data:
+                time.sleep(0.1)
+
+        # Drain remaining
+        try:
+            channel.settimeout(0.5)
+            while True:
+                chunk = channel.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except Exception:
+            pass
+        channel.settimeout(self.command_timeout)
+
+        return b"".join(chunks).decode("utf-8", errors="replace")
+
+    # ------------------------------------------------------------------
+    # Channel read helper (shared)
+    # ------------------------------------------------------------------
+    def _read_channel(self, channel, stdout, stdin, device, cmd_deadline=None):
+        """Read stdout/stderr from an exec_command channel with pagination handling."""
+        if cmd_deadline is None:
+            cmd_deadline = time.time() + self.command_timeout
+
+        out_chunks: list[bytes] = []
+        err_chunks: list[bytes] = []
+        last_data_at = time.time()
+        more_count = 0
+
+        while time.time() < cmd_deadline:
+            got_data = False
+
+            if channel.recv_ready():
+                chunk = channel.recv(65536)
+                if chunk:
+                    out_chunks.append(chunk)
+                    last_data_at = time.time()
+                    got_data = True
+                else:
+                    break
+
+            if channel.recv_stderr_ready():
+                chunk = channel.recv_stderr(65536)
+                if chunk:
+                    err_chunks.append(chunk)
+                    got_data = True
+
+            # Pagination
+            if out_chunks:
+                tail = b"".join(out_chunks[-2:]).decode("utf-8", errors="replace")
+                if "----More----" in tail or "---- More ----" in tail or "---more---" in tail or "--More--" in tail:
+                    if more_count >= MAX_MORE_PAGES:
+                        logger.warning("[%s] 翻页次数超限 (%s)，停止翻页", device.device_name, more_count)
+                        break
+                    try:
+                        stdin.write(" ")
+                        stdin.flush()
+                        more_count += 1
+                        last_data_at = time.time()
+                        got_data = True
+                    except Exception:
+                        pass
+
+            if channel.exit_status_ready():
+                break
+
+            if time.time() - last_data_at > self.idle_timeout:
+                break
+
+            if not got_data:
+                time.sleep(0.1)
+
+        # Drain remaining
+        try:
+            channel.settimeout(0.5)
+            remaining = stdout.read()
+            if remaining:
+                out_chunks.append(remaining)
+        except Exception:
+            pass
+
+        cmd_timed_out = time.time() >= cmd_deadline and not channel.exit_status_ready()
+        return out_chunks, err_chunks, cmd_timed_out, more_count
+
+    # ------------------------------------------------------------------
+    # Command spec parsing
+    # ------------------------------------------------------------------
     def _parse_command_spec(self, task) -> dict:
-        """Parse command_or_url as either:
-        - New JSON format: {"commands": [{"cmd":..., "name":...}], "extractors": [...], "checkpoints": [...]}
-        - Legacy static format: "cmd1; cmd2" or "cmd1\\ncmd2"
-        Returns {"commands": [(name, resolved_cmd)], "extractors": [...], "checkpoints": [...]}
-        """
         raw = task.command_or_url.strip()
         if not raw:
             return {"commands": [], "extractors": [], "checkpoints": []}
 
-        # Try JSON object format first
         if raw.startswith("{"):
             try:
                 spec = json.loads(raw)
@@ -408,7 +604,6 @@ class SSHExecutor(AbstractExecutor):
             except json.JSONDecodeError:
                 pass
 
-        # Legacy static format
         cmd_list = self._parse_commands(raw)
         return {
             "commands": [(f"cmd_{i}", c) for i, c in enumerate(cmd_list)],
@@ -419,14 +614,11 @@ class SSHExecutor(AbstractExecutor):
     def _parse_commands(self, raw: str) -> list[str]:
         if not raw.strip():
             return []
-        # Support semicolon or newline delimiters
         if "\n" in raw:
             return [c.strip() for c in raw.split("\n") if c.strip()]
         return [c.strip() for c in raw.split(";") if c.strip()]
 
     def _run_extractor(self, ex: dict, output: str, variables: dict) -> None:
-        """Run a single extractor against command output."""
-        import re
         ex_type = ex.get("type", "")
         pattern = ex.get("pattern", ex.get("selector", ""))
         var_name = ex.get("var", "")
@@ -447,21 +639,12 @@ class SSHExecutor(AbstractExecutor):
                 logger.debug("SSH extractor text '%s' → %s", var_name, variables[var_name])
 
     async def _evaluate_ssh_checkpoints(
-        self,
-        checkpoints: list,
-        cmd_outputs: dict,
-        variables: dict,
-        result: ExecutionResult,
-        txt_path: str,
-        ss_path: str,
-    ) -> None:
-        """Evaluate evidence checkpoints against SSH command outputs."""
+        self, checkpoints, cmd_outputs, variables, result, txt_path, ss_path,
+    ):
         from ..rules.checkpoint_engine import CheckpointEngine
         from ..rules.engine import RuleContext
 
         specs = [CheckpointSpec.from_dict(c) for c in checkpoints]
-
-        # Build a synthetic text output from all command outputs
         combined_output = "\n\n".join(
             f"[{name}]\n{out}" for name, out in cmd_outputs.items()
         )
@@ -492,12 +675,11 @@ class SSHExecutor(AbstractExecutor):
             result.runtime_context = json.dumps(ctx.variables, ensure_ascii=False)
 
     def _build_output_dir(self, root: str, device, task) -> str:
-        # Check for unreplaced variables
         tmpl = task.output_dir_template
         resolved = resolve_template(tmpl, device, task)
         unreplaced = check_unreplaced_vars(resolved)
         if unreplaced:
-            logger.warning(f"SSH output_dir_template 残留未替换变量: {unreplaced} in '{tmpl}'")
+            logger.warning("SSH output_dir_template 残留未替换变量: %s in '%s'", unreplaced, tmpl)
         return os.path.join(root, resolved)
 
     def _classify_socket_error(self, e: socket.error) -> str:
@@ -513,16 +695,7 @@ class SSHExecutor(AbstractExecutor):
             return "EXEC_SKIPPED_PRECHECK_FAILED"
         return "EXEC_ERROR"
 
-    def _disable_paging(self, client) -> bool:
-        """尝试禁用设备分页。
-
-        华为 VRP: screen-length 0 temporary
-        Cisco: terminal length 0
-        Linux: stty -echo
-
-        Returns:
-            True if paging disabled, False if failed (non-fatal)
-        """
+    def _disable_paging(self, client, device, strategy="exec_command") -> bool:
         disable_commands = [
             "screen-length 0 temporary",
             "screen-length 0",
@@ -531,14 +704,14 @@ class SSHExecutor(AbstractExecutor):
         ]
         for disable_cmd in disable_commands:
             try:
-                logger.info(f"尝试禁用分页: {disable_cmd}")
-                # P0-2 FIX: Use get_pty=False for disable-paging commands.
-                # Huawei VRP devices close the channel/transport immediately when
-                # screen-length 0 temporary is executed with a PTY, causing
-                # "EOF sent (0)" / "Ignoring message for dead channel" and
-                # rendering the entire SSH session inactive.
+                logger.info("[%s] 尝试禁用分页 (strategy=%s): %s",
+                           device.device_name, strategy, disable_cmd)
+
+                if strategy == "interactive_shell":
+                    # Already handled in _execute_interactive_shell
+                    return True
+
                 stdin, stdout, stderr = client.exec_command(disable_cmd, timeout=2, get_pty=False)
-                # 读取响应（不阻塞）
                 start = time.time()
                 response = b""
                 while time.time() - start < 2:
@@ -547,7 +720,6 @@ class SSHExecutor(AbstractExecutor):
                     else:
                         time.sleep(0.1)
                 resp_text = response.decode('utf-8', errors='replace').lower()
-                # Drain stdout/stderr completely to prevent channel leak
                 try:
                     _ = stdout.read()
                 except Exception:
@@ -557,14 +729,14 @@ class SSHExecutor(AbstractExecutor):
                 except Exception:
                     pass
                 if 'error' not in resp_text and 'invalid' not in resp_text and 'unknown' not in resp_text:
-                    logger.info(f"分页已禁用: {disable_cmd}")
+                    logger.info("[%s] 分页已禁用: %s", device.device_name, disable_cmd)
                     return True
                 else:
-                    logger.debug(f"禁用分页命令响应含错误信息: {resp_text[:100]}")
+                    logger.debug("[%s] 禁用分页命令响应含错误: %s", device.device_name, resp_text[:100])
             except Exception as e:
-                logger.debug(f"禁用分页命令失败（可忽略）: {disable_cmd} ({e})")
+                logger.debug("[%s] 禁用分页命令失败（可忽略）: %s (%s)", device.device_name, disable_cmd, e)
                 continue
-        logger.warning("所有禁用分页命令均失败，继续执行（可能在不支持的设备上）")
+        logger.warning("[%s] 所有禁用分页命令均失败，继续执行", device.device_name)
         return False
 
     def _build_log(self, result: ExecutionResult) -> str:

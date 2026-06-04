@@ -17,6 +17,8 @@ class TaskPlan:
     device: Device
     task: Task
     plan_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    task_id: str = ""
+    client_task_id: str = ""
     status: str = "PENDING"
     skip_reason: str = ""
     retry_attempt: int = 0
@@ -29,8 +31,8 @@ class TaskPlan:
         return self.device.device_name
 
     @property
-    def task_id(self) -> str:
-        return self.task.task_name
+    def effective_task_id(self) -> str:
+        return self.task_id or self.task.task_name
 
     @property
     def protocol(self) -> str:
