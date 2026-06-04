@@ -6,7 +6,7 @@ on:
       - "v*"
 
 jobs:
-  # ── Windows Build + Smoke Test ───────────────────────────
+  # ── Windows Build + Package ─────────────────────────────
   build-windows:
     runs-on: windows-latest
     steps:
@@ -25,7 +25,7 @@ jobs:
       - name: Install Playwright Chromium
         run: python -m playwright install chromium
 
-      - name: Build PyInstaller (runtime only, no src/config)
+      - name: Build PyInstaller (runtime engine)
         run: |
           python -m PyInstaller `
             --onedir --name bmc-engine `
@@ -50,7 +50,7 @@ jobs:
             --noconfirm `
             run.py
 
-      - name: Copy Chromium into dist
+      - name: Copy Chromium browsers into runtime
         shell: cmd
         run: |
           if not exist dist\bmc-engine\playwright_browsers mkdir dist\bmc-engine\playwright_browsers
@@ -68,64 +68,66 @@ jobs:
           )
           exit /b 0
 
-      # ── Smoke test: verify the built exe can start ─────────
-      - name: Prepare smoke test layout
+      # ── Determine: release or pre-release ──────────────────
+      - name: Set release type
+        id: release-type
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -match "RC") {
+            echo "IS_RC=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "IS_RC=false" >> $env:GITHUB_OUTPUT
+          }
+
+      # ── Build runtime (dependency) layer ─────────────────
+      # This layer: _internal/ + playwright_browsers/ + bmc-engine.exe
+      # Changes only when pip dependencies or Chromium version change.
+      # RC users download this ONCE, then only update the app layer.
+
+      - name: Assemble runtime (dependency) layer
         shell: cmd
         run: |
-          REM Simulate user directory: runtime/ + app/
-          mkdir dist\staging\runtime
-          mkdir dist\staging\app
-          REM Move PyInstaller output INTO runtime/ (bmc-engine.exe at runtime\)
-          xcopy /E /I /Y dist\bmc-engine dist\staging\runtime >nul
-          rd /s /q dist\bmc-engine
-          REM Copy app files
-          xcopy /E /I /Y src dist\staging\app\src >nul
-          xcopy /E /I /Y config dist\staging\app\config >nul
-          xcopy /E /I /Y examples dist\staging\app\examples >nul
-          copy tasks.json dist\staging\app\ >nul
-          echo Smoke test layout ready
+          mkdir runtime-layer
+          xcopy /E /I /Y dist\bmc-engine\_internal runtime-layer\_internal >nul
+          xcopy /E /I /Y dist\bmc-engine\playwright_browsers runtime-layer\playwright_browsers >nul
+          copy dist\bmc-engine\bmc-engine.exe runtime-layer\ >nul
+          echo [OK] runtime layer assembled: runtime-layer/
 
-      - name: Smoke test — engine help
-        shell: cmd
+      - name: Package runtime (dependency) layer
         run: |
-          cd dist\staging
-          runtime\bmc-engine.exe --help
-          if %ERRORLEVEL% NEQ 0 exit /b 1
-
-      - name: Smoke test — preflight with bundled Excel
-        shell: cmd
-        run: |
-          cd dist\staging
-          runtime\bmc-engine.exe --app-dir app --excel app\examples\task_template.xlsx --preflight-only
-          if %ERRORLEVEL% NEQ 0 exit /b 1
-
-      # ── Package ──────────────────────────────────────────
-      - name: Package runtime
-        run: |
-          cd dist\staging
-          7z a ..\bmc-runtime-${{ github.ref_name }}-win-x64.7z runtime
+          7z a bmc-runtime-${{ github.ref_name }}-win-x64.7z runtime-layer
 
       - name: Upload runtime artifact
         uses: actions/upload-artifact@v4
         with:
           name: runtime-win-x64
-          path: dist/bmc-runtime-${{ github.ref_name }}-win-x64.7z
+          path: bmc-runtime-${{ github.ref_name }}-win-x64.7z
           if-no-files-found: error
 
-  # ── App package (cross-platform, lightweight) ────────────
-  build-app:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── Build app (script) layer ──────────────────────────
+      # This layer: app/ + run.py + 启动.bat
+      # Changes every RC. User downloads this, extracts into project root,
+      # overwriting old app/ files while keeping runtime/ intact.
 
-      - name: Package app
+      - name: Assemble app (script) layer
+        shell: cmd
         run: |
-          mkdir -p dist/app
-          cp -r src/ config/ examples/ tasks.json README.md dist/app/
-          cp run.py dist/
-          cp 启动.bat dist/
-          cd dist
-          zip -r ../bmc-app-${{ github.ref_name }}.zip app/ run.py 启动.bat -x "*.pyc" "__pycache__/*"
+          mkdir app-layer\app
+          xcopy /E /I /Y src app-layer\app\src >nul
+          xcopy /E /I /Y config app-layer\app\config >nul
+          xcopy /E /I /Y examples app-layer\app\examples >nul
+          copy tasks.json app-layer\app\ >nul
+
+          REM Root-level launcher files
+          copy run.py app-layer\ >nul
+          for %%f in (*.bat) do copy "%%f" app-layer\ >nul
+
+          echo [OK] app layer assembled: app-layer/
+
+      - name: Package app (script) layer
+        run: |
+          7z a bmc-app-${{ github.ref_name }}.zip app-layer
 
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
@@ -134,9 +136,63 @@ jobs:
           path: bmc-app-${{ github.ref_name }}.zip
           if-no-files-found: error
 
-  # ── Release ──────────────────────────────────────────────
+      # ── Build full release (all-in-one, for official releases) ──
+      - name: Assemble full release directory
+        shell: cmd
+        run: |
+          mkdir bmc-auto-capture\runtime
+          mkdir bmc-auto-capture\app
+
+          REM Runtime (dependency) layer
+          xcopy /E /I /Y dist\bmc-engine\_internal bmc-auto-capture\runtime\_internal >nul
+          xcopy /E /I /Y dist\bmc-engine\playwright_browsers bmc-auto-capture\runtime\playwright_browsers >nul
+          copy dist\bmc-engine\bmc-engine.exe bmc-auto-capture\runtime\ >nul
+          rd /s /q dist\bmc-engine
+
+          REM App (script) layer
+          xcopy /E /I /Y src bmc-auto-capture\app\src >nul
+          xcopy /E /I /Y config bmc-auto-capture\app\config >nul
+          xcopy /E /I /Y examples bmc-auto-capture\app\examples >nul
+          copy tasks.json bmc-auto-capture\app\ >nul
+          copy run.py bmc-auto-capture\ >nul
+          for %%f in (*.bat) do copy "%%f" bmc-auto-capture\ >nul
+
+          REM README for user
+          if exist README_RELEASE.md (
+            copy README_RELEASE.md bmc-auto-capture\使用说明.txt >nul
+          )
+
+          echo [OK] full release assembled: bmc-auto-capture/
+
+      # ── Smoke tests ────────────────────────────────────────
+      - name: Smoke test — engine help
+        shell: cmd
+        run: |
+          cd bmc-auto-capture
+          runtime\bmc-engine.exe --help
+          if %ERRORLEVEL% NEQ 0 exit /b 1
+
+      - name: Smoke test — preflight with bundled Excel
+        shell: cmd
+        run: |
+          cd bmc-auto-capture
+          runtime\bmc-engine.exe --app-dir app --excel app\examples\task_template.xlsx --preflight-only
+          if %ERRORLEVEL% NEQ 0 exit /b 1
+
+      - name: Package full release
+        run: |
+          7z a bmc-auto-capture-${{ github.ref_name }}-win-x64.zip bmc-auto-capture
+
+      - name: Upload full release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-win-x64
+          path: bmc-auto-capture-${{ github.ref_name }}-win-x64.zip
+          if-no-files-found: error
+
+  # ── Release ───────────────────────────────────────────────
   release:
-    needs: [build-windows, build-app]
+    needs: [build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -146,7 +202,7 @@ jobs:
       - name: List downloaded artifacts
         run: find . -type f \( -name "*.7z" -o -name "*.zip" \) | sort
 
-      - name: Upload to release
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           name: "${{ github.ref_name }}"
@@ -155,3 +211,4 @@ jobs:
           files: |
             runtime-win-x64/*
             app/*
+            release-win-x64/*

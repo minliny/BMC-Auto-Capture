@@ -23,6 +23,7 @@ from .captcha_handler import detect_captcha, handle_captcha, CaptchaDetected
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
+from ..out.addressbar import normalize_bmc_addressbar_url, render_chrome_addressbar
 from ..rules.condition_evaluator import (
     evaluate_ready_conditions, evaluate_evidence_checkpoints,
     parse_ready_specs, parse_checkpoint_specs,
@@ -600,6 +601,7 @@ class BMCExecutor(AbstractExecutor):
         # Full-page screenshot
         ss_path = os.path.join(output_dir, f"{file_base}.png")
         await page.screenshot(path=ss_path, full_page=True)
+        self._compose_addressbar(ss_path, task, device.bmc_ip, page_url=page.url, result=result)
 
         result.screenshots = (ss_path,)
         result.step_results.append(StepResult(
@@ -917,7 +919,7 @@ class BMCExecutor(AbstractExecutor):
                 result.ready_failure_reason = f"ready conditions failed: {ready_eval.summary()}"
 
         # --- Step 4: final_capture (always runs if page is alive) ---
-        await self._execute_final_capture(page, file_base, output_dir, result)
+        await self._execute_final_capture(page, task, bmc_ip, file_base, output_dir, result)
 
         # --- Step 5: rules ---
         await self._evaluate_rules(page, task, device, output_dir, result)
@@ -1011,7 +1013,15 @@ class BMCExecutor(AbstractExecutor):
 
         return eval_result
 
-    async def _execute_final_capture(self, page, file_base: str, output_dir: str, result: ExecutionResult) -> None:
+    async def _execute_final_capture(
+        self,
+        page,
+        task,
+        bmc_ip: str,
+        file_base: str,
+        output_dir: str,
+        result: ExecutionResult,
+    ) -> None:
         """Guaranteed final evidence: screenshot + HTML save.
 
         Runs regardless of prior failures, as long as page is alive.
@@ -1039,6 +1049,7 @@ class BMCExecutor(AbstractExecutor):
         try:
             ss_path = os.path.join(output_dir, f"{file_base}.png")
             await page.screenshot(path=ss_path, full_page=True)
+            self._compose_addressbar(ss_path, task, bmc_ip, page_url=page.url, result=result)
             # Overwrite screenshots with final evidence only
             result.screenshots = (ss_path,)
             result.step_results.append(StepResult(
@@ -1084,6 +1095,60 @@ class BMCExecutor(AbstractExecutor):
         else:
             result.artifact_status = "ARTIFACT_FAILED"
             result.artifact_failure_reason = "; ".join(errors)
+
+    def _compose_addressbar(
+        self,
+        screenshot_path: str,
+        task,
+        bmc_ip: str,
+        page_url: str = "",
+        result: ExecutionResult | None = None,
+    ) -> None:
+        """Add an address bar to BMC evidence screenshots in place."""
+        display_url = self._resolve_addressbar_url(task, bmc_ip, page_url)
+        if not display_url:
+            if result is not None:
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name="addressbar_skipped",
+                    status="SKIP",
+                    details="no trusted BMC URL available",
+                ))
+            return
+
+        try:
+            stripped = render_chrome_addressbar(
+                screenshot_path,
+                screenshot_path,
+                display_url,
+                title=getattr(task, "task_name", "") or "BMC Web Console",
+            )
+            if result is not None:
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name="addressbar_composite",
+                    status="SUCCESS",
+                    screenshot=screenshot_path,
+                    details=f"url={display_url}; stripped_existing={stripped}",
+                ))
+        except Exception as e:
+            logger.warning("Failed to composite BMC address bar for %s: %s", screenshot_path, e)
+            if result is not None:
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name="addressbar_composite",
+                    status="FAILED",
+                    screenshot=screenshot_path,
+                    details=str(e),
+                ))
+
+    def _resolve_addressbar_url(self, task, bmc_ip: str, page_url: str = "") -> str:
+        """Prefer explicit task target, then trusted current page URL."""
+        flow = task.to_capture_flow() if hasattr(task, "to_capture_flow") else {}
+        target_url = normalize_bmc_addressbar_url(flow.get("target_url", ""), bmc_ip)
+        if target_url:
+            return target_url
+        return normalize_bmc_addressbar_url(page_url, bmc_ip)
 
     # --- Deprecated: kept for reference, not called by new pipeline ---
     async def _deprecated_run_bmc_url(self, *args, **kwargs):

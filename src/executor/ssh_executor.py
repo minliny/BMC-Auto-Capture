@@ -173,8 +173,12 @@ class SSHExecutor(AbstractExecutor):
                     if time.time() > task_deadline:
                         raise TimeoutError(f"Task deadline exceeded after {self.command_timeout * 2:.0f}s")
 
+                    # P0-1 FIX: get_pty=False avoids "SSH session not active"
+                    # on Huawei VRP / 灵衢 devices. PTY mode causes the remote
+                    # shell to close after command exit, breaking subsequent commands
+                    # that share the same SSH transport.
                     _stdin, stdout, stderr = client.exec_command(
-                        cmd, timeout=self.command_timeout, get_pty=True,
+                        cmd, timeout=self.command_timeout, get_pty=False,
                     )
 
                     channel = stdout.channel
