@@ -237,6 +237,4 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'RC') }}
           files: |
-            runtime-win-x64/*
-            app/*
             release-win-x64/*
