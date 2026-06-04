@@ -240,3 +240,5 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'RC') }}
           files: |
             release-win-x64/*
+            runtime-win-x64/*
+            app/*
