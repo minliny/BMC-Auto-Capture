@@ -151,7 +151,9 @@ jobs:
           if-no-files-found: error
 
       # ── Build full release (all-in-one, extract-and-run) ──
-      # Final layout user sees:
+      # Only this zip is attached to every release (RC or official).
+      # The runtime.7z and app.zip are internal build artifacts only.
+      # Final layout after extraction:
       #   bmc-auto-capture/
       #     runtime/
       #       bmc-engine.exe
