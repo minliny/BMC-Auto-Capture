@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import time
 
 from .base import AbstractExecutor
@@ -603,7 +604,7 @@ class BMCExecutor(AbstractExecutor):
         # Full-page screenshot
         ss_path = os.path.join(output_dir, f"{file_base}.png")
         await page.screenshot(path=ss_path, full_page=True)
-        self._compose_addressbar(ss_path, task, device.bmc_ip, page_url=page.url, result=result)
+        self._save_raw_and_compose(ss_path, task, device.bmc_ip, page_url=page.url, result=result)
 
         result.screenshots = (ss_path,)
         result.step_results.append(StepResult(
@@ -1051,7 +1052,7 @@ class BMCExecutor(AbstractExecutor):
         try:
             ss_path = os.path.join(output_dir, f"{file_base}.png")
             await page.screenshot(path=ss_path, full_page=True)
-            self._compose_addressbar(ss_path, task, bmc_ip, page_url=page.url, result=result)
+            self._save_raw_and_compose(ss_path, task, bmc_ip, page_url=page.url, result=result)
             # Overwrite screenshots with final evidence only
             result.screenshots = (ss_path,)
             result.step_results.append(StepResult(
@@ -1098,6 +1099,51 @@ class BMCExecutor(AbstractExecutor):
             result.artifact_status = "ARTIFACT_FAILED"
             result.artifact_failure_reason = "; ".join(errors)
 
+    def _save_raw_and_compose(
+        self,
+        screenshot_path: str,
+        task,
+        bmc_ip: str,
+        page_url: str = "",
+        result: ExecutionResult | None = None,
+    ) -> None:
+        """Save raw screenshot to raw/ then composite address bar in place.
+
+        1. Copy raw screenshot to raw/<basename> alongside the output.
+        2. Append raw path to result.raw_screenshots.
+        3. Composite the address bar on top of the original path.
+        Even if compositing fails, the raw screenshot is preserved.
+        """
+        # 1. Save raw
+        raw_dir = os.path.join(os.path.dirname(screenshot_path), "raw")
+        os.makedirs(raw_dir, exist_ok=True)
+        raw_path = os.path.join(raw_dir, os.path.basename(screenshot_path))
+        shutil.copy2(screenshot_path, raw_path)
+
+        if result is not None:
+            result.raw_screenshots = tuple(result.raw_screenshots or ()) + (raw_path,)
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="raw_screenshot_saved",
+                status="SUCCESS",
+                details=raw_path,
+            ))
+
+        # 2. Composite address bar
+        try:
+            self._compose_addressbar(
+                screenshot_path,
+                task,
+                bmc_ip,
+                page_url=page_url,
+                result=result,
+            )
+        except Exception:
+            logger.warning(
+                "Address bar composite failed for %s — raw screenshot preserved at %s",
+                screenshot_path, raw_path,
+            )
+
     def _compose_addressbar(
         self,
         screenshot_path: str,
@@ -1106,24 +1152,26 @@ class BMCExecutor(AbstractExecutor):
         page_url: str = "",
         result: ExecutionResult | None = None,
     ) -> None:
-        """Add an address bar to BMC evidence screenshots in place."""
-        display_url = self._resolve_addressbar_url(task, bmc_ip, page_url)
-        if not display_url:
-            if result is not None:
-                result.step_results.append(StepResult(
-                    step_index=len(result.step_results),
-                    step_name="addressbar_skipped",
-                    status="SKIP",
-                    details="no trusted BMC URL available",
-                ))
-            return
+        """Add an address bar to BMC evidence screenshots in place.
+
+        Tab title: iBMC {bmc_ip}
+        Address URL: actual page.url (page_url parameter)
+        """
+        address_url = page_url or ""
+        if not address_url:
+            address_url = f"https://{bmc_ip}" if bmc_ip else "about:blank"
+            logger.warning("page_url is empty, using fallback address URL: %s", address_url)
+
+        tab_title = f"iBMC {bmc_ip}" if bmc_ip else "iBMC"
+        if not bmc_ip:
+            logger.warning("bmc_ip is empty, address bar tab title will have no IP")
 
         try:
             stripped = render_chrome_addressbar(
                 screenshot_path,
                 screenshot_path,
-                display_url,
-                title=getattr(task, "task_name", "") or "BMC Web Console",
+                address_url,
+                title=tab_title,
             )
             if result is not None:
                 result.step_results.append(StepResult(
@@ -1131,7 +1179,7 @@ class BMCExecutor(AbstractExecutor):
                     step_name="addressbar_composite",
                     status="SUCCESS",
                     screenshot=screenshot_path,
-                    details=f"url={display_url}; stripped_existing={stripped}",
+                    details=f"tab={tab_title}; url={address_url}; stripped_existing={stripped}",
                 ))
         except Exception as e:
             logger.warning("Failed to composite BMC address bar for %s: %s", screenshot_path, e)

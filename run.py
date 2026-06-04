@@ -56,22 +56,26 @@ def _setup_browser_path():
     """Set PLAYWRIGHT_BROWSERS_PATH.
 
     Priority:
-    1. runtime/playwright_browsers/ under exe dir (project-root runtime)
-    2. ../runtime/playwright_browsers/ (app/run.py layout)
-    3. playwright_browsers/ next to exe (flat frozen layout)
-    4. ../playwright_browsers/ (old frozen layout)
-    5. PLAYWRIGHT_BROWSERS_PATH env var (if already set AND valid)
-    6. System ms-playwright cache (must actually contain browser files)
-    7. If all fail, UNSET stale env var so Playwright gives a clear error
+    1. runtime/playwright_browsers/ (full zip layout)
+    2. runtime-layer/playwright_browsers/ (RC split layout)
+    3. ../runtime/playwright_browsers/ (app/run.py layout)
+    4. ../runtime-layer/playwright_browsers/ (RC split, app/run.py layout)
+    5. playwright_browsers/ next to exe (flat frozen layout)
+    6. ../playwright_browsers/ (old frozen layout)
+    7. PLAYWRIGHT_BROWSERS_PATH env var (if already set AND valid)
+    8. System ms-playwright cache (must actually contain browser files)
+    9. If all fail, UNSET stale env var so Playwright gives a clear error
     """
     _print = print  # Use builtin print (logging may not be set up yet)
 
     # 1. Search bundled browsers — ordered by priority, all verified
     search_dirs = [
-        _exe_dir() / "runtime" / "playwright_browsers",        # project_root/runtime/playwright_browsers/
-        _exe_dir().parent / "runtime" / "playwright_browsers", # app/run.py → ../runtime/playwright_browsers/
-        _exe_dir() / "playwright_browsers",                    # frozen: next to exe
-        _exe_dir().parent / "playwright_browsers",             # frozen: one level up
+        _exe_dir() / "runtime" / "playwright_browsers",            # project_root/runtime/playwright_browsers/
+        _exe_dir() / "runtime-layer" / "playwright_browsers",     # RC split: runtime-layer/playwright_browsers/
+        _exe_dir().parent / "runtime" / "playwright_browsers",    # app/run.py → ../runtime/playwright_browsers/
+        _exe_dir().parent / "runtime-layer" / "playwright_browsers",  # app/run.py → ../runtime-layer/playwright_browsers/
+        _exe_dir() / "playwright_browsers",                       # frozen: next to exe
+        _exe_dir().parent / "playwright_browsers",                # frozen: one level up
     ]
 
     for d in search_dirs:

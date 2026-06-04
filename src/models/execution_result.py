@@ -41,6 +41,7 @@ class ExecutionResult:
     final_verdict: str = ""
     step_results: list = field(default_factory=list)
     screenshots: tuple = ()
+    raw_screenshots: tuple = ()
     html_file: str = ""
     txt_file: str = ""
     log_file: str = ""
