@@ -232,11 +232,23 @@ jobs:
       - name: List downloaded artifacts
         run: find . -type f \( -name "*.7z" -o -name "*.zip" \) | sort
 
-      - name: Publish release
+      - name: Publish RC release
+        if: contains(github.ref_name, 'RC')
         uses: softprops/action-gh-release@v2
         with:
           name: "${{ github.ref_name }}"
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, 'RC') }}
+          prerelease: true
           files: |
-            ${{ contains(github.ref_name, 'RC') && 'runtime-win-x64/*\napp/*' || 'release-win-x64/*' }}
+            runtime-win-x64/*
+            app/*
+
+      - name: Publish standard release
+        if: ${{ !contains(github.ref_name, 'RC') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ github.ref_name }}"
+          generate_release_notes: true
+          prerelease: false
+          files: |
+            release-win-x64/*
