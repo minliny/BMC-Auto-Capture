@@ -554,6 +554,7 @@ def render_final_addressbar(
 ) -> dict:
     """Composite final SVG address bar above a BMC screenshot.
 
+    Injects actual tab_title and URL into the SVG template before rendering.
     Returns metadata dict with keys:
       addressbar_source, addressbar_template, addressbar_ratio, addressbar_legacy_used
     """
@@ -582,13 +583,31 @@ def render_final_addressbar(
     meta["addressbar_template"] = svg_path.name
     meta["addressbar_ratio"] = ratio_name
 
-    # Render SVG to PNG
-    png_bytes = _svg_to_png(str(svg_path), width)
-    if png_bytes is None:
-        raise RuntimeError(
-            f"Failed to render final SVG address bar: {svg_path}. "
-            f"No silent fallback — check Playwright/chromium installation."
-        )
+    # Read SVG and inject actual text (replaces hardcoded "BMC Web Console" and example URL)
+    with open(str(svg_path), "r", encoding="utf-8") as f:
+        svg_content = f.read()
+    svg_content = svg_content.replace("BMC Web Console", title)
+    svg_content = svg_content.replace(
+        "https://192.168.1.10/UI/Static/#/navigate/system/storage",
+        url,
+    )
+
+    # Write modified SVG to temp file for rendering
+    import tempfile
+    tmp_svg = tempfile.NamedTemporaryFile(suffix=".svg", delete=False, mode="w", encoding="utf-8")
+    try:
+        tmp_svg.write(svg_content)
+        tmp_svg.close()
+
+        # Render modified SVG to PNG
+        png_bytes = _svg_to_png(str(tmp_svg.name), width)
+        if png_bytes is None:
+            raise RuntimeError(
+                f"Failed to render final SVG address bar: {svg_path}. "
+                f"No silent fallback — check Playwright/chromium installation."
+            )
+    finally:
+        os.unlink(tmp_svg.name)
 
     # Load rendered address bar as PIL Image
     import io

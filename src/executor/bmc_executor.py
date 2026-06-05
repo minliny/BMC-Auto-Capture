@@ -603,7 +603,7 @@ class BMCExecutor(AbstractExecutor):
                 )
 
         # File naming from template
-        file_base = resolve_template(task.image_name_template, device, task)
+        file_base, _ = self._resolve_file_basename(task, device)
 
         # Full-page screenshot
         ss_path = os.path.join(output_dir, f"{file_base}.png")
@@ -870,7 +870,7 @@ class BMCExecutor(AbstractExecutor):
                   → final_capture (guaranteed) → rules → checkpoints.
         """
         flow = task.to_capture_flow()
-        file_base = resolve_template(task.image_name_template, device, task)
+        file_base, _ = self._resolve_file_basename(task, device)
 
         # --- Step 1: goto target_url ---
         raw_target = flow.get("target_url", "")
@@ -1099,6 +1099,7 @@ class BMCExecutor(AbstractExecutor):
             ))
 
         # evidence.html — rendered DOM with computed styles inlined (offline-viewable)
+        evidence_path = ""
         try:
             evidence_html = await page.evaluate("""() => {
                 const root = document.documentElement.cloneNode(true);
@@ -1125,7 +1126,137 @@ class BMCExecutor(AbstractExecutor):
         except Exception as e:
             logger.warning("evidence.html failed: %s", e)
 
-        # MHTML — best-effort, not required for offline viewing
+        # State mirror: copy JS properties to HTML attributes before MHTML capture
+        state_mirror_ok = False
+        try:
+            await page.evaluate("""() => {
+                // input/textarea: value property → value attribute
+                for (const el of document.querySelectorAll('input, textarea')) {
+                    if (el.type === 'checkbox' || el.type === 'radio') {
+                        if (el.checked) el.setAttribute('checked', 'checked');
+                        else el.removeAttribute('checked');
+                    } else {
+                        if (el.value) el.setAttribute('value', el.value);
+                    }
+                }
+                // select: selected option → selected attribute
+                for (const sel of document.querySelectorAll('select')) {
+                    for (const opt of sel.options) {
+                        if (opt.selected) opt.setAttribute('selected', 'selected');
+                        else opt.removeAttribute('selected');
+                    }
+                }
+                // disabled/readonly → attribute sync
+                for (const el of document.querySelectorAll('[disabled], [readonly]')) {
+                    if (el.disabled) el.setAttribute('disabled', 'disabled');
+                    if (el.readOnly) el.setAttribute('readonly', 'readonly');
+                }
+            }""")
+            state_mirror_ok = True
+            logger.info("State mirror applied for MHTML: JS properties → HTML attributes")
+        except Exception as e:
+            logger.warning("State mirror failed: %s", e)
+
+        # State capture: extract structured state to JSON
+        state_json_path = ""
+        try:
+            state_data = await page.evaluate("""() => {
+                const result = {
+                    url: location.href,
+                    title: document.title,
+                    timestamp: new Date().toISOString(),
+                    visible_text: (document.body && document.body.innerText
+                        ? document.body.innerText.substring(0, 5000) : ''),
+                    inputs: [],
+                    textareas: [],
+                    selects: [],
+                    checked_like: [],
+                    active_tab_like: [],
+                    tables: [],
+                };
+                // Inputs
+                for (const el of document.querySelectorAll('input')) {
+                    const t = (el.type || 'text').toLowerCase();
+                    result.inputs.push({
+                        selector: el.tagName + (el.id ? '#'+el.id : '') + '[name="'+(el.name||'')+'"]',
+                        type: t, name: el.name || '', id: el.id || '',
+                        value: (t === 'checkbox' || t === 'radio') ? '' : (el.value || ''),
+                        checked: t === 'checkbox' || t === 'radio' ? el.checked : null,
+                        disabled: el.disabled,
+                        readonly: el.readOnly,
+                    });
+                }
+                // Textareas
+                for (const el of document.querySelectorAll('textarea')) {
+                    result.textareas.push({
+                        selector: el.tagName + (el.id ? '#'+el.id : '') + '[name="'+(el.name||'')+'"]',
+                        value: el.value || '',
+                    });
+                }
+                // Selects
+                for (const sel of document.querySelectorAll('select')) {
+                    const opts = [];
+                    for (const opt of sel.options) {
+                        if (opt.selected) opts.push({ text: opt.text, value: opt.value });
+                    }
+                    result.selects.push({
+                        selector: sel.tagName + (sel.id ? '#'+sel.id : '') + '[name="'+(sel.name||'')+'"]',
+                        selected_values: [opts[0] ? opts[0].value : ''],
+                        selected_texts: [opts[0] ? opts[0].text : ''],
+                    });
+                }
+                // Checked-like custom elements
+                for (const el of document.querySelectorAll(
+                    '[class*="checked"],[class*="selected"],[class*="is-checked"],[class*="is-selected"],' +
+                    '[aria-checked="true"],[aria-selected="true"],' +
+                    '[role="checkbox"],[role="option"],[role="switch"]'
+                )) {
+                    const aria = el.getAttribute('aria-checked') || el.getAttribute('aria-selected') || '';
+                    result.checked_like.push({
+                        selector: el.tagName.toLowerCase() + (el.id ? '#'+el.id : '') + '.' + (el.className||'').substring(0,60),
+                        class: (el.className || '').substring(0,80),
+                        aria_checked: aria,
+                        text: (el.textContent || '').substring(0,100),
+                    });
+                }
+                // Active/tab-like custom elements
+                for (const el of document.querySelectorAll(
+                    '[class*="active"],[class*="is-active"],[class*="tab-active"],' +
+                    '[aria-current="page"],[aria-current="true"],' +
+                    '[role="tab"][aria-selected="true"]' +
+                    ':not(input):not(textarea):not(select)'
+                )) {
+                    result.active_tab_like.push({
+                        selector: el.tagName.toLowerCase() + (el.id ? '#'+el.id : '') + '.' + (el.className||'').substring(0,60),
+                        class: (el.className || '').substring(0,80),
+                        text: (el.textContent || '').substring(0,100),
+                    });
+                }
+                // Tables: count rows and excerpt visible text
+                const tables = document.querySelectorAll('table');
+                tables.forEach((tbl, idx) => {
+                    const rows = tbl.querySelectorAll('tr');
+                    const cells = rows.length > 0 ? rows[0].querySelectorAll('th, td') : [];
+                    result.tables.push({
+                        table_index: idx,
+                        row_count: rows.length,
+                        column_count: cells.length,
+                        visible_text_excerpt: (tbl.innerText || '').substring(0,300),
+                    });
+                });
+                return result;
+            }""")
+            state_json_path = os.path.join(output_dir, f"{file_base}.state.json")
+            import json as _json2
+            with open(state_json_path, "w", encoding="utf-8") as f:
+                _json2.dump(state_data, f, ensure_ascii=False, indent=2)
+            logger.info("State JSON saved: %s (%.1f KB)", state_json_path, os.path.getsize(state_json_path) / 1024)
+        except Exception as e:
+            logger.warning("State capture failed: %s", e)
+
+        # MHTML — best-effort, after state mirror
+        mhtml_ok = False
+        mhtml_path = ""
         try:
             cdp = await page.context.new_cdp_session(page)
             result_cdp = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
@@ -1135,8 +1266,31 @@ class BMCExecutor(AbstractExecutor):
                 with open(mhtml_path, "wb") as f:
                     f.write(mhtml_data.encode("utf-8", errors="replace"))
                 logger.info("MHTML saved (best-effort): %s (%.1f MB)", mhtml_path, len(mhtml_data) / 1_048_576)
+                mhtml_ok = True
         except Exception as e:
             logger.debug("MHTML skipped (best-effort): %s", e)
+
+        # Log evidence summary
+        logger.info(
+            "证据清单: png=%s html=%s evidence_html=%s state_json=%s mhtml=%s "
+            "state_mirror=%s",
+            ss_path,
+            getattr(result, "html_file", ""),
+            evidence_path or "(not captured)",
+            state_json_path or "(not captured)",
+            mhtml_path if mhtml_ok else "(not captured)",
+            "applied" if state_mirror_ok else "failed",
+        )
+        result.step_results.append(StepResult(
+            step_index=len(result.step_results),
+            step_name="evidence_summary",
+            status="SUCCESS",
+            details=(
+                f"png={ss_path} html={getattr(result, 'html_file', '')} "
+                f"state_json={state_json_path} mhtml={'ok' if mhtml_ok else 'failed'} "
+                f"state_mirror={'ok' if state_mirror_ok else 'failed'}"
+            ),
+        ))
 
         # Set artifact_status
         if not errors:
@@ -1356,6 +1510,13 @@ class BMCExecutor(AbstractExecutor):
         with open(str(svg_path), "r", encoding="utf-8") as f:
             svg_content = f.read()
 
+        # Inject actual tab title and URL into SVG template text elements
+        svg_content = svg_content.replace("BMC Web Console", tab_title)
+        svg_content = svg_content.replace(
+            "https://192.168.1.10/UI/Static/#/navigate/system/storage",
+            address_url,
+        )
+
         # Render SVG via set_content with proper viewport and styling
         svg_page = await page.context.new_page()
         try:
@@ -1483,6 +1644,42 @@ class BMCExecutor(AbstractExecutor):
             except Exception:
                 continue
         return None
+
+    def _resolve_file_basename(self, task, device) -> tuple[str, bool]:
+        """Resolve evidence file basename from task template, with fallback.
+
+        Returns (basename, fallback_used).
+        Logs diagnostics: raw template, resolved name, context keys, unresolved vars.
+        """
+        raw_tmpl = getattr(task, "image_name_template", "") or ""
+        file_base = resolve_template(raw_tmpl, device=device, task=task)
+        unreplaced = check_unreplaced_vars(file_base)
+        fallback_used = False
+
+        if not file_base.strip():
+            logger.warning(
+                "文件名为空: raw_template=%r — 使用 fallback 命名 {OOB_IP}_{TaskName}_{timestamp}",
+                raw_tmpl,
+            )
+            file_base = resolve_template("{OOB_IP}_{TaskName}_{timestamp}", device=device, task=task)
+            fallback_used = True
+            if not file_base.strip():
+                raise RuntimeError(
+                    f"文件名模板解析为空且 fallback 也为空: "
+                    f"template={raw_tmpl!r}, fallback=OOB_IP={{OOB_IP}} TaskName={{TaskName}}"
+                )
+
+        logger.info(
+            "文件命名: raw_template=%r resolved=%s context_keys=(DeviceName=%s OOB_IP=%s TaskName=%s TaskSeq=%s timestamp) "
+            "unresolved=%s fallback_used=%s",
+            raw_tmpl, file_base,
+            getattr(device, "device_name", "?"),
+            getattr(device, "bmc_ip", "?"),
+            getattr(task, "task_name", "?"),
+            getattr(task, "sequence_str", str(getattr(task, "sequence", "?"))),
+            unreplaced, fallback_used,
+        )
+        return file_base, fallback_used
 
     def _resolve_url(self, raw: str, bmc_ip: str, device, task) -> str:
         raw = raw.strip()
