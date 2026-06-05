@@ -1288,19 +1288,54 @@ class BMCExecutor(AbstractExecutor):
 
         # 2. Composite address bar via existing browser
         try:
+            # Record pre-compose size for diagnostics
+            raw_img = Image.open(screenshot_path)
+            raw_w, raw_h = raw_img.size
+            raw_img.close()
+            logger.info("Address bar compose starting: raw_size=%dx%d", raw_w, raw_h)
+
             await self._compose_addressbar_async(
                 screenshot_path, task, bmc_ip, page_url=page_url, result=result, page=page,
             )
+
+            # Verify compose succeeded
+            final_img = Image.open(screenshot_path)
+            final_w, final_h = final_img.size
+            final_img.close()
+            added = final_h - raw_h
+            if added <= 0:
+                logger.error("Address bar compose had no effect: height unchanged (%d → %d)", raw_h, final_h)
+                if result is not None:
+                    result.step_results.append(StepResult(
+                        step_index=len(result.step_results),
+                        step_name="addressbar_compose",
+                        status="FAILED",
+                        details=f"height unchanged ({raw_h} → {final_h})",
+                    ))
+            else:
+                logger.info("Address bar compose success: %dx%d → %dx%d (+%dpx)", raw_w, raw_h, final_w, final_h, added)
         except Exception:
             logger.exception(
                 "Address bar composite failed for %s — raw screenshot preserved at %s",
                 screenshot_path, raw_path,
             )
+            if result is not None:
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name="addressbar_compose",
+                    status="FAILED",
+                    details=f"exception during compose",
+                ))
 
     async def _compose_addressbar_async(
         self, screenshot_path, task, bmc_ip, page_url="", result=None, page=None,
     ) -> None:
-        """Composite final SVG address bar using the existing browser page."""
+        """Composite final SVG address bar using the existing browser page.
+
+        The final SVGs are full-page templates (1920x1080 etc). The address bar
+        occupies the top ~96px of the design. We render the SVG at the screenshot
+        width, then clip only the address bar portion.
+        """
         from ..out.addressbar import _select_svg_template, _svg_template_ratio_name
 
         address_url = page_url or (f"https://{bmc_ip}" if bmc_ip else "about:blank")
@@ -1309,43 +1344,44 @@ class BMCExecutor(AbstractExecutor):
         image = Image.open(screenshot_path).convert("RGB")
         w, h = image.size
 
-        # Select SVG and read its content (avoid file:// security restrictions)
+        # Address bar design height = 96px within 1080px viewBox → scale by width
+        bar_design_h = 96  # SVG design: address bar is y=0..96 in viewBox
+        svg_viewbox_w = 1920
+        bar_height = max(64, min(108, round(bar_design_h * w / svg_viewbox_w)))
+
+        # Select SVG and read its content
         svg_path = _select_svg_template(w, h)
+        if not svg_path.exists():
+            raise FileNotFoundError(f"SVG template not found: {svg_path}")
         with open(str(svg_path), "r", encoding="utf-8") as f:
             svg_content = f.read()
 
-        # Render SVG via set_content (no file:// needed)
+        # Render SVG via set_content with proper viewport and styling
         svg_page = await page.context.new_page()
         try:
+            await svg_page.set_viewport_size({"width": w, "height": bar_height})
             await svg_page.set_content(
-                f"<!DOCTYPE html><html><body style='margin:0'>{svg_content}</body></html>",
+                f"<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
+                f"html,body{{margin:0;padding:0;width:{w}px;height:{bar_height}px;overflow:hidden;}}"
+                f"svg{{display:block;width:{w}px;height:auto;}}"
+                f"</style></head><body>{svg_content}</body></html>",
                 wait_until="load",
             )
-            # Get SVG natural dimensions
-            svg_h = await svg_page.evaluate("""() => {
-                const svg = document.querySelector('svg');
-                if (!svg) return 92;
-                const vb = svg.getAttribute('viewBox');
-                if (vb) {
-                    const parts = vb.split(/\\s+/);
-                    return Math.round(parseFloat(parts[3]) * window.innerWidth / parseFloat(parts[2]));
-                }
-                const box = svg.getBoundingClientRect();
-                return box.height || 92;
-            }""")
-            bar_height = max(64, min(108, svg_h)) if svg_h else 92
+            await svg_page.wait_for_selector("svg", timeout=5000)
             svg_png = await svg_page.screenshot(
                 clip={"x": 0, "y": 0, "width": w, "height": bar_height},
             )
             bar_img = Image.open(io.BytesIO(svg_png)).convert("RGB")
+
+            if bar_img.width < 10 or bar_img.height < 10:
+                raise RuntimeError(f"Rendered bar image too small: {bar_img.size}")
         finally:
             await svg_page.close()
 
-        # Composite
-        bar_height = bar_img.height
-        output = Image.new("RGB", (w, h + bar_height), (255, 255, 255))
+        # Composite: address bar on top, screenshot below
+        output = Image.new("RGB", (w, h + bar_img.height), (255, 255, 255))
         output.paste(bar_img, (0, 0))
-        output.paste(image, (0, bar_height))
+        output.paste(image, (0, bar_img.height))
         output.save(screenshot_path, "PNG")
 
         if result is not None:
