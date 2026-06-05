@@ -9,6 +9,7 @@ title BMC Auto-Capture
 
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
+set "RAW_ARGS=%*"
 
 :: --- 获取脚本所在目录 ---
 set "ROOT=%~dp0"
@@ -18,31 +19,45 @@ cd /d "%ROOT%"
 :: ============================================================
 ::  引擎检测(编译版 bmc-engine.exe > 离线 Python)
 :: ============================================================
-set "ENGINE="
+set "ENGINE_EXE="
+set "ENGINE_SCRIPT="
+set "ENGINE_DISPLAY="
 set "USE_PYTHON=0"
 
 :: 1. 编译引擎(开箱即用,最优先)
 if exist "%ROOT%\runtime\bmc-engine.exe" (
-    set "ENGINE=%ROOT%\runtime\bmc-engine.exe"
+    set "ENGINE_EXE=%ROOT%\runtime\bmc-engine.exe"
+    set "ENGINE_DISPLAY=%ROOT%\runtime\bmc-engine.exe"
 ) else if exist "%ROOT%\runtime\bmc-engine" (
-    set "ENGINE=%ROOT%\runtime\bmc-engine"
+    set "ENGINE_EXE=%ROOT%\runtime\bmc-engine"
+    set "ENGINE_DISPLAY=%ROOT%\runtime\bmc-engine"
 )
 
 :: 2. 离线 Python(打包部署场景自带的 Python)
-if "%ENGINE%"=="" (
+if "%ENGINE_EXE%"=="" (
     if exist "%ROOT%\.venv\Scripts\python.exe" (
-        set "ENGINE=%ROOT%\.venv\Scripts\python.exe %ROOT%\run.py"
+        set "ENGINE_EXE=%ROOT%\.venv\Scripts\python.exe"
+        set "ENGINE_SCRIPT=%ROOT%\run.py"
+        set "ENGINE_DISPLAY=%ROOT%\.venv\Scripts\python.exe %ROOT%\run.py"
         set "USE_PYTHON=1"
     ) else if exist "%USERPROFILE%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe" (
-        set "ENGINE=%USERPROFILE%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe %ROOT%\run.py"
+        set "ENGINE_EXE=%USERPROFILE%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe"
+        set "ENGINE_SCRIPT=%ROOT%\run.py"
+        set "ENGINE_DISPLAY=%USERPROFILE%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe %ROOT%\run.py"
         set "USE_PYTHON=1"
     ) else if exist "%USERPROFILE%\Documents\BMC离线部署包 - 多并发版本\offline_bmc_deps\python311\python.exe" (
-        set "ENGINE=%USERPROFILE%\Documents\BMC离线部署包 - 多并发版本\offline_bmc_deps\python311\python.exe %ROOT%\run.py"
+        set "ENGINE_EXE=%USERPROFILE%\Documents\BMC离线部署包 - 多并发版本\offline_bmc_deps\python311\python.exe"
+        set "ENGINE_SCRIPT=%ROOT%\run.py"
+        set "ENGINE_DISPLAY=%USERPROFILE%\Documents\BMC离线部署包 - 多并发版本\offline_bmc_deps\python311\python.exe %ROOT%\run.py"
         set "USE_PYTHON=1"
     ) else if exist "%ROOT%\run.py" (
-        where python >/dev/null 2>/dev/null
+        where python >nul 2>nul
         if %ERRORLEVEL% equ 0 (
-            for /f "delims=" %%p in ('where python') do set "ENGINE=%%p %ROOT%\run.py"
+            for /f "delims=" %%p in ('where python') do (
+                if "!ENGINE_EXE!"=="" set "ENGINE_EXE=%%p"
+            )
+            set "ENGINE_SCRIPT=%ROOT%\run.py"
+            set "ENGINE_DISPLAY=!ENGINE_EXE! %ROOT%\run.py"
             set "USE_PYTHON=1"
         )
     )
@@ -53,7 +68,7 @@ if "%USE_PYTHON%"=="1" (
     set "PYTHONPATH=%ROOT%\app;%ROOT%;%PYTHONPATH%"
 )
 
-if "%ENGINE%"=="" (
+if "%ENGINE_EXE%"=="" (
     echo( [错误] 未找到执行引擎或离线 Python。
     echo.
     echo( 请确保以下之一存在:
@@ -91,13 +106,20 @@ if /i "%~1"=="--log-level" set "LOG_LEVEL=%~2" & set "HAS_CLI_ARGS=1" & shift & 
 if /i "%~1"=="--excel"     set "EXCEL=%~2" & set "HAS_CLI_ARGS=1" & shift & shift & goto :parse_args
 if /i "%~1"=="-e"          set "EXCEL=%~2" & set "HAS_CLI_ARGS=1" & shift & shift & goto :parse_args
 
-:: 透传给引擎
+:: 未识别参数在 direct 模式中通过 RAW_ARGS 透传给引擎
 set "HAS_CLI_ARGS=1"
 shift
 goto :parse_args
 
 :check_mode
-if "%IS_SERVER%"=="1" goto Server 模式 — 直接使用编译引擎 bmc-engine.exe
+if "%IS_SERVER%"=="1" goto :run_server
+if "%HAS_CLI_ARGS%"=="1" goto :run_direct
+
+:: 无参数 → 交互菜单
+goto :menu
+
+:: ============================================================
+::  Server 模式 — 直接使用编译引擎 bmc-engine.exe
 :: ============================================================
 :run_server
 if "%HOST%"=="" set "HOST=0.0.0.0"
@@ -109,7 +131,7 @@ echo( ============================================================
 echo(   BMC Auto-Capture — API Server
 echo( ============================================================
 echo.
-echo(   引擎 : %ENGINE%
+echo(   引擎 : %ENGINE_DISPLAY%
 echo(   Host : %HOST%
 echo(   Port : %PORT%
 echo.
@@ -122,12 +144,13 @@ echo( ============================================================
 echo.
 
 set "PYTHONPATH=%ROOT%\app;%ROOT%;%PYTHONPATH%"
-"%ENGINE%" --app-dir "%ROOT%\app" --server --host %HOST% --port %PORT% --log-level %LOG_LEVEL%
-if %ERRORLEVEL% neq 0 (
-    echo( [错误] 服务器启动失败,退出码: %ERRORLEVEL%
+call :run_engine --app-dir "%ROOT%\app" --server --host %HOST% --port %PORT% --log-level %LOG_LEVEL%
+set "SERVER_EXIT=%ERRORLEVEL%"
+if %SERVER_EXIT% neq 0 (
+    echo( [错误] 服务器启动失败,退出码: %SERVER_EXIT%
     pause
 )
-exit /b %ERRORLEVEL%
+exit /b %SERVER_EXIT%
 
 :: ============================================================
 ::  交互菜单
@@ -139,7 +162,7 @@ echo(    BMC / SSH 自动化测试证据采集平台
 echo( ============================================================
 echo.
 echo(    Excel : %EXCEL%
-echo(    引擎  : %ENGINE%
+echo(    引擎  : %ENGINE_DISPLAY%
 echo.
 echo(    [1] 顺序执行(逐台设备,最稳定)
 echo(    [2] 并发执行(多设备同时,高效)
@@ -192,7 +215,7 @@ echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
 echo(    执行中,请勿关闭此窗口...
 echo.
-"%ENGINE%" --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode sequential
+call :run_engine --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode sequential
 set "SEQ_EXIT=%ERRORLEVEL%"
 echo.
 if %SEQ_EXIT% neq 0 (echo    [提示] 执行有错误,退出码: %SEQ_EXIT%)
@@ -209,7 +232,7 @@ echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
 echo(    执行中,请勿关闭此窗口...
 echo.
-"%ENGINE%" --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode full
+call :run_engine --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode full
 set "FULL_EXIT=%ERRORLEVEL%"
 echo.
 if %FULL_EXIT% neq 0 (echo    [提示] 执行有错误,退出码: %FULL_EXIT%)
@@ -226,7 +249,7 @@ echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
 echo(    正在检测 TCP 443/22 端口...
 echo.
-"%ENGINE%" --app-dir "%ROOT%\app" --excel "%EXCEL%" --preflight-only
+call :run_engine --app-dir "%ROOT%\app" --excel "%EXCEL%" --preflight-only
 echo.
 echo(    预检完成。按任意键返回菜单...
 pause >nul
@@ -241,7 +264,7 @@ echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
 echo(    执行中,请勿关闭此窗口...
 echo.
-"%ENGINE%" --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode sequential --verbose
+call :run_engine --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode sequential --verbose
 set "DBG_EXIT=%ERRORLEVEL%"
 echo.
 if %DBG_EXIT% neq 0 (echo    [DEBUG] 执行结束,退出码: %DBG_EXIT%) else (echo    [DEBUG] 执行成功完成)
@@ -255,7 +278,7 @@ if not exist "%EXCEL%" (
     if not exist "!EXCEL!" set "EXCEL=%ROOT%\examples\task_template.xlsx"
 )
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在 & pause & exit /b 1)
-"%ENGINE%" --app-dir "%ROOT%\app" --excel "%EXCEL%"
+call :run_engine --app-dir "%ROOT%\app" --excel "%EXCEL%" %RAW_ARGS%
 set "EXITCODE=%ERRORLEVEL%"
 echo(    执行完成,退出码: %EXITCODE%
 if %EXITCODE% neq 0 (pause)
@@ -281,6 +304,14 @@ if exist "!NEW_EXCEL!" (
 )
 timeout /t 2 >nul
 goto :menu
+
+:run_engine
+if "%ENGINE_SCRIPT%"=="" (
+    "%ENGINE_EXE%" %*
+) else (
+    "%ENGINE_EXE%" "%ENGINE_SCRIPT%" %*
+)
+exit /b %ERRORLEVEL%
 
 :end
 echo( 再见。
