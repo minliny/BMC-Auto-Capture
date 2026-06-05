@@ -62,6 +62,21 @@ def resolve_template(tmpl: str, device, task, extra: Optional[dict] = None) -> s
     result = result.replace("{timestamp}", ts)
     result = result.replace("{tags}", getattr(device, "tags", ""))
 
+    # 英文别名 (双语表头兼容)
+    result = result.replace("{TaskName}", task.task_name)
+    result = result.replace("{TaskType}", task.task_type)
+    result = result.replace("{TaskSequence}", seq)
+    result = result.replace("{DeviceGroup}", device.device_group)
+    result = result.replace("{DeviceName}", device.device_name)
+    result = result.replace("{OOB_IP}", device.bmc_ip)
+    result = result.replace("{OOB_Username}", device.bmc_username)
+    result = result.replace("{OOB_Password}", device.bmc_password)
+    result = result.replace("{IB_IP}", device.inband_ip)
+    result = result.replace("{IB_Username}", device.inband_username)
+    result = result.replace("{IB_Password}", device.inband_password)
+    result = result.replace("{OutputDir}", "")
+    result = result.replace("{FileNamePattern}", "")
+
     # 额外变量
     if extra:
         for key, value in extra.items():

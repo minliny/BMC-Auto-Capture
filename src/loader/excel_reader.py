@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 import openpyxl
@@ -66,73 +67,138 @@ def _parse_tags(raw: str) -> tuple[str, ...]:
 # Column name → canonical field name mapping (header-based, order-independent)
 DEVICE_HEADER_MAP: dict[str, str] = {}
 
+def _parse_bilingual_header(raw: str) -> list[str]:
+    """Parse a bilingual header like '设备名称(DeviceName)' into [中文, 英文].
+
+    Supports: '设备名称(DeviceName)' → ['设备名称', 'DeviceName']
+              '带外管理IP(OOB_IP)'  → ['带外管理IP', 'OOB_IP']
+              'DeviceName'          → ['DeviceName']
+              '设备名称'            → ['设备名称']
+    """
+    raw = raw.strip()
+    # Match "中文(English)" pattern
+    m = re.match(r'^(.+?)\(([A-Za-z_][A-Za-z0-9_]*)\)$', raw)
+    if m:
+        return [m.group(1).strip(), m.group(2).strip()]
+    return [raw]
+
+
 def _build_header_map(headers: list[str]) -> dict[str, int]:
     """Build header_name → column_index map from the header row.
-    Headers are matched by looking up canonical field names via DEVICE_HEADER_MAP."""
+
+    Supports:
+    - Chinese-only: 设备名称
+    - Bilingual: 设备名称(DeviceName)
+    - English-only: DeviceName
+
+    Headers are matched by looking up canonical field names via DEVICE_HEADER_MAP.
+    For bilingual headers, both the Chinese and English parts are mapped.
+    """
     if not DEVICE_HEADER_MAP:
         _init_header_map()
 
     col_map: dict[str, int] = {}
     for idx, h in enumerate(headers):
         h_clean = _str(h)
-        field = DEVICE_HEADER_MAP.get(h_clean, "")
-        if field:
-            col_map[field] = idx
-        else:
-            # Try case-insensitive match
-            for key, val in DEVICE_HEADER_MAP.items():
-                if key.lower() == h_clean.lower():
-                    col_map[val] = idx
-                    break
+        if not h_clean:
+            continue
+
+        # Parse bilingual: try each part
+        parts = _parse_bilingual_header(h_clean)
+        matched = False
+        for part in parts:
+            field = DEVICE_HEADER_MAP.get(part, "")
+            if field:
+                col_map[field] = idx
+                matched = True
+                break
+
+        if matched:
+            continue
+
+        # Fallback: case-insensitive match against all known keys
+        for key, val in DEVICE_HEADER_MAP.items():
+            if key.lower() == h_clean.lower():
+                col_map[val] = idx
+                matched = True
+                break
+
     return col_map
 
 
 def _init_header_map():
     """One-time init of header name → field mapping."""
+    # Bilingual entries: "中文(英文)" → canonical field name
+    _bilingual: list[tuple[str, str]] = [
+        ("设备名称(DeviceName)", "device_name"),
+        ("设备分组(DeviceGroup)", "device_group"),
+        ("设备分类(DeviceGroup)", "device_group"),
+        ("带外管理IP(OOB_IP)", "bmc_ip"),
+        ("带外管理用户名(OOB_Username)", "bmc_username"),
+        ("带外管理密码(OOB_Password)", "bmc_password"),
+        ("带内管理IP(IB_IP)", "inband_ip"),
+        ("带内管理用户名(IB_Username)", "inband_username"),
+        ("带内管理密码(IB_Password)", "inband_password"),
+        ("设备是否启用(DeviceEnabled)", "enabled"),
+        ("标签(Tags)", "tags"),
+    ]
+    for cn_en, field in _bilingual:
+        DEVICE_HEADER_MAP[cn_en] = field
+
     DEVICE_HEADER_MAP.update({
         # device_group — accepts both "设备分组" and legacy "设备分类"
         "设备分组": "device_group",
         "设备分类": "device_group",
+        "DeviceGroup": "device_group",
         "device_group": "device_group",
         # device_name
         "设备名称": "device_name",
+        "DeviceName": "device_name",
         "device_name": "device_name",
         # bmc_ip
         "带外管理IP": "bmc_ip",
+        "OOB_IP": "bmc_ip",
         "bmc_ip": "bmc_ip",
         "oob_ip": "bmc_ip",
         "BMC IP": "bmc_ip",
         "BMC IP地址": "bmc_ip",
         # enabled
         "设备是否启用": "enabled",
+        "DeviceEnabled": "enabled",
         "是否启用": "enabled",
         "enabled": "enabled",
         # bmc_username
         "带外管理用户名": "bmc_username",
+        "OOB_Username": "bmc_username",
         "bmc_username": "bmc_username",
         "BMC用户名": "bmc_username",
         "BMC账号": "bmc_username",
         # bmc_password
         "带外管理密码": "bmc_password",
+        "OOB_Password": "bmc_password",
         "bmc_password": "bmc_password",
         "BMC密码": "bmc_password",
         # inband_ip
         "带内管理IP": "inband_ip",
+        "IB_IP": "inband_ip",
         "inband_ip": "inband_ip",
         "ib_ip": "inband_ip",
         "SSH IP": "inband_ip",
         # inband_username
         "带内管理用户名": "inband_username",
+        "IB_Username": "inband_username",
         "inband_username": "inband_username",
         "SSH用户名": "inband_username",
         "带内账号": "inband_username",
         # inband_password
         "带内管理密码": "inband_password",
+        "IB_Password": "inband_password",
         "inband_password": "inband_password",
         "SSH密码": "inband_password",
         "带内密码": "inband_password",
         # tags
         "标签": "tags",
+        "Tags": "tags",
         "tags": "tags",
     })
 

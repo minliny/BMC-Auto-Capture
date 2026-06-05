@@ -24,7 +24,7 @@ from .captcha_handler import detect_captcha, handle_captcha, CaptchaDetected
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
-from ..out.addressbar import normalize_bmc_addressbar_url, render_chrome_addressbar
+from ..out.addressbar import normalize_bmc_addressbar_url, render_chrome_addressbar, render_final_addressbar
 from ..rules.condition_evaluator import (
     evaluate_ready_conditions, evaluate_evidence_checkpoints,
     parse_ready_specs, parse_checkpoint_specs,
@@ -118,8 +118,10 @@ class BMCExecutor(AbstractExecutor):
         browser_manager: BrowserManager,
         connect_timeout: float = 30.0,
         page_timeout: float = 60.0,
+        screenshot_policy: str = "final_only",
     ):
         self._bm = browser_manager
+        self._screenshot_policy = screenshot_policy
         self._connect_timeout = connect_timeout
         self._page_timeout = page_timeout
 
@@ -957,10 +959,15 @@ class BMCExecutor(AbstractExecutor):
                 elif action_type in ("wait", "sleep"):
                     await asyncio.sleep(float(value) if value else 1.0)
                 elif action_type == "intermediate_screenshot":
-                    # Action-level screenshot: intermediate debugging only, NOT final evidence
-                    ss_path = os.path.join(output_dir, f"intermediate_{i:02d}.png")
-                    await page.screenshot(path=ss_path, full_page=True)
-                    logger.debug("[%s] intermediate screenshot saved: %s", device.device_name, ss_path)
+                    # Action-level screenshot: policy-controlled
+                    if self._screenshot_policy in ("all", "checkpoints"):
+                        ss_path = os.path.join(output_dir, f"intermediate_{i:02d}.png")
+                        await page.screenshot(path=ss_path, full_page=True)
+                        logger.debug("[%s] intermediate screenshot saved (policy=%s): %s",
+                                   device.device_name, self._screenshot_policy, ss_path)
+                    else:
+                        logger.debug("[%s] intermediate screenshot skipped (policy=%s)", device.device_name,
+                                   self._screenshot_policy)
                 elif action_type == "goto":
                     pass  # Already handled as target_url in _run_capture_flow
                 else:
@@ -1089,6 +1096,28 @@ class BMCExecutor(AbstractExecutor):
                 details=str(e),
             ))
 
+        # Final MHTML (style-preserving archive)
+        try:
+            cdp = await page.context.new_cdp_session(page)
+            mhtml_data = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
+            mhtml_path = os.path.join(output_dir, f"{file_base}.mhtml")
+            with open(mhtml_path, "w", encoding="utf-8") as f:
+                f.write(mhtml_data.get("data", ""))
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="final_save_mhtml",
+                status="SUCCESS",
+                details=mhtml_path,
+            ))
+        except Exception as e:
+            logger.warning("MHTML capture failed (non-fatal): %s", e)
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="final_save_mhtml",
+                status="WARN",
+                details=f"MHTML failed: {e}",
+            ))
+
         # Set artifact_status
         if not errors:
             result.artifact_status = "ARTIFACT_SAVED"
@@ -1167,7 +1196,7 @@ class BMCExecutor(AbstractExecutor):
             logger.warning("bmc_ip is empty, address bar tab title will have no IP")
 
         try:
-            stripped = render_chrome_addressbar(
+            meta = render_final_addressbar(
                 screenshot_path,
                 screenshot_path,
                 address_url,
@@ -1179,7 +1208,12 @@ class BMCExecutor(AbstractExecutor):
                     step_name="addressbar_composite",
                     status="SUCCESS",
                     screenshot=screenshot_path,
-                    details=f"tab={tab_title}; url={address_url}; stripped_existing={stripped}",
+                    details=(
+                        f"tab={tab_title}; url={address_url}; "
+                        f"source={meta['addressbar_source']}; "
+                        f"template={meta['addressbar_template']}; "
+                        f"ratio={meta['addressbar_ratio']}"
+                    ),
                 ))
         except Exception as e:
             logger.warning("Failed to composite BMC address bar for %s: %s", screenshot_path, e)

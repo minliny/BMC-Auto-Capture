@@ -163,6 +163,13 @@ class SSHExecutor(AbstractExecutor):
 
             strategy = self._get_ssh_strategy(device)
 
+            transcript_meta = {
+                "ssh_strategy": strategy,
+                "input_echo_available": strategy == "interactive_shell",
+                "prompt_preserved": strategy == "interactive_shell",
+                "transcript_sanitization": "ansi_only/more_removed/control_chars_removed",
+            }
+
             all_output, has_failure, has_timeout, failure_reasons, cmd_outputs, step_results = (
                 self._execute_commands(
                     client, device, commands, cmd_spec, strategy,
@@ -246,7 +253,7 @@ class SSHExecutor(AbstractExecutor):
         result.duration_seconds = result.ended_at - result.started_at
 
         file_base = resolve_template(task.image_name_template, device, task)
-        log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result))
+        log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result, transcript_meta))
         result.log_file = log_path
 
         return result
@@ -300,6 +307,7 @@ class SSHExecutor(AbstractExecutor):
                 out = b"".join(out_chunks).decode("utf-8", errors="replace")
                 err = b"".join(err_chunks).decode("utf-8", errors="replace")
 
+                # exec_command: only raw stdout/stderr, NO fake command echo
                 combined = out
                 if err:
                     combined += f"\n{err}"
@@ -739,7 +747,7 @@ class SSHExecutor(AbstractExecutor):
         logger.warning("[%s] 所有禁用分页命令均失败，继续执行", device.device_name)
         return False
 
-    def _build_log(self, result: ExecutionResult) -> str:
+    def _build_log(self, result: ExecutionResult, transcript_meta: dict | None = None) -> str:
         lines = [
             f"Plan ID: {result.plan_id}",
             f"Device: {result.device_name} ({result.device_group})",
@@ -748,6 +756,12 @@ class SSHExecutor(AbstractExecutor):
             f"Status: {result.execution_status}",
             f"Duration: {result.duration_seconds:.1f}s",
         ]
+        if transcript_meta:
+            lines.append(f"ssh_strategy={transcript_meta.get('ssh_strategy', 'N/A')}")
+            lines.append(f"input_echo_available={transcript_meta.get('input_echo_available', False)}")
+            lines.append(f"raw_transcript_preserved=true")
+            lines.append(f"prompt_preserved={transcript_meta.get('prompt_preserved', False)}")
+            lines.append(f"transcript_sanitization={transcript_meta.get('transcript_sanitization', 'N/A')}")
         if result.execution_failure_reason:
             lines.append(f"Failure: {result.execution_failure_reason}")
         for s in result.step_results:

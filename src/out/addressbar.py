@@ -1,14 +1,38 @@
 """
 Chrome/Edge-style address bar compositing for BMC screenshots.
+
+Two rendering paths:
+  - final_svg (DEFAULT): uses tracked final-stage SVG assets, renders via Playwright
+  - legacy_pillow: old Pillow hand-drawn address bar (debug/fallback only)
 """
 
 from __future__ import annotations
 
+import asyncio
 import math
+import os
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
 from PIL import Image, ImageDraw, ImageFont
+
+
+# --- Final SVG asset paths ---
+_FINAL_SVG_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "assets"
+    / "addressbar"
+    / "final_stage_addressbar"
+)
+
+_FINAL_SVG_TEMPLATES = {
+    "16:9":  _FINAL_SVG_DIR / "final_addressbar_source_16x9_1920x1080.svg",
+    "16:10": _FINAL_SVG_DIR / "final_addressbar_source_16x10_1920x1200.svg",
+    "21:9":  _FINAL_SVG_DIR / "final_addressbar_source_21x9_2560x1080.svg",
+}
 
 
 BAR_HEIGHT = 92
@@ -438,3 +462,140 @@ def render_image2_template_addressbar(
     output_png.parent.mkdir(parents=True, exist_ok=True)
     output.save(output_png, "PNG")
     return stripped
+
+
+# ---------------------------------------------------------------------------
+# Final SVG address bar (default rendering path)
+# ---------------------------------------------------------------------------
+
+# In-memory cache: svg_path → rendered PNG bytes (keyed by (path, width))
+_svg_render_cache: dict[tuple[str, int], bytes] = {}
+
+
+def _select_svg_template(image_width: int, image_height: int) -> Path:
+    """Select the closest final SVG address bar template by aspect ratio."""
+    if image_width <= 0 or image_height <= 0:
+        return _FINAL_SVG_TEMPLATES["16:9"]
+
+    ratio = image_width / image_height
+    # Thresholds between standard ratios
+    ratios = {
+        "21:9": 21/9,
+        "16:9": 16/9,
+        "16:10": 16/10,
+    }
+    best = min(ratios.items(), key=lambda kv: abs(kv[1] - ratio))
+    return _FINAL_SVG_TEMPLATES[best[0]]
+
+
+def _svg_template_ratio_name(svg_path: Path) -> str:
+    for name, path in _FINAL_SVG_TEMPLATES.items():
+        if path.resolve() == svg_path.resolve():
+            return name
+    return "nearest"
+
+
+def _svg_to_png(svg_path: str, output_width: int) -> bytes | None:
+    """Render an SVG to PNG bytes using the Playwright sync API.
+
+    Returns PNG bytes on success, None on failure.
+    """
+    cache_key = (svg_path, output_width)
+    if cache_key in _svg_render_cache:
+        return _svg_render_cache[cache_key]
+
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": output_width, "height": 200})
+
+            # Load SVG file
+            abs_path = os.path.abspath(svg_path)
+            page.goto(f"file://{abs_path}", wait_until="load")
+
+            # Get the SVG element's natural height
+            svg_height = page.evaluate("""() => {
+                const svg = document.querySelector('svg');
+                if (!svg) return 126;
+                const box = svg.getBoundingClientRect();
+                return box.height || 126;
+            }""")
+
+            # Screenshot the SVG area
+            png_bytes = page.screenshot(
+                clip={"x": 0, "y": 0, "width": output_width, "height": svg_height},
+                full_page=False,
+            )
+            browser.close()
+
+            _svg_render_cache[cache_key] = png_bytes
+            return png_bytes
+
+    except Exception as e:
+        import logging
+        logging.getLogger("bmc_auto_capture.addressbar").warning(
+            "Failed to render SVG via Playwright: %s", e
+        )
+        return None
+
+
+def render_final_addressbar(
+    source_png: str | Path,
+    output_png: str | Path,
+    url: str,
+    title: str = "iBMC",
+    strip_existing_bar: bool = True,
+) -> dict:
+    """Composite final SVG address bar above a BMC screenshot.
+
+    Returns metadata dict with keys:
+      addressbar_source, addressbar_template, addressbar_ratio, addressbar_legacy_used
+    """
+    source_png = Path(source_png)
+    output_png = Path(output_png)
+
+    meta = {
+        "addressbar_source": "final_svg",
+        "addressbar_template": "",
+        "addressbar_ratio": "",
+        "addressbar_legacy_used": False,
+    }
+
+    image = Image.open(source_png).convert("RGB")
+    width, height = image.size
+
+    # Strip existing bar if detected
+    if strip_existing_bar and looks_like_composited_addressbar(image):
+        bar_h = addressbar_height_for_width(width)
+        image = image.crop((0, bar_h, image.width, image.height))
+        width, height = image.size
+
+    # Select template by aspect ratio
+    svg_path = _select_svg_template(width, height)
+    ratio_name = _svg_template_ratio_name(svg_path)
+    meta["addressbar_template"] = svg_path.name
+    meta["addressbar_ratio"] = ratio_name
+
+    # Render SVG to PNG
+    png_bytes = _svg_to_png(str(svg_path), width)
+    if png_bytes is None:
+        raise RuntimeError(
+            f"Failed to render final SVG address bar: {svg_path}. "
+            f"No silent fallback — check Playwright/chromium installation."
+        )
+
+    # Load rendered address bar as PIL Image
+    import io
+    bar_img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    bar_height = bar_img.height
+
+    # Composite: address bar on top, screenshot below
+    output = Image.new("RGB", (width, height + bar_height), (255, 255, 255))
+    output.paste(bar_img, (0, 0))
+    output.paste(image, (0, bar_height))
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    output.save(output_png, "PNG")
+
+    return meta

@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <rect width="1920" height="1080" fill="#f3f6fa"/>
+
+  <g id="browser-chrome">
+    <rect x="0" y="0" width="1920" height="38" fill="#f7f9fc"/>
+    <rect x="0" y="38" width="1920" height="58" fill="#ffffff"/>
+    <line x1="0" y1="38" x2="44" y2="38" stroke="#dbe0e7" stroke-width="1"/>
+    <line x1="326" y1="38" x2="1920" y2="38" stroke="#dbe0e7" stroke-width="1"/>
+    <line x1="0" y1="95" x2="1920" y2="95" stroke="#c4cad2" stroke-width="1"/>
+
+    <svg x="16" y="9" width="24" height="24" viewBox="0 0 24 24"><path fill="#1f2a38" d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
+
+    <!-- Active tab rebuilt at real browser scale: bottom is open; shoulders own the baseline. -->
+    <path d="M 54 38 L 54 18 C 54 11 61 6 68 6 L 300 6 C 307 6 314 11 314 18 L 314 38 Z" fill="#ffffff"/>
+    <path d="M 40 38 C 47 38 54 31 54 20 L 54 38 Z" fill="#ffffff"/>
+    <path d="M 314 20 C 314 31 321 38 328 38 L 314 38 Z" fill="#ffffff"/>
+    <path d="M 40 38 C 47 38 54 31 54 20 L 54 18 C 54 11 61 6 68 6 L 300 6 C 307 6 314 11 314 18 L 314 20 C 314 31 321 38 328 38" fill="none" stroke="#d3d9e1" stroke-width="1" stroke-linecap="round"/>
+    <text x="70" y="26" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="14" fill="#12161b">BMC Web Console</text>
+    <g stroke="#12161b" stroke-width="1.8" stroke-linecap="round">
+      <path d="M 285 17 L 295 27 M 295 17 L 285 27"/>
+      <path d="M 340 14 L 340 30 M 332 22 L 348 22"/>
+    </g>
+
+    <svg x="17" y="58" width="26" height="26" viewBox="0 0 24 24"><path fill="#1f2a38" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.42-1.41L7.83 13H20z"/></svg>
+    <svg x="52" y="58" width="26" height="26" viewBox="0 0 24 24"><path fill="#7e8690" d="m12 4-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
+    <svg x="88" y="58" width="26" height="26" viewBox="0 0 24 24"><path fill="#1f2a38" d="M17.65 6.35c-1.63-1.63-3.94-2.57-6.48-2.31-3.67.37-6.69 3.35-7.1 7.02C3.52 15.91 7.27 20 12 20c3.19 0 5.93-1.87 7.21-4.56.32-.67-.16-1.44-.9-1.44-.37 0-.72.2-.88.53-1.13 2.43-3.84 3.97-6.8 3.31-2.22-.49-4.01-2.3-4.48-4.52C5.31 9.44 8.26 6 12 6c1.66 0 3.14.69 4.22 1.78l-1.51 1.51c-.63.63-.19 1.71.7 1.71H19c.55 0 1-.45 1-1V6.41c0-.89-1.08-1.34-1.71-.71z"/></svg>
+
+    <rect x="132" y="52" width="1744" height="36" rx="18" fill="#ffffff" stroke="#c5ccd6" stroke-width="1"/>
+    <svg x="146" y="58" width="24" height="24" viewBox="0 0 24 24"><path fill="#b82020" d="M12 2 4 5v6.09c0 5.05 3.41 9.76 8 11.91 4.59-2.15 8-6.86 8-11.91V5zm0 2.18 6 2.25v4.66c0 3.86-2.51 7.55-6 9.47-3.49-1.92-6-5.61-6-9.47V6.43z"/><path fill="#b82020" d="M12 6.05 8 7.55v3.3c0 2.42 1.57 4.74 4 6.12 2.43-1.38 4-3.7 4-6.12v-3.3z"/></svg>
+    <text x="178" y="75" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="14" fill="#b82020">不安全</text>
+    <line x1="232" y1="60" x2="232" y2="88" stroke="#cad0d8" stroke-width="1"/>
+    <text x="246" y="75" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="14" fill="#12161b">https://192.168.1.10/UI/Static/#/navigate/system/storage</text>
+    <svg x="1836" y="58" width="26" height="26" viewBox="0 0 24 24"><path fill="#1f2a38" d="m22 9.24-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28z"/></svg>
+    <svg x="1877" y="58" width="26" height="26" viewBox="0 0 24 24"><path fill="#1f2a38" d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+  </g>
+
+  <g id="bmc-content" transform="translate(0 96)">
+    <rect width="1920" height="984" fill="#f3f6fa"/>
+    <rect x="0" y="0" width="286" height="984" fill="#1f2d3e"/>
+    <text x="28" y="54" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="26" fill="#ffffff">BMC</text>
+    <text x="38" y="113" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#e2e8f0">Dashboard</text>
+    <text x="38" y="165" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#e2e8f0">System Info</text>
+    <rect x="18" y="190" width="250" height="40" rx="8" fill="#394c64"/>
+    <text x="38" y="215" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#e2e8f0">Storage</text>
+    <text x="38" y="267" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#e2e8f0">Power</text>
+    <text x="38" y="319" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#e2e8f0">Maintenance</text>
+
+    <text x="320" y="61" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="30" fill="#18202c">Storage Management</text>
+    <text x="320" y="84" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="16" fill="#606a78">Logical drives and controller status</text>
+    <rect x="320" y="112" width="511.33" height="105" rx="8" fill="#ffffff" stroke="#dae0e8"/>
+    <text x="340" y="143" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#667085">Controller</text>
+    <text x="340" y="187" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="27" fill="#202832">Normal</text>
+    <rect x="847.33" y="112" width="511.33" height="105" rx="8" fill="#ffffff" stroke="#dae0e8"/>
+    <text x="867.33" y="143" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#667085">Logical Drive</text>
+    <text x="867.33" y="187" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="27" fill="#202832">1</text>
+    <rect x="1374.67" y="112" width="511.33" height="105" rx="8" fill="#ffffff" stroke="#dae0e8"/>
+    <text x="1394.67" y="143" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#667085">Capacity</text>
+    <text x="1394.67" y="187" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="27" fill="#202832">1.92 TB</text>
+
+    <rect x="320" y="250" width="1566" height="692" rx="8" fill="#ffffff" stroke="#dae0e8"/>
+    <text x="342" y="287" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#667085">Name</text>
+    <text x="641.03" y="287" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#667085">RAID</text>
+    <text x="962.06" y="287" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#667085">Status</text>
+    <text x="1283.09" y="287" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#667085">Capacity</text>
+    <text x="1604.12" y="287" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="15" fill="#667085">Media</text>
+    <line x1="320" y1="309" x2="1886" y2="309" stroke="#e2e7ee"/>
+    <text x="342" y="349" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="16" fill="#202832">Logical Drive 0</text>
+    <text x="641.03" y="349" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="16" fill="#202832">RAID 1</text>
+    <text x="962.06" y="349" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="16" fill="#168a50">Normal</text>
+    <text x="1283.09" y="349" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="16" fill="#202832">1.92 TB</text>
+    <text x="1604.12" y="349" font-family="Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="16" fill="#202832">SSD</text>
+  </g>
+</svg>
