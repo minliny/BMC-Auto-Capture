@@ -36,7 +36,23 @@ bmc-auto-capture/
 3. 菜单 `[1]` 顺序执行（逐台设备，最稳定）
 4. 等待完成，结果在 `output/` 目录
 
-### 方式二：命令行直接执行
+### 方式二：启动 API Server（网络连通性检测）
+
+```cmd
+启动.bat --server
+```
+
+Server 模式下提供：
+- `http://localhost:8080/health`  — 健康检查
+- `http://localhost:8080/version` — 版本信息
+- `http://localhost:8080/network/ping` — 网络连通性检测
+
+可用参数：
+```cmd
+启动.bat --server --host 0.0.0.0 --port 8080 --log-level info
+```
+
+### 方式三：命令行直接执行
 
 ```cmd
 启动.bat --excel "C:\path\to\your_tasks.xlsx" --mode full
@@ -57,18 +73,22 @@ Excel 需包含两个工作表：
 
 模板文件位于：`app/examples/task_template.xlsx`
 
-## 五、RC 版本升级（仅更新脚本）
+## 五、更新升级
 
-如果已下载过完整包（runtime 层），后续 RC 版本只需要：
+如果后续版本发布，只需要：
 
-1. 下载 `bmc-app-vX.X.X-RCXX.zip`
-2. 解压到项目根目录，覆盖 `app/`、`run.py`、`启动.bat`
-3. 不需要重新下载 runtime 层（240MB）
+1. 下载最新包
+2. 解压覆盖 `app/`、`run.py`、`启动.bat`
+3. 不需要重新下载 runtime 层（240MB，除非引擎版本升级）
 
 ## 六、常用命令行参数
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
+| `--server` | 启动 API Server 模式 | — |
+| `--host` | Server 监听地址 | 0.0.0.0 |
+| `--port` | Server 监听端口 | 8080 |
+| `--log-level` | Server 日志级别 | info |
 | `--excel` | Excel 配置文件路径 | 必填 |
 | `--mode` | sequential（顺序）/ full（并发） | sequential |
 | `--output` | 输出根目录 | YAML 配置 |
