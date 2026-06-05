@@ -262,8 +262,8 @@ class BMCExecutor(AbstractExecutor):
         result.ended_at = time.time()
         result.duration_seconds = result.ended_at - result.started_at
 
-        file_base = resolve_template(task.image_name_template, device, task)
-        log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result))
+        file_base, _ = self._resolve_file_basename(task, device)
+        log_path = ""  # .log files discontinued; metadata in state.json
         result.log_file = log_path
 
         return result
@@ -1056,7 +1056,11 @@ class BMCExecutor(AbstractExecutor):
 
         errors = []
 
-        # Final screenshot (content-aware)
+        # html/ subdirectory for non-visual evidence
+        html_dir = os.path.join(output_dir, "html")
+        os.makedirs(html_dir, exist_ok=True)
+
+        # Final screenshot (content-aware) — stays in main output dir
         ss_path = ""
         try:
             ss_path = os.path.join(output_dir, f"{file_base}.png")
@@ -1079,10 +1083,10 @@ class BMCExecutor(AbstractExecutor):
                 details=str(e),
             ))
 
-        # Final HTML
+        # Final HTML — into html/ subdirectory
         try:
             html_content = await page.content()
-            html_path = write_html_file(output_dir, f"{file_base}.html", html_content)
+            html_path = write_html_file(html_dir, f"{file_base}.html", html_content)
             result.html_file = html_path
             result.step_results.append(StepResult(
                 step_index=len(result.step_results),
@@ -1113,7 +1117,7 @@ class BMCExecutor(AbstractExecutor):
                 }
                 return '<!DOCTYPE html>\\n' + root.outerHTML;
             }""")
-            evidence_path = os.path.join(output_dir, f"{file_base}.evidence.html")
+            evidence_path = os.path.join(html_dir, f"{file_base}.evidence.html")
             with open(evidence_path, "w", encoding="utf-8") as f:
                 f.write(evidence_html)
             logger.info("evidence.html (DOM) saved: %s (%.1f KB)", evidence_path, len(evidence_html) / 1024)
@@ -1156,6 +1160,22 @@ class BMCExecutor(AbstractExecutor):
             logger.info("State mirror applied for MHTML: JS properties → HTML attributes")
         except Exception as e:
             logger.warning("State mirror failed: %s", e)
+
+        # MHTML — best-effort, after state mirror, before state capture
+        mhtml_ok = False
+        mhtml_path = ""
+        try:
+            cdp = await page.context.new_cdp_session(page)
+            result_cdp = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
+            mhtml_data = result_cdp.get("data", "")
+            if mhtml_data and len(mhtml_data) > 100:
+                mhtml_path = os.path.join(html_dir, f"{file_base}.mhtml")
+                with open(mhtml_path, "wb") as f:
+                    f.write(mhtml_data.encode("utf-8", errors="replace"))
+                logger.info("MHTML saved (best-effort): %s (%.1f MB)", mhtml_path, len(mhtml_data) / 1_048_576)
+                mhtml_ok = True
+        except Exception as e:
+            logger.debug("MHTML skipped (best-effort): %s", e)
 
         # State capture: extract structured state to JSON
         state_json_path = ""
@@ -1246,29 +1266,30 @@ class BMCExecutor(AbstractExecutor):
                 });
                 return result;
             }""")
-            state_json_path = os.path.join(output_dir, f"{file_base}.state.json")
+            state_json_path = os.path.join(html_dir, f"{file_base}.state.json")
+            # Add metadata section
+            state_data["metadata"] = {
+                "url": state_data.get("url", ""),
+                "title": state_data.get("title", ""),
+                "captured_at": state_data.get("timestamp", ""),
+                "screenshot_path": ss_path,
+                "html_path": os.path.join("html", f"{file_base}.html"),
+                "mhtml_path": os.path.join("html", f"{file_base}.mhtml") if mhtml_ok else "",
+                "state_capture_status": "success",
+                "mhtml_capture_status": "ok" if mhtml_ok else "failed",
+                "addressbar_source": "final_svg",
+                "addressbar_tab_title": f"iBMC {bmc_ip}" if bmc_ip else "iBMC",
+                "addressbar_url": page.url if hasattr(page, 'url') else "",
+                "raw_file_name_pattern": getattr(task, "image_name_template", ""),
+                "resolved_file_basename": file_base,
+                "fallback_used": False,
+            }
             import json as _json2
             with open(state_json_path, "w", encoding="utf-8") as f:
                 _json2.dump(state_data, f, ensure_ascii=False, indent=2)
             logger.info("State JSON saved: %s (%.1f KB)", state_json_path, os.path.getsize(state_json_path) / 1024)
         except Exception as e:
             logger.warning("State capture failed: %s", e)
-
-        # MHTML — best-effort, after state mirror
-        mhtml_ok = False
-        mhtml_path = ""
-        try:
-            cdp = await page.context.new_cdp_session(page)
-            result_cdp = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
-            mhtml_data = result_cdp.get("data", "")
-            if mhtml_data and len(mhtml_data) > 100:
-                mhtml_path = os.path.join(output_dir, f"{file_base}.mhtml")
-                with open(mhtml_path, "wb") as f:
-                    f.write(mhtml_data.encode("utf-8", errors="replace"))
-                logger.info("MHTML saved (best-effort): %s (%.1f MB)", mhtml_path, len(mhtml_data) / 1_048_576)
-                mhtml_ok = True
-        except Exception as e:
-            logger.debug("MHTML skipped (best-effort): %s", e)
 
         # Log evidence summary
         logger.info(
@@ -1490,7 +1511,7 @@ class BMCExecutor(AbstractExecutor):
         occupies the top ~96px of the design. We render the SVG at the screenshot
         width, then clip only the address bar portion.
         """
-        from ..out.addressbar import _select_svg_template, _svg_template_ratio_name
+        from ..out.addressbar import _select_svg_template, _svg_template_ratio_name, _inject_svg_text
 
         address_url = page_url or (f"https://{bmc_ip}" if bmc_ip else "about:blank")
         tab_title = f"iBMC {bmc_ip}" if bmc_ip else "iBMC"
@@ -1510,12 +1531,8 @@ class BMCExecutor(AbstractExecutor):
         with open(str(svg_path), "r", encoding="utf-8") as f:
             svg_content = f.read()
 
-        # Inject actual tab title and URL into SVG template text elements
-        svg_content = svg_content.replace("BMC Web Console", tab_title)
-        svg_content = svg_content.replace(
-            "https://192.168.1.10/UI/Static/#/navigate/system/storage",
-            address_url,
-        )
+        # Inject tab title, URL, and auto-size tab width
+        svg_content = _inject_svg_text(svg_content, tab_title, address_url)
 
         # Render SVG via set_content with proper viewport and styling
         svg_page = await page.context.new_page()

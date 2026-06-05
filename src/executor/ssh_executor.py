@@ -306,8 +306,10 @@ class SSHExecutor(AbstractExecutor):
         result.duration_seconds = result.ended_at - result.started_at
 
         file_base = resolve_template(task.image_name_template, device, task)
-        log_path = write_log_file(output_dir, f"{file_base}.log", self._build_log(result, transcript_meta))
-        result.log_file = log_path
+        result.log_file = ""  # .log files discontinued; metadata in runtime_context
+        # Store transcript metadata in runtime_context for diagnostics
+        if transcript_meta:
+            result.runtime_context = json.dumps(transcript_meta, ensure_ascii=False)
 
         return result
 

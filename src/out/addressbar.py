@@ -475,6 +475,159 @@ def render_image2_template_addressbar(
 # In-memory cache: svg_path → rendered PNG bytes (keyed by (path, width))
 _svg_render_cache: dict[tuple[str, int], bytes] = {}
 
+# --- SVG tab layout constants (all SVGs share the same base coordinates) ---
+# These define the tab geometry at the design width (1920px viewBox).
+_TAB_LEFT = 54           # tab path left edge x
+_TITLE_X = 70            # title text start x
+_ORIG_RIGHT = 314        # original tab right edge x
+_ORIG_FLAT = 300         # original right flat start (_ORIG_RIGHT - 14)
+_ORIG_CURVE_START = 307  # original curve control point (_ORIG_RIGHT - 7)
+_ORIG_SHOULDER = 328     # original right shoulder tip (_ORIG_RIGHT + 14)
+_ORIG_CLOSE_CENTER = 290 # original close button center (_ORIG_RIGHT - 24)
+_ORIG_SEP = 326          # original separator x1 (_ORIG_RIGHT + 12)
+
+_MIN_TAB_WIDTH = 120
+_MAX_TAB_WIDTH = 400
+_TITLE_TO_CLOSE_GAP = 16  # min px between title end and close button left edge
+_CLOSE_HALF = 5           # close button "x" extends 5px from center
+
+
+def _measure_title_width(title: str, font_size: int = 14) -> int:
+    """Approximate rendered width of the tab title in SVG px.
+
+    Uses PIL font metrics for the same font family as the SVG templates.
+    """
+    font = _load_font(font_size)
+    bbox = font.getbbox(title)
+    return bbox[2] - bbox[0] if bbox else len(title) * 7
+
+
+def _inject_svg_text(svg_content: str, tab_title: str, address_url: str) -> str:
+    """Inject tab title, URL, and dynamically compute tab width into SVG content.
+
+    Adjusts tab path right edge, close button position, and separator
+    based on the rendered title width.  Handles long titles via ellipsis.
+
+    Layout model (all values at design 1920px viewBox):
+      tab_left_padding = _TITLE_X - _TAB_LEFT (= 16)
+      title_rendered_width = measured from font
+      close_button_width = 2 * _CLOSE_HALF (= 10)
+      right_padding = _ORIG_RIGHT - (_ORIG_CLOSE_CENTER + _CLOSE_HALF) (= 19)
+
+      tab_width =
+          tab_left_padding
+        + title_rendered_width
+        + _TITLE_TO_CLOSE_GAP
+        + close_button_width
+        + right_padding
+
+      Clamped to [_MIN_TAB_WIDTH, _MAX_TAB_WIDTH].
+
+    If title is too long, it is truncated with ellipsis to fit within
+    the max allowed title width:
+      max_allowed_title_width = _MAX_TAB_WIDTH - tab_left_padding
+                                - _TITLE_TO_CLOSE_GAP - close_button_width
+                                - right_padding
+    """
+    import re
+
+    # --- 1. Measure and optionally truncate title ---
+    left_pad = _TITLE_X - _TAB_LEFT  # 16
+    close_btn_w = 2 * _CLOSE_HALF     # 10
+    right_pad = _ORIG_RIGHT - (_ORIG_CLOSE_CENTER + _CLOSE_HALF)  # 19
+    fixed_space = left_pad + _TITLE_TO_CLOSE_GAP + close_btn_w + right_pad
+
+    raw_title_width = _measure_title_width(tab_title)
+    max_title_w = _MAX_TAB_WIDTH - fixed_space
+    ellipsis_applied = False
+
+    if raw_title_width > max_title_w:
+        # Binary search to fit with ellipsis
+        font = _load_font(14)
+        low, high = 0, len(tab_title)
+        while low < high:
+            mid = (low + high + 1) // 2
+            candidate = tab_title[:mid] + "…"
+            bw = font.getbbox(candidate)
+            cw = (bw[2] - bw[0]) if bw else 0
+            if cw <= max_title_w:
+                low = mid
+            else:
+                high = mid - 1
+        tab_title = tab_title[:low] + "…" if low > 0 else "…"
+        raw_title_width = min(raw_title_width, max_title_w)
+        ellipsis_applied = True
+
+    # --- 2. Compute tab width ---
+    tab_width = fixed_space + raw_title_width
+    if tab_width < _MIN_TAB_WIDTH:
+        tab_width = _MIN_TAB_WIDTH
+    elif tab_width > _MAX_TAB_WIDTH:
+        tab_width = _MAX_TAB_WIDTH
+
+    new_right = _TAB_LEFT + tab_width
+    new_flat = new_right - 14
+    new_curve_start = new_right - 7
+    new_shoulder = new_right + 14
+    new_close_center = new_right - 24
+    new_sep = new_right + 12
+
+    # --- 3. Replace text content ---
+    svg_content = svg_content.replace("BMC Web Console", tab_title)
+    svg_content = svg_content.replace(
+        "https://192.168.1.10/UI/Static/#/navigate/system/storage",
+        address_url,
+    )
+
+    # --- 4. Adjust tab body path right edge ---
+    svg_content = svg_content.replace(
+        f"L {_ORIG_FLAT} 6 C {_ORIG_CURVE_START} 6 {_ORIG_RIGHT} 11 {_ORIG_RIGHT} 18 L {_ORIG_RIGHT} 38 Z",
+        f"L {new_flat} 6 C {new_curve_start} 6 {new_right} 11 {new_right} 18 L {new_right} 38 Z",
+    )
+
+    # --- 5. Adjust right shoulder ---
+    svg_content = svg_content.replace(
+        f"M {_ORIG_RIGHT} 20 C {_ORIG_RIGHT} 31 {_ORIG_RIGHT + 7} 38 {_ORIG_SHOULDER} 38 L {_ORIG_RIGHT} 38 Z",
+        f"M {new_right} 20 C {new_right} 31 {new_right + 7} 38 {new_shoulder} 38 L {new_right} 38 Z",
+    )
+
+    # --- 6. Adjust outline path right shoulder ---
+    svg_content = svg_content.replace(
+        f"L {_ORIG_RIGHT} 20 C {_ORIG_RIGHT} 31 {_ORIG_RIGHT + 7} 38 {_ORIG_SHOULDER} 38",
+        f"L {new_right} 20 C {new_right} 31 {new_right + 7} 38 {new_shoulder} 38",
+    )
+
+    # --- 6.5. Adjust outline path left flat-top and right-curve ---
+    # This is the portion between left curve and right shoulder in the outline.
+    # After step 6 it already has L {new_right} 20 as the right anchor.
+    svg_content = svg_content.replace(
+        f"L {_ORIG_FLAT} 6 C {_ORIG_CURVE_START} 6 {_ORIG_RIGHT} 11 {_ORIG_RIGHT} 18 L {new_right} 20",
+        f"L {new_flat} 6 C {new_curve_start} 6 {new_right} 11 {new_right} 18 L {new_right} 20",
+    )
+
+    # --- 7. Adjust close button position ---
+    close_l = new_close_center - _CLOSE_HALF
+    close_r = new_close_center + _CLOSE_HALF
+    svg_content = svg_content.replace(
+        "M 285 17 L 295 27 M 295 17 L 285 27",
+        f"M {close_l} 17 L {close_r} 27 M {close_r} 17 L {close_l} 27",
+    )
+
+    # --- 8. Adjust separator line x1 ---
+    svg_content = svg_content.replace(
+        f'x1="{_ORIG_SEP}"',
+        f'x1="{new_sep}"',
+    )
+
+    # Debug info (internal, for verification)
+    import logging as _lg
+    _lg.getLogger("bmc_auto_capture.addressbar").debug(
+        "tab_width=%d title_w=%d new_right=%d ellipsis=%s title=%s",
+        tab_width, raw_title_width, new_right, ellipsis_applied, tab_title,
+    )
+
+    return svg_content
+
 
 def _select_svg_template(image_width: int, image_height: int) -> Path:
     """Select the closest final SVG address bar template by aspect ratio."""
@@ -583,14 +736,10 @@ def render_final_addressbar(
     meta["addressbar_template"] = svg_path.name
     meta["addressbar_ratio"] = ratio_name
 
-    # Read SVG and inject actual text (replaces hardcoded "BMC Web Console" and example URL)
+    # Read SVG and inject text + auto-size tab width
     with open(str(svg_path), "r", encoding="utf-8") as f:
         svg_content = f.read()
-    svg_content = svg_content.replace("BMC Web Console", title)
-    svg_content = svg_content.replace(
-        "https://192.168.1.10/UI/Static/#/navigate/system/storage",
-        url,
-    )
+    svg_content = _inject_svg_text(svg_content, title, url)
 
     # Write modified SVG to temp file for rendering
     import tempfile
