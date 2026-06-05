@@ -1096,23 +1096,24 @@ class BMCExecutor(AbstractExecutor):
                 details=str(e),
             ))
 
-        # Final MHTML (style-preserving archive via CDP)
+        # Final MHTML (style-preserving archive via CDP, binary-safe write)
         try:
             cdp = await page.context.new_cdp_session(page)
             result_cdp = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
             mhtml_data = result_cdp.get("data", "")
-            if mhtml_data:
+            if mhtml_data and len(mhtml_data) > 100:
                 mhtml_path = os.path.join(output_dir, f"{file_base}.mhtml")
-                with open(mhtml_path, "w", encoding="utf-8") as f:
-                    f.write(mhtml_data)
+                with open(mhtml_path, "wb") as f:
+                    f.write(mhtml_data.encode("utf-8", errors="replace"))
+                logger.info("MHTML saved: %s (%.1f MB)", mhtml_path, len(mhtml_data) / 1_048_576)
                 result.step_results.append(StepResult(
                     step_index=len(result.step_results),
                     step_name="final_save_mhtml",
                     status="SUCCESS",
-                    details=mhtml_path,
+                    details=f"{mhtml_path} ({len(mhtml_data) / 1_048_576:.1f} MB)",
                 ))
             else:
-                logger.warning("MHTML capture returned empty data — page may not be fully loaded")
+                logger.warning("MHTML capture returned empty/too-small data (%d chars)", len(mhtml_data))
                 result.step_results.append(StepResult(
                     step_index=len(result.step_results),
                     step_name="final_save_mhtml",
@@ -1127,6 +1128,18 @@ class BMCExecutor(AbstractExecutor):
                 status="WARN",
                 details=f"MHTML failed: {e}",
             ))
+
+        # Single-file HTML with inlined resources (offline-viewable fallback)
+        try:
+            inline_path = os.path.join(output_dir, f"{file_base}_offline.html")
+            inline_html = await page.evaluate("""() => {
+                const c = document.documentElement.outerHTML;
+                return '<!DOCTYPE html>\\n' + c;
+            }""")
+            with open(inline_path, "w", encoding="utf-8") as f:
+                f.write(inline_html)
+        except Exception as e:
+            logger.debug("Inline HTML fallback skipped: %s", e)
 
         # Set artifact_status
         if not errors:
