@@ -485,6 +485,7 @@ _ORIG_CURVE_START = 307  # original curve control point (_ORIG_RIGHT - 7)
 _ORIG_SHOULDER = 328     # original right shoulder tip (_ORIG_RIGHT + 14)
 _ORIG_CLOSE_CENTER = 290 # original close button center (_ORIG_RIGHT - 24)
 _ORIG_SEP = 326          # original separator x1 (_ORIG_RIGHT + 12)
+_ORIG_PLUS_CENTER = 340  # original "+" new-tab button center
 
 _MIN_TAB_WIDTH = 120
 _MAX_TAB_WIDTH = 400
@@ -572,40 +573,60 @@ def _inject_svg_text(svg_content: str, tab_title: str, address_url: str) -> str:
     new_close_center = new_right - 24
     new_sep = new_right + 12
 
-    # --- 3. Replace text content ---
+    # --- 3. Truncate URL if it would overflow past the star icon ---
+    # URL text starts at x=246, star icon at x=1836, margin=20
+    max_url_width = 1836 - 246 - 20  # = 1570px at design scale
+    url_font = _load_font(14)
+    url_bbox = url_font.getbbox(address_url)
+    url_width = (url_bbox[2] - url_bbox[0]) if url_bbox else 0
+    if url_width > max_url_width:
+        # Binary search to fit with ellipsis
+        low, high = 0, len(address_url)
+        while low < high:
+            mid = (low + high + 1) // 2
+            candidate = address_url[:mid] + "…"
+            cb = url_font.getbbox(candidate)
+            cw = (cb[2] - cb[0]) if cb else 0
+            if cw <= max_url_width:
+                low = mid
+            else:
+                high = mid - 1
+        address_url = address_url[:low] + "…" if low > 0 else "…"
+
+    # --- 4. Replace text content ---
     svg_content = svg_content.replace("BMC Web Console", tab_title)
     svg_content = svg_content.replace(
         "https://192.168.1.10/UI/Static/#/navigate/system/storage",
         address_url,
     )
 
-    # --- 4. Adjust tab body path right edge ---
+    # --- 5. Adjust tab body path right edge ---
     svg_content = svg_content.replace(
         f"L {_ORIG_FLAT} 6 C {_ORIG_CURVE_START} 6 {_ORIG_RIGHT} 11 {_ORIG_RIGHT} 18 L {_ORIG_RIGHT} 38 Z",
         f"L {new_flat} 6 C {new_curve_start} 6 {new_right} 11 {new_right} 18 L {new_right} 38 Z",
     )
 
-    # --- 5. Adjust right shoulder ---
+    # --- 6. Adjust right shoulder ---
     svg_content = svg_content.replace(
         f"M {_ORIG_RIGHT} 20 C {_ORIG_RIGHT} 31 {_ORIG_RIGHT + 7} 38 {_ORIG_SHOULDER} 38 L {_ORIG_RIGHT} 38 Z",
         f"M {new_right} 20 C {new_right} 31 {new_right + 7} 38 {new_shoulder} 38 L {new_right} 38 Z",
     )
 
-    # --- 6. Adjust outline path right shoulder ---
+    # --- 7. Adjust outline path right shoulder ---
     svg_content = svg_content.replace(
         f"L {_ORIG_RIGHT} 20 C {_ORIG_RIGHT} 31 {_ORIG_RIGHT + 7} 38 {_ORIG_SHOULDER} 38",
         f"L {new_right} 20 C {new_right} 31 {new_right + 7} 38 {new_shoulder} 38",
     )
 
-    # --- 6.5. Adjust outline path left flat-top and right-curve ---
+    # --- 8. Adjust outline path left flat-top and right-curve ---
     # This is the portion between left curve and right shoulder in the outline.
-    # After step 6 it already has L {new_right} 20 as the right anchor.
+    # After step 7 it already has L {new_right} 20 as the right anchor.
     svg_content = svg_content.replace(
         f"L {_ORIG_FLAT} 6 C {_ORIG_CURVE_START} 6 {_ORIG_RIGHT} 11 {_ORIG_RIGHT} 18 L {new_right} 20",
         f"L {new_flat} 6 C {new_curve_start} 6 {new_right} 11 {new_right} 18 L {new_right} 20",
     )
 
-    # --- 7. Adjust close button position ---
+    # --- 9. Adjust close button position ---
     close_l = new_close_center - _CLOSE_HALF
     close_r = new_close_center + _CLOSE_HALF
     svg_content = svg_content.replace(
@@ -613,10 +634,18 @@ def _inject_svg_text(svg_content: str, tab_title: str, address_url: str) -> str:
         f"M {close_l} 17 L {close_r} 27 M {close_r} 17 L {close_l} 27",
     )
 
-    # --- 8. Adjust separator line x1 ---
+    # --- 10. Adjust separator line x1 ---
     svg_content = svg_content.replace(
         f'x1="{_ORIG_SEP}"',
         f'x1="{new_sep}"',
+    )
+
+    # --- 11. Adjust "+" new-tab button position (must track tab width) ---
+    tab_to_plus_gap = _ORIG_PLUS_CENTER - _ORIG_RIGHT  # 26
+    new_plus_center = new_right + tab_to_plus_gap
+    svg_content = svg_content.replace(
+        "M 340 14 L 340 30 M 332 22 L 348 22",
+        f"M {new_plus_center} 14 L {new_plus_center} 30 M {new_plus_center - 8} 22 L {new_plus_center + 8} 22",
     )
 
     # Debug info (internal, for verification)

@@ -1519,17 +1519,20 @@ class BMCExecutor(AbstractExecutor):
         image = Image.open(screenshot_path).convert("RGB")
         w, h = image.size
 
-        # Address bar design height = 96px within 1080px viewBox → scale by width
-        bar_design_h = 96  # SVG design: address bar is y=0..96 in viewBox
-        svg_viewbox_w = 1920
-        bar_height = max(64, min(108, round(bar_design_h * w / svg_viewbox_w)))
-
         # Select SVG and read its content
         svg_path = _select_svg_template(w, h)
         if not svg_path.exists():
             raise FileNotFoundError(f"SVG template not found: {svg_path}")
         with open(str(svg_path), "r", encoding="utf-8") as f:
             svg_content = f.read()
+
+        # Parse viewBox from SVG to compute correct bar_height
+        vb_match = __import__("re").search(r'viewBox="0\s+0\s+(\d+)\s+(\d+)"', svg_content)
+        svg_vb_w = int(vb_match.group(1)) if vb_match else 1920
+        if not vb_match:
+            logger.warning("SVG viewBox not found in %s, fallback to 1920", svg_path.name)
+        bar_design_h = 96  # SVG design: address bar is y=0..96 in viewBox
+        bar_height = max(64, min(108, round(bar_design_h * w / svg_vb_w)))
 
         # Inject tab title, URL, and auto-size tab width
         svg_content = _inject_svg_text(svg_content, tab_title, address_url)
