@@ -1,23 +1,22 @@
-ï»¿@echo off
-chcp 65001 >nul 2>nul
+@echo off
 setlocal EnableDelayedExpansion
 title BMC Auto-Capture
 
 :: ============================================================
-::   BMC/SSH è‡ªåŠ¨åŒ–æµ‹è¯•è¯æ®é‡‡é›†å¹³å° â€” ç»Ÿä¸€å¯åŠ¨å…¥å£
-::   åŒå‡»è¿è¡Œå³å¯ï¼Œä¹Ÿå¯åœ¨å‘½ä»¤è¡Œä¼ å…¥å‚æ•°
+::   BMC/SSH ×Ô¶¯»¯²âÊÔÖ¤¾İ²É¼¯Æ½Ì¨ ¡ª Í³Ò»Æô¶¯Èë¿Ú
+::   Ë«»÷ÔËĞĞ¼´¿É,Ò²¿ÉÔÚÃüÁîĞĞ´«Èë²ÎÊı
 :: ============================================================
 
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 
-:: --- è·å–è„šæœ¬æ‰€åœ¨ç›®å½• ---
+:: --- »ñÈ¡½Å±¾ËùÔÚÄ¿Â¼ ---
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 cd /d "%ROOT%"
 
 :: ============================================================
-::  å¼•æ“æ£€æµ‹ï¼ˆç¼–è¯‘ç‰ˆ bmc-engine.exe > æºç  Python run.pyï¼‰
+::  ÒıÇæ¼ì²â(±àÒë°æ bmc-engine.exe > Ô´Âë Python run.py)
 :: ============================================================
 set "ENGINE="
 set "USE_PYTHON=0"
@@ -35,18 +34,18 @@ if exist "%ROOT%\runtime\bmc-engine.exe" (
 )
 
 if "%ENGINE%"=="" (
-    echo [é”™è¯¯] æ‰¾ä¸åˆ°æ‰§è¡Œå¼•æ“ã€‚
+    echo( [´íÎó] ÕÒ²»µ½Ö´ĞĞÒıÇæ¡£
     echo.
-    echo è¯·ç¡®ä¿ä»¥ä¸‹ä¹‹ä¸€å­˜åœ¨ï¼š
-    echo   1. runtime\bmc-engine.exe     ï¼ˆæ¨èï¼Œç¼–è¯‘ç‰ˆï¼‰
-    echo   2. run.py + ç³»ç»Ÿ Python 3.9+   ï¼ˆæºç æ¨¡å¼ï¼‰
+    echo( ÇëÈ·±£ÒÔÏÂÖ®Ò»´æÔÚ£º
+    echo(   1. runtime\bmc-engine.exe     (ÍÆ¼ö,±àÒë°æ)
+    echo(   2. run.py + ÏµÍ³ Python 3.9+   (Ô´ÂëÄ£Ê½)
     echo.
     pause
     exit /b 1
 )
 
 :: ============================================================
-::  å‚æ•°è§£æ
+::  ²ÎÊı½âÎö
 :: ============================================================
 set "IS_SERVER=0"
 set "HAS_CLI_ARGS=0"
@@ -71,7 +70,7 @@ if /i "%~1"=="--log-level" set "LOG_LEVEL=%~2" & set "HAS_CLI_ARGS=1" & shift & 
 if /i "%~1"=="--excel"     set "EXCEL=%~2" & set "HAS_CLI_ARGS=1" & shift & shift & goto :parse_args
 if /i "%~1"=="-e"          set "EXCEL=%~2" & set "HAS_CLI_ARGS=1" & shift & shift & goto :parse_args
 
-:: é€ä¼ ç»™å¼•æ“
+:: Í¸´«¸øÒıÇæ
 set "HAS_CLI_ARGS=1"
 shift
 goto :parse_args
@@ -80,11 +79,11 @@ goto :parse_args
 if "%IS_SERVER%"=="1" goto :run_server
 if "%HAS_CLI_ARGS%"=="1" goto :run_direct
 
-:: æ— å‚æ•° â†’ äº¤äº’èœå•
+:: ÎŞ²ÎÊı ¡ú ½»»¥²Ëµ¥
 goto :menu
 
 :: ============================================================
-::  Server æ¨¡å¼ â€” ç›´æ¥ä½¿ç”¨ç¼–è¯‘å¼•æ“ bmc-engine.exe
+::  Server Ä£Ê½ ¡ª Ö±½ÓÊ¹ÓÃ±àÒëÒıÇæ bmc-engine.exe
 :: ============================================================
 :run_server
 if "%HOST%"=="" set "HOST=0.0.0.0"
@@ -92,54 +91,54 @@ if "%PORT%"=="" set "PORT=8080"
 if "%LOG_LEVEL%"=="" set "LOG_LEVEL=info"
 
 cls
-echo ============================================================
-echo   BMC Auto-Capture â€” API Server
-echo ============================================================
+echo( ============================================================
+echo(   BMC Auto-Capture ¡ª API Server
+echo( ============================================================
 echo.
-echo   å¼•æ“ : %ENGINE%
-echo   Host : %HOST%
-echo   Port : %PORT%
+echo(   ÒıÇæ : %ENGINE%
+echo(   Host : %HOST%
+echo(   Port : %PORT%
 echo.
-echo   --- å¥åº·æ£€æŸ¥: http://%HOST%:%PORT%/health ---
-echo   --- ç½‘ç»œæ£€æµ‹: http://%HOST%:%PORT%/network/ping ---
-echo   --- ç‰ˆæœ¬ä¿¡æ¯: http://%HOST%:%PORT%/version ---
+echo(   --- ½¡¿µ¼ì²é: http://%HOST%:%PORT%/health ---
+echo(   --- ÍøÂç¼ì²â: http://%HOST%:%PORT%/network/ping ---
+echo(   --- °æ±¾ĞÅÏ¢: http://%HOST%:%PORT%/version ---
 echo.
-echo   æŒ‰ Ctrl+C åœæ­¢æœåŠ¡
-echo ============================================================
+echo(   °´ Ctrl+C Í£Ö¹·şÎñ
+echo( ============================================================
 echo.
 
 "%ENGINE%" --app-dir "%ROOT%\app" --server --host %HOST% --port %PORT% --log-level %LOG_LEVEL%
 if %ERRORLEVEL% neq 0 (
-    echo [é”™è¯¯] æœåŠ¡å™¨å¯åŠ¨å¤±è´¥ï¼Œé€€å‡ºç : %ERRORLEVEL%
+    echo( [´íÎó] ·şÎñÆ÷Æô¶¯Ê§°Ü,ÍË³öÂë: %ERRORLEVEL%
     pause
 )
 exit /b %ERRORLEVEL%
 
 :: ============================================================
-::  äº¤äº’èœå•
+::  ½»»¥²Ëµ¥
 :: ============================================================
 :menu
 cls
-echo ============================================================
-echo    BMC / SSH è‡ªåŠ¨åŒ–æµ‹è¯•è¯æ®é‡‡é›†å¹³å°
-echo ============================================================
+echo( ============================================================
+echo(    BMC / SSH ×Ô¶¯»¯²âÊÔÖ¤¾İ²É¼¯Æ½Ì¨
+echo( ============================================================
 echo.
-echo    Excel : %EXCEL%
-echo    å¼•æ“  : %ENGINE%
+echo(    Excel : %EXCEL%
+echo(    ÒıÇæ  : %ENGINE%
 echo.
-echo    [1] é¡ºåºæ‰§è¡Œï¼ˆé€å°è®¾å¤‡ï¼Œæœ€ç¨³å®šï¼‰
-echo    [2] å¹¶å‘æ‰§è¡Œï¼ˆå¤šè®¾å¤‡åŒæ—¶ï¼Œé«˜æ•ˆï¼‰
-echo    [3] ç½‘ç»œè¿é€šæ€§é¢„æ£€
-echo    [4] Debug æ¨¡å¼é¡ºåºæ‰§è¡Œ
-echo    [5] è®¾å®š Excel é…ç½®æ–‡ä»¶è·¯å¾„
-echo    [6] è°ƒæ•´ BMC/SSH å¹¶å‘é‡
-echo    [7] é€€å‡º
+echo(    [1] Ë³ĞòÖ´ĞĞ(ÖğÌ¨Éè±¸,×îÎÈ¶¨)
+echo(    [2] ²¢·¢Ö´ĞĞ(¶àÉè±¸Í¬Ê±,¸ßĞ§)
+echo(    [3] ÍøÂçÁ¬Í¨ĞÔÔ¤¼ì
+echo(    [4] Debug Ä£Ê½Ë³ĞòÖ´ĞĞ
+echo(    [5] Éè¶¨ Excel ÅäÖÃÎÄ¼şÂ·¾¶
+echo(    [6] µ÷Õû BMC/SSH ²¢·¢Á¿
+echo(    [7] ÍË³ö
 echo.
-echo    Server æ¨¡å¼: å¯åŠ¨.bat --server [--host 0.0.0.0] [--port 8080]
+echo(    Server Ä£Ê½: Æô¶¯.bat --server [--host 0.0.0.0] [--port 8080]
 echo.
 
 set "CHOICE="
-set /p CHOICE="   è¯·é€‰æ‹© [1-7]: "
+set /p CHOICE="   ÇëÑ¡Ôñ [1-7]: "
 
 if "%CHOICE%"=="1" goto :run_seq
 if "%CHOICE%"=="2" goto :run_full
@@ -150,73 +149,88 @@ if "%CHOICE%"=="6" goto :set_workers
 if "%CHOICE%"=="7" goto :end
 goto :menu
 
+:set_workers
+cls
+echo( ============================================================
+echo(   Adjust BMC/SSH Concurrency
+echo( ============================================================
+echo(
+echo(   Current BMC max:
+echo(   Current SSH max:
+echo(
+echo(   (Use config file to adjust worker counts)
+echo(
+echo(   Press any key to return to menu...
+pause >nul
+goto :menu
+
 :: ============================================================
-::  æ‰§è¡Œæ¨¡å¼
+::  Ö´ĞĞÄ£Ê½
 :: ============================================================
 
 :run_seq
 cls
-echo ============================================================
-echo    é¡ºåºæ‰§è¡Œæ¨¡å¼
-echo ============================================================
+echo( ============================================================
+echo(    Ë³ĞòÖ´ĞĞÄ£Ê½
+echo( ============================================================
 echo.
-if not exist "%EXCEL%" (echo [é”™è¯¯] Excel æ–‡ä»¶ä¸å­˜åœ¨: %EXCEL% & pause & goto :menu)
-echo    æ‰§è¡Œä¸­ï¼Œè¯·å‹¿å…³é—­æ­¤çª—å£...
+if not exist "%EXCEL%" (echo [´íÎó] Excel ÎÄ¼ş²»´æÔÚ: %EXCEL% & pause & goto :menu)
+echo(    Ö´ĞĞÖĞ,ÇëÎğ¹Ø±Õ´Ë´°¿Ú...
 echo.
 "%ENGINE%" --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode sequential
 set "SEQ_EXIT=%ERRORLEVEL%"
 echo.
-if %SEQ_EXIT% neq 0 (echo    [æç¤º] æ‰§è¡Œæœ‰é”™è¯¯ï¼Œé€€å‡ºç : %SEQ_EXIT%)
-echo    æ‰§è¡Œå®Œæˆã€‚æŒ‰ä»»æ„é”®è¿”å›èœå•...
+if %SEQ_EXIT% neq 0 (echo    [ÌáÊ¾] Ö´ĞĞÓĞ´íÎó,ÍË³öÂë: %SEQ_EXIT%)
+echo(    Ö´ĞĞÍê³É¡£°´ÈÎÒâ¼ü·µ»Ø²Ëµ¥...
 pause >nul
 goto :menu
 
 :run_full
 cls
-echo ============================================================
-echo    åŠ¨æ€å¹¶å‘æ‰§è¡Œæ¨¡å¼
-echo ============================================================
+echo( ============================================================
+echo(    ¶¯Ì¬²¢·¢Ö´ĞĞÄ£Ê½
+echo( ============================================================
 echo.
-if not exist "%EXCEL%" (echo [é”™è¯¯] Excel æ–‡ä»¶ä¸å­˜åœ¨: %EXCEL% & pause & goto :menu)
-echo    æ‰§è¡Œä¸­ï¼Œè¯·å‹¿å…³é—­æ­¤çª—å£...
+if not exist "%EXCEL%" (echo [´íÎó] Excel ÎÄ¼ş²»´æÔÚ: %EXCEL% & pause & goto :menu)
+echo(    Ö´ĞĞÖĞ,ÇëÎğ¹Ø±Õ´Ë´°¿Ú...
 echo.
 "%ENGINE%" --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode full
 set "FULL_EXIT=%ERRORLEVEL%"
 echo.
-if %FULL_EXIT% neq 0 (echo    [æç¤º] æ‰§è¡Œæœ‰é”™è¯¯ï¼Œé€€å‡ºç : %FULL_EXIT%)
-echo    æ‰§è¡Œå®Œæˆã€‚æŒ‰ä»»æ„é”®è¿”å›èœå•...
+if %FULL_EXIT% neq 0 (echo    [ÌáÊ¾] Ö´ĞĞÓĞ´íÎó,ÍË³öÂë: %FULL_EXIT%)
+echo(    Ö´ĞĞÍê³É¡£°´ÈÎÒâ¼ü·µ»Ø²Ëµ¥...
 pause >nul
 goto :menu
 
 :run_precheck
 cls
-echo ============================================================
-echo    ç½‘ç»œè¿é€šæ€§é¢„æ£€
-echo ============================================================
+echo( ============================================================
+echo(    ÍøÂçÁ¬Í¨ĞÔÔ¤¼ì
+echo( ============================================================
 echo.
-if not exist "%EXCEL%" (echo [é”™è¯¯] Excel æ–‡ä»¶ä¸å­˜åœ¨: %EXCEL% & pause & goto :menu)
-echo    æ­£åœ¨æ£€æµ‹ TCP 443/22 ç«¯å£...
+if not exist "%EXCEL%" (echo [´íÎó] Excel ÎÄ¼ş²»´æÔÚ: %EXCEL% & pause & goto :menu)
+echo(    ÕıÔÚ¼ì²â TCP 443/22 ¶Ë¿Ú...
 echo.
 "%ENGINE%" --app-dir "%ROOT%\app" --excel "%EXCEL%" --preflight-only
 echo.
-echo    é¢„æ£€å®Œæˆã€‚æŒ‰ä»»æ„é”®è¿”å›èœå•...
+echo(    Ô¤¼ìÍê³É¡£°´ÈÎÒâ¼ü·µ»Ø²Ëµ¥...
 pause >nul
 goto :menu
 
 :run_debug
 cls
-echo ============================================================
-echo    Debug æ¨¡å¼ï¼ˆé¡ºåºæ‰§è¡Œ + è¯¦ç»†æ—¥å¿—ï¼‰
-echo ============================================================
+echo( ============================================================
+echo(    Debug Ä£Ê½(Ë³ĞòÖ´ĞĞ + ÏêÏ¸ÈÕÖ¾)
+echo( ============================================================
 echo.
-if not exist "%EXCEL%" (echo [é”™è¯¯] Excel æ–‡ä»¶ä¸å­˜åœ¨: %EXCEL% & pause & goto :menu)
-echo    æ‰§è¡Œä¸­ï¼Œè¯·å‹¿å…³é—­æ­¤çª—å£...
+if not exist "%EXCEL%" (echo [´íÎó] Excel ÎÄ¼ş²»´æÔÚ: %EXCEL% & pause & goto :menu)
+echo(    Ö´ĞĞÖĞ,ÇëÎğ¹Ø±Õ´Ë´°¿Ú...
 echo.
 "%ENGINE%" --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode sequential --verbose
 set "DBG_EXIT=%ERRORLEVEL%"
 echo.
-if %DBG_EXIT% neq 0 (echo    [DEBUG] æ‰§è¡Œç»“æŸï¼Œé€€å‡ºç : %DBG_EXIT%) else (echo    [DEBUG] æ‰§è¡ŒæˆåŠŸå®Œæˆ)
-echo    æŒ‰ä»»æ„é”®è¿”å›èœå•...
+if %DBG_EXIT% neq 0 (echo    [DEBUG] Ö´ĞĞ½áÊø,ÍË³öÂë: %DBG_EXIT%) else (echo    [DEBUG] Ö´ĞĞ³É¹¦Íê³É)
+echo(    °´ÈÎÒâ¼ü·µ»Ø²Ëµ¥...
 pause >nul
 goto :menu
 
@@ -225,35 +239,35 @@ if not exist "%EXCEL%" (
     set "EXCEL=%ROOT%\app\examples\task_template.xlsx"
     if not exist "!EXCEL!" set "EXCEL=%ROOT%\examples\task_template.xlsx"
 )
-if not exist "%EXCEL%" (echo [é”™è¯¯] Excel æ–‡ä»¶ä¸å­˜åœ¨ & pause & exit /b 1)
+if not exist "%EXCEL%" (echo [´íÎó] Excel ÎÄ¼ş²»´æÔÚ & pause & exit /b 1)
 "%ENGINE%" --app-dir "%ROOT%\app" --excel "%EXCEL%"
 set "EXITCODE=%ERRORLEVEL%"
-echo    æ‰§è¡Œå®Œæˆï¼Œé€€å‡ºç : %EXITCODE%
+echo(    Ö´ĞĞÍê³É,ÍË³öÂë: %EXITCODE%
 if %EXITCODE% neq 0 (pause)
 endlocal
 exit /b %EXITCODE%
 
 :set_excel
 cls
-echo ============================================================
-echo    è®¾å®š Excel é…ç½®æ–‡ä»¶è·¯å¾„
-echo ============================================================
+echo( ============================================================
+echo(    Éè¶¨ Excel ÅäÖÃÎÄ¼şÂ·¾¶
+echo( ============================================================
 echo.
-echo    å½“å‰: %EXCEL%
+echo(    µ±Ç°: %EXCEL%
 echo.
-set /p NEW_EXCEL="   è·¯å¾„ï¼ˆæ”¯æŒæ‹–æ‹½ï¼‰: "
+set /p NEW_EXCEL="   Â·¾¶(Ö§³ÖÍÏ×§): "
 if "!NEW_EXCEL!"=="" goto :menu
 for /f "tokens=* delims= " %%a in ("!NEW_EXCEL!") do set "NEW_EXCEL=%%a"
 if exist "!NEW_EXCEL!" (
     set "EXCEL=!NEW_EXCEL!"
-    echo [æˆåŠŸ] å·²æ›´æ–°
+    echo( [³É¹¦] ÒÑ¸üĞÂ
 ) else (
-    echo [é”™è¯¯] æ–‡ä»¶ä¸å­˜åœ¨
+    echo( [´íÎó] ÎÄ¼ş²»´æÔÚ
 )
 timeout /t 2 >nul
 goto :menu
 
 :end
-echo å†è§ã€‚
+echo( ÔÙ¼û¡£
 endlocal
 exit /b 0
