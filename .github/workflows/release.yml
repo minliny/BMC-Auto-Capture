@@ -129,6 +129,7 @@ jobs:
           xcopy /E /I /Y config app-layer\app\config >nul
           xcopy /E /I /Y examples app-layer\app\examples >nul
           xcopy /E /I /Y api app-layer\app\api >nul
+          xcopy /E /I /Y assets app-layer\app\assets >nul
           copy tasks.json app-layer\app\ >nul
 
           REM Root-level launcher files
@@ -182,6 +183,7 @@ jobs:
           xcopy /E /I /Y config bmc-auto-capture\app\config >nul
           xcopy /E /I /Y examples bmc-auto-capture\app\examples >nul
           xcopy /E /I /Y api bmc-auto-capture\app\api >nul
+          xcopy /E /I /Y assets bmc-auto-capture\app\assets >nul
           copy tasks.json bmc-auto-capture\app\ >nul
           copy run.py bmc-auto-capture\ >nul
           for %%f in (*.bat) do copy "%%f" bmc-auto-capture\ >nul

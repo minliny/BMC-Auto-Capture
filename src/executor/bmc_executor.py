@@ -1096,19 +1096,29 @@ class BMCExecutor(AbstractExecutor):
                 details=str(e),
             ))
 
-        # Final MHTML (style-preserving archive)
+        # Final MHTML (style-preserving archive via CDP)
         try:
             cdp = await page.context.new_cdp_session(page)
-            mhtml_data = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
-            mhtml_path = os.path.join(output_dir, f"{file_base}.mhtml")
-            with open(mhtml_path, "w", encoding="utf-8") as f:
-                f.write(mhtml_data.get("data", ""))
-            result.step_results.append(StepResult(
-                step_index=len(result.step_results),
-                step_name="final_save_mhtml",
-                status="SUCCESS",
-                details=mhtml_path,
-            ))
+            result_cdp = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
+            mhtml_data = result_cdp.get("data", "")
+            if mhtml_data:
+                mhtml_path = os.path.join(output_dir, f"{file_base}.mhtml")
+                with open(mhtml_path, "w", encoding="utf-8") as f:
+                    f.write(mhtml_data)
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name="final_save_mhtml",
+                    status="SUCCESS",
+                    details=mhtml_path,
+                ))
+            else:
+                logger.warning("MHTML capture returned empty data — page may not be fully loaded")
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name="final_save_mhtml",
+                    status="WARN",
+                    details="MHTML data was empty",
+                ))
         except Exception as e:
             logger.warning("MHTML capture failed (non-fatal): %s", e)
             result.step_results.append(StepResult(

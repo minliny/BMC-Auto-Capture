@@ -77,6 +77,10 @@ def resolve_template(tmpl: str, device, task, extra: Optional[dict] = None) -> s
     result = result.replace("{OutputDir}", "")
     result = result.replace("{FileNamePattern}", "")
 
+    # 智能 IP：BMC → 带外IP，SSH/TELNET → 带内IP
+    task_ip = device.bmc_ip if task.task_type.upper() in ("BMC",) else device.inband_ip
+    result = result.replace("{TaskIP}", task_ip)
+
     # 额外变量
     if extra:
         for key, value in extra.items():
