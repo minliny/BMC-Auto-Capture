@@ -16,29 +16,50 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 cd /d "%ROOT%"
 
 :: ============================================================
-::  引擎检测(编译版 bmc-engine.exe > 源码 Python run.py)
+::  引擎检测(编译版 bmc-engine.exe > 离线 Python)
 :: ============================================================
 set "ENGINE="
 set "USE_PYTHON=0"
 
+:: 1. 编译引擎(开箱即用,最优先)
 if exist "%ROOT%\runtime\bmc-engine.exe" (
     set "ENGINE=%ROOT%\runtime\bmc-engine.exe"
 ) else if exist "%ROOT%\runtime\bmc-engine" (
     set "ENGINE=%ROOT%\runtime\bmc-engine"
-) else if exist "%ROOT%\run.py" (
-    where python >nul 2>nul
-    if %ERRORLEVEL% equ 0 (
-        for /f "delims=" %%p in ('where python') do set "ENGINE=%%p %ROOT%\run.py"
+)
+
+:: 2. 离线 Python(打包部署场景自带的 Python)
+if "%ENGINE%"=="" (
+    if exist "%ROOT%\.venv\Scripts\python.exe" (
+        set "ENGINE=%ROOT%\.venv\Scripts\python.exe %ROOT%\run.py"
         set "USE_PYTHON=1"
+    ) else if exist "%USERPROFILE%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe" (
+        set "ENGINE=%USERPROFILE%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe %ROOT%\run.py"
+        set "USE_PYTHON=1"
+    ) else if exist "%USERPROFILE%\Documents\BMC离线部署包 - 多并发版本\offline_bmc_deps\python311\python.exe" (
+        set "ENGINE=%USERPROFILE%\Documents\BMC离线部署包 - 多并发版本\offline_bmc_deps\python311\python.exe %ROOT%\run.py"
+        set "USE_PYTHON=1"
+    ) else if exist "%ROOT%\run.py" (
+        where python >/dev/null 2>/dev/null
+        if %ERRORLEVEL% equ 0 (
+            for /f "delims=" %%p in ('where python') do set "ENGINE=%%p %ROOT%\run.py"
+            set "USE_PYTHON=1"
+        )
     )
 )
 
+:: 3. 源码模式自动设置 PYTHONPATH
+if "%USE_PYTHON%"=="1" (
+    set "PYTHONPATH=%ROOT%\app;%ROOT%;%PYTHONPATH%"
+)
+
 if "%ENGINE%"=="" (
-    echo( [错误] 找不到执行引擎。
+    echo( [错误] 未找到执行引擎或离线 Python。
     echo.
-    echo( 请确保以下之一存在：
+    echo( 请确保以下之一存在:
     echo(   1. runtime\bmc-engine.exe     (推荐,编译版)
-    echo(   2. run.py + 系统 Python 3.9+   (源码模式)
+    echo(   2. %%USERPROFILE%%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe (离线 Python)
+    echo(   3. run.py (需自行安装 Python 3.9+)
     echo.
     pause
     exit /b 1
@@ -76,14 +97,7 @@ shift
 goto :parse_args
 
 :check_mode
-if "%IS_SERVER%"=="1" goto :run_server
-if "%HAS_CLI_ARGS%"=="1" goto :run_direct
-
-:: 无参数 → 交互菜单
-goto :menu
-
-:: ============================================================
-::  Server 模式 — 直接使用编译引擎 bmc-engine.exe
+if "%IS_SERVER%"=="1" goto Server 模式 — 直接使用编译引擎 bmc-engine.exe
 :: ============================================================
 :run_server
 if "%HOST%"=="" set "HOST=0.0.0.0"
@@ -107,6 +121,7 @@ echo(   按 Ctrl+C 停止服务
 echo( ============================================================
 echo.
 
+set "PYTHONPATH=%ROOT%\app;%ROOT%;%PYTHONPATH%"
 "%ENGINE%" --app-dir "%ROOT%\app" --server --host %HOST% --port %PORT% --log-level %LOG_LEVEL%
 if %ERRORLEVEL% neq 0 (
     echo( [错误] 服务器启动失败,退出码: %ERRORLEVEL%
