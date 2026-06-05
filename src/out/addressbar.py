@@ -21,12 +21,16 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 # --- Final SVG asset paths ---
-_FINAL_SVG_DIR = (
-    Path(__file__).resolve().parents[2]
-    / "assets"
-    / "addressbar"
-    / "final_stage_addressbar"
-)
+def _resolve_asset_root() -> Path:
+    """Resolve the project root for assets, works in dev and frozen modes."""
+    if getattr(sys, "frozen", False):
+        # Frozen: exe is at runtime/bmc-engine.exe, assets at ../app/assets/
+        return Path(sys.executable).resolve().parent.parent / "app"
+    else:
+        # Dev: __file__ is src/out/addressbar.py, project root = parents[2]
+        return Path(__file__).resolve().parents[2]
+
+_FINAL_SVG_DIR = _resolve_asset_root() / "assets" / "addressbar" / "final_stage_addressbar"
 
 _FINAL_SVG_TEMPLATES = {
     "16:9":  _FINAL_SVG_DIR / "final_addressbar_source_16x9_1920x1080.svg",
