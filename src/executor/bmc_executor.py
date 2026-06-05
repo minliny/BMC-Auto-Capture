@@ -13,11 +13,13 @@ Handles:
 
 from __future__ import annotations
 import asyncio
-import base64
+import io
 import logging
 import os
 import shutil
 import time
+
+from PIL import Image
 
 from .base import AbstractExecutor
 from .browser_manager import BrowserManager
@@ -25,7 +27,6 @@ from .captcha_handler import detect_captcha, handle_captcha, CaptchaDetected
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
-from ..out.addressbar import normalize_bmc_addressbar_url, render_chrome_addressbar, render_final_addressbar
 from ..rules.condition_evaluator import (
     evaluate_ready_conditions, evaluate_evidence_checkpoints,
     parse_ready_specs, parse_checkpoint_specs,
@@ -607,7 +608,7 @@ class BMCExecutor(AbstractExecutor):
         # Full-page screenshot
         ss_path = os.path.join(output_dir, f"{file_base}.png")
         await page.screenshot(path=ss_path, full_page=True)
-        self._save_raw_and_compose(ss_path, task, device.bmc_ip, page_url=page.url, result=result)
+        await self._save_raw_and_compose(ss_path, task, device.bmc_ip, page_url=page.url, result=result, page=page)
 
         result.screenshots = (ss_path,)
         result.step_results.append(StepResult(
@@ -1055,12 +1056,12 @@ class BMCExecutor(AbstractExecutor):
 
         errors = []
 
-        # Final screenshot
+        # Final screenshot (content-aware)
         ss_path = ""
         try:
             ss_path = os.path.join(output_dir, f"{file_base}.png")
-            await page.screenshot(path=ss_path, full_page=True)
-            self._save_raw_and_compose(ss_path, task, bmc_ip, page_url=page.url, result=result)
+            await self._content_aware_screenshot(page, ss_path, task, result)
+            await self._save_raw_and_compose(ss_path, task, bmc_ip, page_url=page.url, result=result, page=page)
             # Overwrite screenshots with final evidence only
             result.screenshots = (ss_path,)
             result.step_results.append(StepResult(
@@ -1097,57 +1098,32 @@ class BMCExecutor(AbstractExecutor):
                 details=str(e),
             ))
 
-        # evidence.html — self-contained visual evidence (PNG base64 inline)
+        # evidence.html — rendered DOM with computed styles inlined (offline-viewable)
         try:
-            if ss_path and os.path.exists(ss_path):
-                with open(ss_path, "rb") as f:
-                    png_b64 = base64.b64encode(f.read()).decode("ascii")
-                captured_at = time.strftime("%Y-%m-%d %H:%M:%S")
-                evidence_html = f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BMC Evidence — {device.device_name} / {task.task_name}</title>
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{ background: #1a1a2e; color: #e0e0e0; font-family: -apple-system, "Microsoft YaHei", sans-serif; }}
-  .header {{ padding: 16px 24px; background: #16213e; border-bottom: 2px solid #0f3460; }}
-  .header h1 {{ font-size: 18px; color: #e94560; }}
-  .meta {{ display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; padding: 12px 24px; font-size: 13px; background: #0f3460; }}
-  .meta .key {{ color: #a0a0b0; }}
-  .meta .val {{ color: #e0e0e0; word-break: break-all; }}
-  .screenshot {{ padding: 16px; text-align: center; }}
-  .screenshot img {{ max-width: 100%; border: 1px solid #333; border-radius: 4px; }}
-  .footer {{ padding: 12px 24px; font-size: 11px; color: #666; text-align: center; border-top: 1px solid #333; }}
-</style>
-</head>
-<body>
-<div class="header"><h1>BMC Evidence Report</h1></div>
-<div class="meta">
-  <span class="key">DeviceName</span><span class="val">{device.device_name}</span>
-  <span class="key">OOB_IP</span><span class="val">{device.bmc_ip}</span>
-  <span class="key">TaskName</span><span class="val">{task.task_name}</span>
-  <span class="key">URL</span><span class="val">{page.url}</span>
-  <span class="key">CapturedAt</span><span class="val">{captured_at}</span>
-  <span class="key">Status</span><span class="val">{result.execution_status}</span>
-</div>
-<div class="screenshot"><img src="data:image/png;base64,{png_b64}" alt="BMC Screenshot"></div>
-<div class="footer">bmc-auto-capture v0.2.2 — offline-viewable evidence</div>
-</body>
-</html>"""
-                evidence_path = os.path.join(output_dir, f"{file_base}.evidence.html")
-                with open(evidence_path, "w", encoding="utf-8") as f:
-                    f.write(evidence_html)
-                logger.info("evidence.html saved: %s (%.1f KB)", evidence_path, len(evidence_html) / 1024)
-                result.step_results.append(StepResult(
-                    step_index=len(result.step_results),
-                    step_name="final_save_evidence_html",
-                    status="SUCCESS",
-                    details=evidence_path,
-                ))
+            evidence_html = await page.evaluate("""() => {
+                const root = document.documentElement.cloneNode(true);
+                // Remove all script tags (JS won't execute offline)
+                for (const s of root.querySelectorAll('script')) { s.remove(); }
+                // Remove event handlers
+                for (const el of root.querySelectorAll('*')) {
+                    for (const attr of [...el.attributes]) {
+                        if (attr.name.startsWith('on')) { el.removeAttribute(attr.name); }
+                    }
+                }
+                return '<!DOCTYPE html>\\n' + root.outerHTML;
+            }""")
+            evidence_path = os.path.join(output_dir, f"{file_base}.evidence.html")
+            with open(evidence_path, "w", encoding="utf-8") as f:
+                f.write(evidence_html)
+            logger.info("evidence.html (DOM) saved: %s (%.1f KB)", evidence_path, len(evidence_html) / 1024)
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="final_save_evidence_html",
+                status="SUCCESS",
+                details=evidence_path,
+            ))
         except Exception as e:
-            logger.warning("evidence.html generation failed (non-fatal): %s", e)
+            logger.warning("evidence.html failed: %s", e)
 
         # MHTML — best-effort, not required for offline viewing
         try:
@@ -1172,21 +1148,135 @@ class BMCExecutor(AbstractExecutor):
             result.artifact_status = "ARTIFACT_FAILED"
             result.artifact_failure_reason = "; ".join(errors)
 
-    def _save_raw_and_compose(
+    async def _content_aware_screenshot(self, page, ss_path, task, result) -> None:
+        """Take a content-aware BMC screenshot: detect scroll container, avoid blank areas.
+
+        Strategy depends on full_screenshot and screenshot_mode task fields.
+        """
+        full_ss = getattr(task, "full_screenshot", False)
+        ss_mode = getattr(task, "screenshot_mode", "auto") or "auto"
+
+        # Detect content boundaries via JS
+        content_info = await page.evaluate("""() => {
+            const info = { docScrollH: 0, bodyScrollH: 0, scrollContainer: null,
+                          scrollH: 0, clientH: 0, bottomVisible: 0, viewportH: window.innerHeight };
+
+            info.docScrollH = document.documentElement.scrollHeight;
+            info.bodyScrollH = document.body.scrollHeight;
+
+            // Find internal scroll container (Element UI / Vue SPA)
+            const candidates = document.querySelectorAll(
+                '.el-scrollbar__wrap, .el-main, .main-content, .content-wrapper, .page-content, [style*="overflow"]'
+            );
+            let best = null, bestArea = 0;
+            for (const el of candidates) {
+                const style = getComputedStyle(el);
+                if (style.overflowY === 'auto' || style.overflowY === 'scroll' || style.overflowY === 'overlay') {
+                    const area = el.clientWidth * el.clientHeight;
+                    if (el.scrollHeight > el.clientHeight + 20 && area > bestArea) {
+                        best = el; bestArea = area;
+                    }
+                }
+            }
+            if (best) {
+                const tag = best.tagName.toLowerCase();
+                const cls = (best.className || '').toString().substring(0, 80);
+                info.scrollContainer = (best.id ? '#' + best.id : tag + (cls ? '.' + cls.split(' ')[0] : ''));
+                info.scrollH = best.scrollHeight;
+                info.clientH = best.clientHeight;
+            }
+
+            // Find bottommost visible element
+            const all = document.querySelectorAll('*');
+            let maxBottom = 0;
+            for (const el of all) {
+                const rect = el.getBoundingClientRect();
+                if (rect.bottom > maxBottom && rect.width > 0 && rect.height > 0 &&
+                    rect.bottom < 50000 && rect.top < 50000) {
+                    maxBottom = rect.bottom;
+                }
+            }
+            info.bottomVisible = Math.ceil(maxBottom + 24); // small padding
+            return info;
+        }""")
+
+        # Determine target height
+        viewport_h = content_info.get("viewportH", 900)
+        bottom_visible = content_info.get("bottomVisible", viewport_h)
+        scroll_h = content_info.get("scrollH", 0)
+        doc_scroll_h = content_info.get("docScrollH", 0)
+
+        if ss_mode == "viewport":
+            target_h = viewport_h
+        elif ss_mode == "full_page" or full_ss:
+            target_h = max(doc_scroll_h, scroll_h, bottom_visible)
+        elif ss_mode == "content":
+            target_h = scroll_h if scroll_h > viewport_h else max(bottom_visible, viewport_h)
+        else:  # auto
+            # Prefer internal scroll container if found; otherwise crop to content
+            if scroll_h > viewport_h + 50:
+                target_h = scroll_h
+            else:
+                target_h = max(bottom_visible, viewport_h)
+
+        # Cap
+        max_h = 20000
+        if target_h > max_h:
+            target_h = max_h
+            logger.warning("Screenshot height capped at %d px (actual may be taller)", max_h)
+
+        # Take screenshot with calculated clip
+        await page.set_viewport_size({"width": page.viewport_size["width"], "height": target_h})
+        await page.wait_for_timeout(300)  # let layout settle
+        await page.screenshot(path=ss_path, full_page=True)
+        await page.set_viewport_size({"width": page.viewport_size["width"], "height": viewport_h})
+
+        # Apply blank crop from bottom using PIL
+        try:
+            import io
+            from PIL import Image
+            img = Image.open(ss_path).convert("RGB")
+            w, h = img.size
+            # Scan from bottom: find first non-blank row
+            blank_limit = int(h * 0.90)  # don't crop more than 10%
+            crop_y = h
+            for y in range(h - 1, blank_limit, -1):
+                row_colors = set()
+                for x in range(0, w, max(1, w // 20)):
+                    px = img.getpixel((x, y))
+                    row_colors.add(px)
+                # Row is blank if all sampled pixels are very similar light/white
+                if len(row_colors) > 2:
+                    crop_y = y + 40  # keep small padding
+                    break
+                elif len(row_colors) == 1:
+                    r, g, b = list(row_colors)[0][:3]
+                    if r < 230 or g < 230 or b < 230:
+                        crop_y = y + 40
+                        break
+            if crop_y < h:
+                img = img.crop((0, 0, w, crop_y))
+                img.save(ss_path, "PNG")
+                logger.info("Blank crop: %d px removed (%d → %d)", h - crop_y, h, crop_y)
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name="bmc_blank_crop",
+                    status="SUCCESS",
+                    details=f"removed {h - crop_y} blank px",
+                ))
+        except Exception as e:
+            logger.debug("Blank crop skipped: %s", e)
+
+    async def _save_raw_and_compose(
         self,
         screenshot_path: str,
         task,
         bmc_ip: str,
         page_url: str = "",
         result: ExecutionResult | None = None,
+        page=None,
     ) -> None:
-        """Save raw screenshot to raw/ then composite address bar in place.
-
-        1. Copy raw screenshot to raw/<basename> alongside the output.
-        2. Append raw path to result.raw_screenshots.
-        3. Composite the address bar on top of the original path.
-        Even if compositing fails, the raw screenshot is preserved.
-        """
+        """Save raw screenshot to raw/ then composite address bar in place."""
         # 1. Save raw
         raw_dir = os.path.join(os.path.dirname(screenshot_path), "raw")
         os.makedirs(raw_dir, exist_ok=True)
@@ -1195,27 +1285,77 @@ class BMCExecutor(AbstractExecutor):
 
         if result is not None:
             result.raw_screenshots = tuple(result.raw_screenshots or ()) + (raw_path,)
-            result.step_results.append(StepResult(
-                step_index=len(result.step_results),
-                step_name="raw_screenshot_saved",
-                status="SUCCESS",
-                details=raw_path,
-            ))
 
-        # 2. Composite address bar
+        # 2. Composite address bar via existing browser
         try:
-            self._compose_addressbar(
-                screenshot_path,
-                task,
-                bmc_ip,
-                page_url=page_url,
-                result=result,
+            await self._compose_addressbar_async(
+                screenshot_path, task, bmc_ip, page_url=page_url, result=result, page=page,
             )
         except Exception:
-            logger.warning(
+            logger.exception(
                 "Address bar composite failed for %s — raw screenshot preserved at %s",
                 screenshot_path, raw_path,
             )
+
+    async def _compose_addressbar_async(
+        self, screenshot_path, task, bmc_ip, page_url="", result=None, page=None,
+    ) -> None:
+        """Composite final SVG address bar using the existing browser page."""
+        from ..out.addressbar import _select_svg_template, _svg_template_ratio_name
+
+        address_url = page_url or (f"https://{bmc_ip}" if bmc_ip else "about:blank")
+        tab_title = f"iBMC {bmc_ip}" if bmc_ip else "iBMC"
+
+        image = Image.open(screenshot_path).convert("RGB")
+        w, h = image.size
+
+        # Select SVG and read its content (avoid file:// security restrictions)
+        svg_path = _select_svg_template(w, h)
+        with open(str(svg_path), "r", encoding="utf-8") as f:
+            svg_content = f.read()
+
+        # Render SVG via set_content (no file:// needed)
+        svg_page = await page.context.new_page()
+        try:
+            await svg_page.set_content(
+                f"<!DOCTYPE html><html><body style='margin:0'>{svg_content}</body></html>",
+                wait_until="load",
+            )
+            # Get SVG natural dimensions
+            svg_h = await svg_page.evaluate("""() => {
+                const svg = document.querySelector('svg');
+                if (!svg) return 92;
+                const vb = svg.getAttribute('viewBox');
+                if (vb) {
+                    const parts = vb.split(/\\s+/);
+                    return Math.round(parseFloat(parts[3]) * window.innerWidth / parseFloat(parts[2]));
+                }
+                const box = svg.getBoundingClientRect();
+                return box.height || 92;
+            }""")
+            bar_height = max(64, min(108, svg_h)) if svg_h else 92
+            svg_png = await svg_page.screenshot(
+                clip={"x": 0, "y": 0, "width": w, "height": bar_height},
+            )
+            bar_img = Image.open(io.BytesIO(svg_png)).convert("RGB")
+        finally:
+            await svg_page.close()
+
+        # Composite
+        bar_height = bar_img.height
+        output = Image.new("RGB", (w, h + bar_height), (255, 255, 255))
+        output.paste(bar_img, (0, 0))
+        output.paste(image, (0, bar_height))
+        output.save(screenshot_path, "PNG")
+
+        if result is not None:
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="addressbar_composite",
+                status="SUCCESS",
+                screenshot=screenshot_path,
+                details=f"tab={tab_title}; url={address_url}; source=final_svg; template={svg_path.name}; ratio={_svg_template_ratio_name(svg_path)}",
+            ))
 
     def _compose_addressbar(
         self,

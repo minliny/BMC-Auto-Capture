@@ -196,11 +196,32 @@ class SSHExecutor(AbstractExecutor):
             transcript_meta["transcript_join_mode"] = "double_newline" if join_mode else "raw_stream_concat"
             transcript_meta["chunk_separator_inserted"] = bool(join_mode)
             transcript_meta["strip_applied"] = False
-            cleaned_output = _strip_pagination_markers(join_mode.join(all_output))
-            txt_path = write_text_file(output_dir, f"{file_base}.txt", cleaned_output)
-            result.txt_file = txt_path
+            full_transcript = _strip_pagination_markers(join_mode.join(all_output))
+            transcript_lines = full_transcript.split("\n")
+            total_lines = len(transcript_lines)
 
-            ss_path = render_text_to_image(cleaned_output, output_dir, f"{file_base}.png")
+            # FullScreenshot: control PNG line limit
+            full_ss = getattr(task, "full_screenshot", False)
+            ssh_line_limit = 0 if full_ss else 100
+            transcript_meta["full_screenshot"] = full_ss
+            transcript_meta["ssh_output_line_limit"] = "unlimited" if full_ss else "100"
+            transcript_meta["total_line_count"] = total_lines
+
+            if ssh_line_limit > 0 and total_lines > ssh_line_limit:
+                png_input = "\n".join(transcript_lines[:ssh_line_limit])
+                png_input += f"\n[TRUNCATED: showing first {ssh_line_limit} lines only; full transcript saved in TXT]"
+                transcript_meta["rendered_line_count"] = ssh_line_limit + 1
+                transcript_meta["truncated"] = True
+            else:
+                png_input = full_transcript
+                transcript_meta["rendered_line_count"] = total_lines
+                transcript_meta["truncated"] = False
+
+            txt_path = write_text_file(output_dir, f"{file_base}.txt", full_transcript)
+            result.txt_file = txt_path
+            transcript_meta["full_transcript_path"] = txt_path
+
+            ss_path = render_text_to_image(png_input, output_dir, f"{file_base}.png")
             result.screenshots = (ss_path,)
             result.artifact_status = "ARTIFACT_SAVED"
             result.step_results.append(StepResult(

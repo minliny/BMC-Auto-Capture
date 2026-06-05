@@ -141,6 +141,8 @@ def _init_header_map():
         ("带内管理密码(IB_Password)", "inband_password"),
         ("设备是否启用(DeviceEnabled)", "enabled"),
         ("标签(Tags)", "tags"),
+        ("是否全量截图(FullScreenshot)", "full_screenshot"),
+        ("截图模式(ScreenshotMode)", "screenshot_mode"),
     ]
     for cn_en, field in _bilingual:
         DEVICE_HEADER_MAP[cn_en] = field
@@ -300,6 +302,19 @@ def load_tasks(
         raise ValueError(f"Sheet '{sheet_name}' not found. Available: {wb.sheetnames}")
 
     ws = wb[sheet_name]
+    # Read header to find optional columns
+    header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+    task_headers = [_str(v) for v in header_row] if header_row else []
+    full_screenshot_col = -1
+    screenshot_mode_col = -1
+    for idx, h in enumerate(task_headers):
+        parts = _parse_bilingual_header(h)
+        for p in parts:
+            if p.lower() in ("fullscreenshot", "是否全量截图"):
+                full_screenshot_col = idx
+            if p.lower() in ("screenshotmode", "截图模式"):
+                screenshot_mode_col = idx
+
     rows = list(ws.iter_rows(min_row=2, values_only=True))
     wb.close()
 
@@ -361,6 +376,11 @@ def load_tasks(
             enabled = False
 
         raw_seq = _str(vals[0]) if len(vals) > 0 else str(i + 1)
+        # Parse optional header-based columns
+        raw_full_ss = _str(row[full_screenshot_col]) if full_screenshot_col >= 0 and len(row) > full_screenshot_col else ""
+        full_ss = raw_full_ss.strip().lower() in ("是", "true", "1", "yes", "y")
+        raw_ss_mode = _str(row[screenshot_mode_col]) if screenshot_mode_col >= 0 and len(row) > screenshot_mode_col else ""
+
         task = Task(
             row_index=i + 2,
             sequence=_int(vals[0]) if len(vals) > 0 else i + 1,
@@ -376,6 +396,8 @@ def load_tasks(
             timeout_seconds=timeout_seconds,
             retry_count=retry_count,
             enabled=enabled,
+            full_screenshot=full_ss,
+            screenshot_mode=raw_ss_mode.strip() or "auto",
             rules_json=rules_json,
         )
         # Attach tasks.json definition for runtime lookup (checkpoints, ready conditions, etc.)

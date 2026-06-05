@@ -61,6 +61,8 @@ class Task:
     timeout_seconds: int = 60
     retry_count: int = 0
     enabled: bool = True
+    full_screenshot: bool = False
+    screenshot_mode: str = "auto"
     sequence_str: str = ""
 
     def parsed_rules(self) -> tuple[Rule, ...]:
