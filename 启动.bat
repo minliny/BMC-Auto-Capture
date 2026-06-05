@@ -16,6 +16,11 @@ set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 cd /d "%ROOT%"
 
+set "APP_DIR=%ROOT%\app"
+if not exist "%APP_DIR%\src" (
+    if exist "%ROOT%\src" set "APP_DIR=%ROOT%"
+)
+
 :: ============================================================
 ::  引擎检测(编译版 bmc-engine.exe > 离线 Python)
 :: ============================================================
@@ -88,8 +93,11 @@ set "HAS_CLI_ARGS=0"
 set "HOST="
 set "PORT="
 set "LOG_LEVEL="
-set "EXCEL=%ROOT%\app\examples\task_template.xlsx"
+set "EXCEL=%APP_DIR%\examples\task_template.xlsx"
 if not exist "%EXCEL%" set "EXCEL=%ROOT%\examples\task_template.xlsx"
+set "BMC_WORKERS="
+set "SSH_WORKERS="
+set "WORKER_ARGS="
 
 :parse_args
 if "%~1"=="" goto :check_mode
@@ -144,7 +152,7 @@ echo( ============================================================
 echo.
 
 set "PYTHONPATH=%ROOT%\app;%ROOT%;%PYTHONPATH%"
-call :run_engine --app-dir "%ROOT%\app" --server --host %HOST% --port %PORT% --log-level %LOG_LEVEL%
+call :run_engine --app-dir "%APP_DIR%" --server --host %HOST% --port %PORT% --log-level %LOG_LEVEL%
 set "SERVER_EXIT=%ERRORLEVEL%"
 if %SERVER_EXIT% neq 0 (
     echo( [错误] 服务器启动失败,退出码: %SERVER_EXIT%
@@ -163,6 +171,7 @@ echo( ============================================================
 echo.
 echo(    Excel : %EXCEL%
 echo(    引擎  : %ENGINE_DISPLAY%
+echo(    并发  : BMC=%BMC_WORKERS% SSH=%SSH_WORKERS%
 echo.
 echo(    [1] 顺序执行(逐台设备,最稳定)
 echo(    [2] 并发执行(多设备同时,高效)
@@ -190,16 +199,20 @@ goto :menu
 :set_workers
 cls
 echo( ============================================================
-echo(   Adjust BMC/SSH Concurrency
+echo(   调整 BMC/SSH 并发量
 echo( ============================================================
 echo(
-echo(   Current BMC max:
-echo(   Current SSH max:
+echo(   当前 BMC max: %BMC_WORKERS%
+echo(   当前 SSH max: %SSH_WORKERS%
 echo(
-echo(   (Use config file to adjust worker counts)
+set /p BMC_INPUT="   BMC 最大并发数(留空使用配置文件): "
+set /p SSH_INPUT="   SSH 最大并发数(留空使用配置文件): "
+set "BMC_WORKERS=!BMC_INPUT!"
+set "SSH_WORKERS=!SSH_INPUT!"
+call :refresh_worker_args
 echo(
-echo(   Press any key to return to menu...
-pause >nul
+echo(   已更新: !WORKER_ARGS!
+timeout /t 2 >nul
 goto :menu
 
 :: ============================================================
@@ -215,7 +228,7 @@ echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
 echo(    执行中,请勿关闭此窗口...
 echo.
-call :run_engine --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode sequential
+call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode sequential %WORKER_ARGS%
 set "SEQ_EXIT=%ERRORLEVEL%"
 echo.
 if %SEQ_EXIT% neq 0 (echo    [提示] 执行有错误,退出码: %SEQ_EXIT%)
@@ -232,7 +245,7 @@ echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
 echo(    执行中,请勿关闭此窗口...
 echo.
-call :run_engine --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode full
+call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode full %WORKER_ARGS%
 set "FULL_EXIT=%ERRORLEVEL%"
 echo.
 if %FULL_EXIT% neq 0 (echo    [提示] 执行有错误,退出码: %FULL_EXIT%)
@@ -249,7 +262,7 @@ echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
 echo(    正在检测 TCP 443/22 端口...
 echo.
-call :run_engine --app-dir "%ROOT%\app" --excel "%EXCEL%" --preflight-only
+call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-only %WORKER_ARGS%
 echo.
 echo(    预检完成。按任意键返回菜单...
 pause >nul
@@ -264,7 +277,7 @@ echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
 echo(    执行中,请勿关闭此窗口...
 echo.
-call :run_engine --app-dir "%ROOT%\app" --excel "%EXCEL%" --mode sequential --verbose
+call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode sequential %WORKER_ARGS% --verbose
 set "DBG_EXIT=%ERRORLEVEL%"
 echo.
 if %DBG_EXIT% neq 0 (echo    [DEBUG] 执行结束,退出码: %DBG_EXIT%) else (echo    [DEBUG] 执行成功完成)
@@ -274,11 +287,11 @@ goto :menu
 
 :run_direct
 if not exist "%EXCEL%" (
-    set "EXCEL=%ROOT%\app\examples\task_template.xlsx"
+    set "EXCEL=%APP_DIR%\examples\task_template.xlsx"
     if not exist "!EXCEL!" set "EXCEL=%ROOT%\examples\task_template.xlsx"
 )
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在 & pause & exit /b 1)
-call :run_engine --app-dir "%ROOT%\app" --excel "%EXCEL%" %RAW_ARGS%
+call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" %RAW_ARGS%
 set "EXITCODE=%ERRORLEVEL%"
 echo(    执行完成,退出码: %EXITCODE%
 if %EXITCODE% neq 0 (pause)
@@ -305,11 +318,17 @@ if exist "!NEW_EXCEL!" (
 timeout /t 2 >nul
 goto :menu
 
+:refresh_worker_args
+set "WORKER_ARGS="
+if not "%BMC_WORKERS%"=="" set "WORKER_ARGS=%WORKER_ARGS% --max-bmc-workers %BMC_WORKERS%"
+if not "%SSH_WORKERS%"=="" set "WORKER_ARGS=%WORKER_ARGS% --max-ssh-workers %SSH_WORKERS%"
+exit /b 0
+
 :run_engine
 if "%ENGINE_SCRIPT%"=="" (
-    "%ENGINE_EXE%" %*
+    "%ENGINE_EXE%" %1 %2 %3 %4 %5 %6 %7 %8 %9
 ) else (
-    "%ENGINE_EXE%" "%ENGINE_SCRIPT%" %*
+    "%ENGINE_EXE%" "%ENGINE_SCRIPT%" %1 %2 %3 %4 %5 %6 %7 %8 %9
 )
 exit /b %ERRORLEVEL%
 
