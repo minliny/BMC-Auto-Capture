@@ -339,10 +339,30 @@ def load_tasks(
 
         # Excel columns depend on format:
         # Simplified (7 cols):  seq | name | type | group | outdir | imgname | enabled
+        # Extended (9 cols):    seq | name | type | group | outdir | imgname | enabled | full_ss | ss_mode
         # Full legacy (14 cols): seq | name | type | group | mode | cmd | actions | outdir | imgname | timeout | retry | enabled | rules
-        is_simplified = len(vals) <= SIMPLIFIED_TASK_COLS
+        is_simplified_or_extended = len(vals) <= 9
 
-        if is_simplified:
+        # Column mapping diagnostics
+        if col_count := len(vals):
+            logger.info(
+                "任务行 %d [%s]: %d列 → "
+                "seq[0]=%s name[1]=%s type[2]=%s group[3]=%s "
+                "outdir[4]=%s imgname[5]=%s enabled[6]=%s"
+                "%s%s",
+                i + 2, task_name, col_count,
+                vals[0] if col_count > 0 else "?",
+                vals[1] if col_count > 1 else "?",
+                vals[2] if col_count > 2 else "?",
+                vals[3] if col_count > 3 else "?",
+                vals[4] if col_count > 4 else "?",
+                vals[5] if col_count > 5 else "?",
+                vals[6] if col_count > 6 else "?",
+                f" full_ss[7]={vals[7]}" if col_count > 7 else "",
+                f" ss_mode[8]={vals[8]}" if col_count > 8 else "",
+            )
+
+        if is_simplified_or_extended:
             match_group = vals[3] if len(vals) > 3 else ""
             output_dir_template = vals[4] if len(vals) > 4 else "{device_group}/{device_name}/{task_name}"
             image_name_template = vals[5] if len(vals) > 5 else "{device_name}_{task_name}_{timestamp}"

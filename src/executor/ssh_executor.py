@@ -53,6 +53,27 @@ def _strip_pagination_markers(text: str) -> str:
     return result.strip() + '\n'
 
 
+def _sanitize_raw_stream(text: str) -> str:
+    """Minimal sanitization for raw interactive shell streams.
+
+    Only removes ANSI escape codes and pagination markers.
+    Preserves all whitespace, line structure, and relative positions
+    between prompt and command echo.
+    Does NOT strip lines or add/remove newlines.
+    """
+    text = ANSI_RE.sub('', text)
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    lines = text.split('\n')
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        if MORE_LINE_RE.match(stripped):
+            continue
+        # Remove inline More markers while preserving original whitespace
+        result.append(MORE_INLINE_RE.sub('', line))
+    return '\n'.join(result)
+
+
 def _resolve_var(template: str, variables: dict) -> str:
     def _replace(m):
         key = m.group(1)
@@ -195,8 +216,13 @@ class SSHExecutor(AbstractExecutor):
             join_mode = "\n\n" if strategy == "exec_command" else ""
             transcript_meta["transcript_join_mode"] = "double_newline" if join_mode else "raw_stream_concat"
             transcript_meta["chunk_separator_inserted"] = bool(join_mode)
-            transcript_meta["strip_applied"] = False
-            full_transcript = _strip_pagination_markers(join_mode.join(all_output))
+            transcript_meta["strip_applied"] = (strategy != "interactive_shell")
+            # interactive_shell: minimal sanitization, no strip, no extra newlines
+            # exec_command: full sanitization including strip
+            if strategy == "interactive_shell":
+                full_transcript = _sanitize_raw_stream(join_mode.join(all_output))
+            else:
+                full_transcript = _strip_pagination_markers(join_mode.join(all_output))
             transcript_lines = full_transcript.split("\n")
             total_lines = len(transcript_lines)
 
@@ -229,7 +255,7 @@ class SSHExecutor(AbstractExecutor):
                 step_name="ssh_terminal_screenshot",
                 status="SUCCESS",
                 screenshot=ss_path,
-                details=f"Terminal output {len(cleaned_output)} chars",
+                details=f"Terminal output {len(full_transcript)} chars",
             ))
 
             # Evaluate checkpoints

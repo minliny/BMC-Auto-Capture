@@ -189,7 +189,7 @@ class BMCExecutor(AbstractExecutor):
             # --- Stage 3: resolve URL ---
             current_stage = "3/6 resolve_url"
             logger.info("[%s] Stage %s", dname, current_stage)
-            bmc_url = self._resolve_url(task.command_or_url, device.bmc_ip)
+            bmc_url = self._resolve_url(task.command_or_url, device.bmc_ip, device, task)
             logger.info("[%s] Stage 3/6: url=%s", dname, bmc_url)
 
             # --- Stage 4: login ---
@@ -574,7 +574,7 @@ class BMCExecutor(AbstractExecutor):
     # ------------------------------------------------------------------
     async def _run_bmc_url(self, page, bmc_url: str, task, device, output_dir: str, result: ExecutionResult) -> None:
         """Navigate to target URL (may differ from login URL), screenshot, save HTML, evaluate rules."""
-        target_url = self._resolve_url(task.command_or_url, device.bmc_ip)
+        target_url = self._resolve_url(task.command_or_url, device.bmc_ip, device, task)
         if target_url and target_url != bmc_url:
             self._validate_goto_url(target_url, device.bmc_ip)
 
@@ -778,7 +778,7 @@ class BMCExecutor(AbstractExecutor):
     # ------------------------------------------------------------------
     # BMC_ACTIONS mode (DSL)
     # ------------------------------------------------------------------
-    async def _run_bmc_actions(self, page, task, bmc_ip: str, output_dir: str, result: ExecutionResult) -> None:
+    async def _run_bmc_actions(self, page, task, bmc_ip: str, output_dir: str, result: ExecutionResult, device=None) -> None:
         """Execute a sequence of DSL actions."""
         import json
 
@@ -800,7 +800,7 @@ class BMCExecutor(AbstractExecutor):
 
             try:
                 if action_type == "goto":
-                    resolved = self._resolve_url(value, bmc_ip)
+                    resolved = self._resolve_url(value, bmc_ip, device, task)
                     self._validate_goto_url(resolved, bmc_ip)
                     await page.goto(resolved, wait_until="networkidle", timeout=timeout_ms)
                 elif action_type == "click":
@@ -875,7 +875,7 @@ class BMCExecutor(AbstractExecutor):
         # --- Step 1: goto target_url ---
         raw_target = flow.get("target_url", "")
         if raw_target:
-            target_url = self._resolve_url(raw_target, bmc_ip)
+            target_url = self._resolve_url(raw_target, bmc_ip, device, task)
             self._validate_goto_url(target_url, bmc_ip)
             try:
                 await page.goto(target_url, wait_until="domcontentloaded",
@@ -1484,18 +1484,21 @@ class BMCExecutor(AbstractExecutor):
                 continue
         return None
 
-    def _resolve_url(self, raw: str, bmc_ip: str) -> str:
+    def _resolve_url(self, raw: str, bmc_ip: str, device, task) -> str:
         raw = raw.strip()
         if not raw:
             # Base URL for login / root access — valid for login stage, not for capture target.
             return f"https://{bmc_ip}"
-        raw = raw.replace("{带外管理IP}", bmc_ip)
-        raw = raw.replace("{bmc_ip}", bmc_ip)
-        if raw.startswith("/"):
-            return f"https://{bmc_ip}{raw}"
-        if not raw.startswith("http"):
-            return f"https://{bmc_ip}{raw}"
-        return raw
+        # Resolve template variables via unified resolver (handles {TaskName}, {OOB_IP}, etc.)
+        resolved = resolve_template(raw, device=device, task=task)
+        unreplaced = check_unreplaced_vars(resolved)
+        if unreplaced:
+            logger.warning(f"URL模板残留未替换变量: {unreplaced} in '{raw}' — 需检查模板配置")
+        if resolved.startswith("/"):
+            return f"https://{bmc_ip}{resolved}"
+        if not resolved.startswith("http"):
+            return f"https://{bmc_ip}{resolved}"
+        return resolved
 
     def _validate_goto_url(self, url: str, bmc_ip: str) -> None:
         """Raise ValueError if URL host does not match the device BMC IP."""
