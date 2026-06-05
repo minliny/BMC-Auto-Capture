@@ -222,7 +222,7 @@ def _render_single_page(
     output_dir: str,
     base_filename: str,
     page_index: int = 0,
-    is_first_page: bool = True,
+    total_pages: int = 1,
 ) -> tuple[str, int]:
     """Render a single page of text to PNG. Returns (path, height)."""
     font = _default_font(13)
@@ -243,15 +243,14 @@ def _render_single_page(
         draw.text((10, y), line, fill=(200, 200, 200), font=font)
         y += line_height
 
-    # Generate filename
-    if page_index == 0 and is_first_page:
+    # Generate filename with consistent _partNNN suffix for all pages
+    if base_filename.endswith('.png'):
+        name_part = base_filename[:-4]
+    else:
+        name_part = base_filename
+    if total_pages == 1:
         path = os.path.join(output_dir, base_filename)
     else:
-        # Remove .png and add page suffix
-        if base_filename.endswith('.png'):
-            name_part = base_filename[:-4]
-        else:
-            name_part = base_filename
         path = os.path.join(output_dir, f"{name_part}_part{page_index + 1:03d}.png")
 
     img.save(path, "PNG")
@@ -305,13 +304,22 @@ def render_text_to_images(
     page_index = 0
     total_height = 0
 
+    # First pass: count pages to know total
+    page_count = 1
+    test_height = 40
+    for line in lines:
+        if test_height + 18 > MAX_IMAGE_HEIGHT:
+            page_count += 1
+            test_height = 40
+        test_height += 18
+
     for line in lines:
         line_height_estimate = 18  # Approximate
         if current_height + line_height_estimate > MAX_IMAGE_HEIGHT:
             # Save current page
             if current_lines:
                 path, height = _render_single_page(
-                    current_lines, output_dir, filename, page_index
+                    current_lines, output_dir, filename, page_index, page_count
                 )
                 all_paths.append(path)
                 total_height += height
@@ -325,7 +333,7 @@ def render_text_to_images(
     # Don't forget the last page
     if current_lines:
         path, height = _render_single_page(
-            current_lines, output_dir, filename, page_index
+            current_lines, output_dir, filename, page_index, page_count
         )
         all_paths.append(path)
         total_height += height

@@ -190,7 +190,13 @@ class SSHExecutor(AbstractExecutor):
 
             # Write evidence
             file_base = resolve_template(task.image_name_template, device, task)
-            cleaned_output = _strip_pagination_markers("\n\n".join(all_output))
+            # exec_command: separate commands with double newline (each is an independent program)
+            # interactive_shell: raw stream concat — no separator, prompt+echo must stay together
+            join_mode = "\n\n" if strategy == "exec_command" else ""
+            transcript_meta["transcript_join_mode"] = "double_newline" if join_mode else "raw_stream_concat"
+            transcript_meta["chunk_separator_inserted"] = bool(join_mode)
+            transcript_meta["strip_applied"] = False
+            cleaned_output = _strip_pagination_markers(join_mode.join(all_output))
             txt_path = write_text_file(output_dir, f"{file_base}.txt", cleaned_output)
             result.txt_file = txt_path
 
