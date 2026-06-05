@@ -13,6 +13,7 @@ Handles:
 
 from __future__ import annotations
 import asyncio
+import base64
 import logging
 import os
 import shutil
@@ -1096,7 +1097,59 @@ class BMCExecutor(AbstractExecutor):
                 details=str(e),
             ))
 
-        # Final MHTML (style-preserving archive via CDP, binary-safe write)
+        # evidence.html — self-contained visual evidence (PNG base64 inline)
+        try:
+            if ss_path and os.path.exists(ss_path):
+                with open(ss_path, "rb") as f:
+                    png_b64 = base64.b64encode(f.read()).decode("ascii")
+                captured_at = time.strftime("%Y-%m-%d %H:%M:%S")
+                evidence_html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BMC Evidence — {device.device_name} / {task.task_name}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ background: #1a1a2e; color: #e0e0e0; font-family: -apple-system, "Microsoft YaHei", sans-serif; }}
+  .header {{ padding: 16px 24px; background: #16213e; border-bottom: 2px solid #0f3460; }}
+  .header h1 {{ font-size: 18px; color: #e94560; }}
+  .meta {{ display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; padding: 12px 24px; font-size: 13px; background: #0f3460; }}
+  .meta .key {{ color: #a0a0b0; }}
+  .meta .val {{ color: #e0e0e0; word-break: break-all; }}
+  .screenshot {{ padding: 16px; text-align: center; }}
+  .screenshot img {{ max-width: 100%; border: 1px solid #333; border-radius: 4px; }}
+  .footer {{ padding: 12px 24px; font-size: 11px; color: #666; text-align: center; border-top: 1px solid #333; }}
+</style>
+</head>
+<body>
+<div class="header"><h1>BMC Evidence Report</h1></div>
+<div class="meta">
+  <span class="key">DeviceName</span><span class="val">{device.device_name}</span>
+  <span class="key">OOB_IP</span><span class="val">{device.bmc_ip}</span>
+  <span class="key">TaskName</span><span class="val">{task.task_name}</span>
+  <span class="key">URL</span><span class="val">{page.url}</span>
+  <span class="key">CapturedAt</span><span class="val">{captured_at}</span>
+  <span class="key">Status</span><span class="val">{result.execution_status}</span>
+</div>
+<div class="screenshot"><img src="data:image/png;base64,{png_b64}" alt="BMC Screenshot"></div>
+<div class="footer">bmc-auto-capture v0.2.2 — offline-viewable evidence</div>
+</body>
+</html>"""
+                evidence_path = os.path.join(output_dir, f"{file_base}.evidence.html")
+                with open(evidence_path, "w", encoding="utf-8") as f:
+                    f.write(evidence_html)
+                logger.info("evidence.html saved: %s (%.1f KB)", evidence_path, len(evidence_html) / 1024)
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name="final_save_evidence_html",
+                    status="SUCCESS",
+                    details=evidence_path,
+                ))
+        except Exception as e:
+            logger.warning("evidence.html generation failed (non-fatal): %s", e)
+
+        # MHTML — best-effort, not required for offline viewing
         try:
             cdp = await page.context.new_cdp_session(page)
             result_cdp = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
@@ -1105,41 +1158,9 @@ class BMCExecutor(AbstractExecutor):
                 mhtml_path = os.path.join(output_dir, f"{file_base}.mhtml")
                 with open(mhtml_path, "wb") as f:
                     f.write(mhtml_data.encode("utf-8", errors="replace"))
-                logger.info("MHTML saved: %s (%.1f MB)", mhtml_path, len(mhtml_data) / 1_048_576)
-                result.step_results.append(StepResult(
-                    step_index=len(result.step_results),
-                    step_name="final_save_mhtml",
-                    status="SUCCESS",
-                    details=f"{mhtml_path} ({len(mhtml_data) / 1_048_576:.1f} MB)",
-                ))
-            else:
-                logger.warning("MHTML capture returned empty/too-small data (%d chars)", len(mhtml_data))
-                result.step_results.append(StepResult(
-                    step_index=len(result.step_results),
-                    step_name="final_save_mhtml",
-                    status="WARN",
-                    details="MHTML data was empty",
-                ))
+                logger.info("MHTML saved (best-effort): %s (%.1f MB)", mhtml_path, len(mhtml_data) / 1_048_576)
         except Exception as e:
-            logger.warning("MHTML capture failed (non-fatal): %s", e)
-            result.step_results.append(StepResult(
-                step_index=len(result.step_results),
-                step_name="final_save_mhtml",
-                status="WARN",
-                details=f"MHTML failed: {e}",
-            ))
-
-        # Single-file HTML with inlined resources (offline-viewable fallback)
-        try:
-            inline_path = os.path.join(output_dir, f"{file_base}_offline.html")
-            inline_html = await page.evaluate("""() => {
-                const c = document.documentElement.outerHTML;
-                return '<!DOCTYPE html>\\n' + c;
-            }""")
-            with open(inline_path, "w", encoding="utf-8") as f:
-                f.write(inline_html)
-        except Exception as e:
-            logger.debug("Inline HTML fallback skipped: %s", e)
+            logger.debug("MHTML skipped (best-effort): %s", e)
 
         # Set artifact_status
         if not errors:
