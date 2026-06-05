@@ -42,7 +42,8 @@ bmc-auto-capture/
 启动.bat --server
 ```
 
-Server 模式下提供：
+Server 模式直接使用编译引擎 `runtime\bmc-engine.exe`，无需安装额外依赖。
+提供：
 - `http://localhost:8080/health`  — 健康检查
 - `http://localhost:8080/version` — 版本信息
 - `http://localhost:8080/network/ping` — 网络连通性检测

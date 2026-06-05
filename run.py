@@ -171,6 +171,19 @@ def main():
         server_parser.add_argument("--log-level", default="info")
         server_args, _ = server_parser.parse_known_args()
 
+        # Resolve app_dir before import so frozen exe can find api/
+        if server_args.app_dir:
+            from pathlib import Path as _Path
+            _ad = str(_Path(server_args.app_dir).resolve())
+            if _ad not in sys.path:
+                sys.path.insert(0, _ad)
+        elif getattr(sys, "frozen", False) and "--excel" not in sys.argv:
+            # In frozen mode with server flag, app/ is ../app from exe
+            from pathlib import Path as _Path
+            _ad = str(_Path(sys.executable).resolve().parent.parent / "app")
+            if _ad not in sys.path:
+                sys.path.insert(0, _ad)
+
         from api.boot import start_minimal_server
         start_minimal_server(
             host=server_args.host,
