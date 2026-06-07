@@ -885,6 +885,26 @@ class BMCExecutor(AbstractExecutor):
                 result.ready_status = "READY_NOT_READY"
                 result.ready_failure_reason = f"goto target_url failed: {e}"
                 # Do NOT return — continue to final_capture for debugging
+
+            # Check if we landed on login page (session expired or redirect)
+            login_fields = LOGIN_USERNAME_SELECTORS + LOGIN_PASSWORD_SELECTORS
+            on_login = False
+            for sel in login_fields:
+                try:
+                    el = await page.query_selector(sel)
+                    if el and await el.is_visible():
+                        on_login = True
+                        break
+                except Exception:
+                    pass
+            if on_login:
+                logger.info("[%s] 目标页面跳转回登录页,重新登录...", device.device_name)
+                await self._dismiss_all_blockers(page)
+                login_ok, login_reason = await self._bmc_login(page, target_url, device)
+                if not login_ok:
+                    logger.warning("[%s] 重新登录失败: %s", device.device_name, login_reason)
+                    result.execution_status = "EXEC_FAILED"
+                    result.execution_failure_reason = login_reason or "BMC重新登录失败"
         else:
             # No target_url from either command_or_url (BMC_URL) or actions_json goto (BMC_ACTIONS).
             execution_mode = getattr(task, "execution_mode", "unknown")

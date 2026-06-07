@@ -90,15 +90,36 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
             cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
             td["fail"][cat].append(r)
 
-    print(f"\n{'任务名称':<30s} {'类型':>5s} {'总数':>4s} {'成功':>4s} {'失败':>4s}  失败原因")
-    print("-" * 70)
+    # Calculate display width for CJK text
+    def _disp_width(s: str) -> int:
+        """Approximate terminal display width (CJK chars count as 2)."""
+        w = 0
+        for c in s:
+            if '一' <= c <= '鿿' or '　' <= c <= '〿' or \
+               '＀' <= c <= '￯':
+                w += 2
+            else:
+                w += 1
+        return w
+
+    def _pad(s: str, width: int) -> str:
+        """Pad string to a fixed display width."""
+        return s + ' ' * max(0, width - _disp_width(s))
+
+    col_w = max(_disp_width(n) for n in task_data.keys()) if task_data else 20
+    col_w = min(col_w, 60)  # cap
+    col_w = max(col_w, 20)  # minimum
+
+    print(f"\n{_pad('任务名称', col_w)} {'类型':>5s} {'总数':>4s} {'成功':>4s} {'失败':>4s}  失败原因")
+    print("-" * max(70, col_w + 40))
 
     for name in sorted(task_data.keys()):
         td = task_data[name]
         fail_count = sum(len(v) for v in td["fail"].values())
         status = "OK" if fail_count == 0 else "!!"
         ttype = "BMC" if td["type"] in ("BMC", "BMC_URL", "BMC_ACTIONS") else "SSH"
-        print(f"{name:<30s} {ttype:>5s} {td['total']:>4d} {td['ok']:>4d} {fail_count:>4d}  ", end="")
+        pad_name = _pad(name, col_w)
+        print(f"{pad_name} {ttype:>5s} {td['total']:>4d} {td['ok']:>4d} {fail_count:>4d}  ", end="")
         if fail_count > 0:
             reasons = []
             for cat, items in sorted(td["fail"].items(), key=lambda x: -len(x[1])):

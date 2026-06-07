@@ -195,6 +195,7 @@ echo.
 echo(    [1] 顺序执行(逐台设备,最稳定)
 echo(    [2] 并发执行(多设备同时,高效)
 echo(    [3] 网络连通性预检
+echo(    [R] 直接测试 IP:端口(无需 Excel)
 echo(    [4] Debug 模式顺序执行
 echo(    [5] 设定 Excel 配置文件路径
 echo(    [6] 调整 BMC/SSH 并发量
@@ -209,10 +210,35 @@ set /p CHOICE="   请选择 [1-7]: "
 if "%CHOICE%"=="1" goto :run_seq
 if "%CHOICE%"=="2" goto :run_full
 if "%CHOICE%"=="3" goto :run_precheck
+if /i "%CHOICE%"=="R" goto :test_ip
+if /i "%CHOICE%"=="r" goto :test_ip
 if "%CHOICE%"=="4" goto :run_debug
 if "%CHOICE%"=="5" goto :set_excel
 if "%CHOICE%"=="6" goto :set_workers
 if "%CHOICE%"=="7" goto :end
+goto :menu
+
+:test_ip
+cls
+echo( ============================================================
+echo(    直接测试 IP:端口
+echo( ============================================================
+echo(
+echo(    输入目标 IP 或主机名:
+set /p TEST_IP="   IP: "
+if "!TEST_IP!"=="" goto :menu
+echo(
+echo(    输入端口号:
+set /p TEST_PORT="   Port: "
+if "!TEST_PORT!"=="" set "TEST_PORT=443"
+echo.
+echo(    正在测试 !TEST_IP!:!TEST_PORT! ...
+echo.
+powershell -Command "&\$d=@{}; \$s=New-Object Net.Sockets.TcpClient; \$c=\$s.BeginConnect('!TEST_IP!',!TEST_PORT!,\$null,\$null); \$r=\$c.AsyncWaitHandle.WaitOne(5000,\$false); if(\$r -and \$s.Connected){\$d['status']='OK';\$s.EndConnect(\$c)}else{\$d['status']='TIMEOUT'}; \$s.Close(); Write-Host ('结果: '+ \$d['status'])"
+echo.
+if %ERRORLEVEL% equ 0 (echo(   连接成功!) else (echo(   连接失败或超时)
+echo(
+pause >nul
 goto :menu
 
 :set_workers
@@ -275,13 +301,48 @@ goto :menu
 :run_precheck
 cls
 echo( ============================================================
-echo(    网络连通性预检
+echo(    预检选项
+echo( ============================================================
+echo(
+echo(  --- 网络连通性检测(TCP端口) ---
+echo(    [1] 全量检测(BMC+SSH)
+echo(    [2] 仅检测 BMC(443)
+echo(    [3] 仅检测 SSH(22)
+echo(
+echo(  --- 账户密码可用性检测(需登录) ---
+echo(    [4] 全量检测(BMC+SSH)
+echo(    [5] 仅检测 BMC
+echo(    [6] 仅检测 SSH
+echo(
+echo(    [7] 返回菜单
+echo.
+set /p PF_CHOICE="   请选择 [1-7]: "
+
+:: 网络连通性检测
+if "!PF_CHOICE!"=="1" (set "PF_MODE=connect" & set "PF_TARGET=all")
+if "!PF_CHOICE!"=="2" (set "PF_MODE=connect" & set "PF_TARGET=bmc")
+if "!PF_CHOICE!"=="3" (set "PF_MODE=connect" & set "PF_TARGET=ssh")
+
+:: 账户密码可用性检测
+if "!PF_CHOICE!"=="4" (set "PF_MODE=auth" & set "PF_TARGET=all")
+if "!PF_CHOICE!"=="5" (set "PF_MODE=auth" & set "PF_TARGET=bmc")
+if "!PF_CHOICE!"=="6" (set "PF_MODE=auth" & set "PF_TARGET=ssh")
+
+if "!PF_CHOICE!"=="7" goto :menu
+if "%PF_MODE%"=="" goto :run_precheck
+
+cls
+echo( ============================================================
+if "%PF_MODE%"=="connect" echo(    网络连通性检测 (%PF_TARGET%)
+if "%PF_MODE%"=="auth" echo(    账户密码可用性检测 (%PF_TARGET%)
 echo( ============================================================
 echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
-echo(    正在检测 TCP 443/22 端口...
+if "%PF_MODE%"=="connect" echo(    正在检测网络连通性 target=%PF_TARGET% ...
+if "%PF_MODE%"=="auth" echo(    正在检测账户密码 target=%PF_TARGET% ...
 echo.
-call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-only %WORKER_ARGS%
+if "%PF_MODE%"=="connect" call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-only --preflight-target "%PF_TARGET%" %WORKER_ARGS%
+if "%PF_MODE%"=="auth" call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-only --preflight-auth "%PF_TARGET%" %WORKER_ARGS%
 echo.
 echo(    预检完成。按任意键返回菜单...
 pause >nul

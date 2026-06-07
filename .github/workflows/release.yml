@@ -91,15 +91,15 @@ jobs:
       - name: Assemble runtime (dependency) layer
         shell: cmd
         run: |
-          mkdir runtime-layer
-          copy dist\bmc-engine\bmc-engine.exe runtime-layer\ >nul
-          xcopy /E /I /Y dist\bmc-engine\_internal runtime-layer\_internal >nul
-          xcopy /E /I /Y dist\bmc-engine\playwright_browsers runtime-layer\playwright_browsers >nul
-          echo [OK] runtime layer assembled: runtime-layer/
+          mkdir runtime
+          copy dist\bmc-engine\bmc-engine.exe runtime\ >nul
+          xcopy /E /I /Y dist\bmc-engine\_internal runtime\_internal >nul
+          xcopy /E /I /Y dist\bmc-engine\playwright_browsers runtime\playwright_browsers >nul
+          echo [OK] runtime layer assembled: runtime/
 
       - name: Package runtime (dependency) layer
         run: |
-          7z a bmc-runtime-${{ github.ref_name }}-win-x64.7z runtime-layer
+          7z a bmc-runtime-${{ github.ref_name }}-win-x64.7z runtime
 
       - name: Upload runtime artifact
         uses: actions/upload-artifact@v4

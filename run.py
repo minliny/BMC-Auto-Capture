@@ -231,6 +231,12 @@ Examples:
                         help="BMC page load/selector timeout in seconds (overrides YAML)")
     parser.add_argument("--preflight-only", action="store_true",
                         help="Connectivity preflight only, no task execution")
+    parser.add_argument("--preflight-target", default="all",
+                        choices=["all", "bmc", "ssh"],
+                        help="Preflight target: all (default), bmc, ssh")
+    parser.add_argument("--preflight-auth", default=None,
+                        choices=["all", "bmc", "ssh", None],
+                        help="Preflight credential check: all, bmc, ssh")
     parser.add_argument("--no-preflight", action="store_true",
                         help="Skip connectivity preflight entirely")
     parser.add_argument("--server", action="store_true",
@@ -366,10 +372,25 @@ Examples:
     if args.preflight_only:
         from src.loader.excel_reader import load_all as _load
         from src.connectivity.preflight import check_all as _preflight_all
+        from src.connectivity.preflight import check_auth_all as _preflight_auth
         devices, tasks = _load(str(excel_path))
-        print(f"\nPreflight: loaded {len(devices)} rows from Excel, checking unique enabled devices...\n")
-        max_w = config.max_bmc_workers + config.max_ssh_workers
-        report = _preflight_all(devices, timeout=config.tcp_connect_timeout, max_workers=max_w)
+
+        if args.preflight_auth:
+            # Credential check mode
+            target = args.preflight_auth or "all"
+            print(f"\nPreflight (auth): loaded {len(devices)} rows from Excel, target={target}")
+            print(f"  checking credentials...\n")
+            max_w = config.max_bmc_workers + config.max_ssh_workers
+            report = _preflight_auth(devices, timeout=config.tcp_connect_timeout,
+                                     max_workers=max_w, target=target)
+        else:
+            # Network connectivity check mode (TCP probe)
+            target = args.preflight_target or "all"
+            print(f"\nPreflight (connectivity): loaded {len(devices)} rows from Excel, target={target}")
+            print(f"  checking unique enabled devices...\n")
+            max_w = config.max_bmc_workers + config.max_ssh_workers
+            report = _preflight_all(devices, timeout=config.tcp_connect_timeout,
+                                    max_workers=max_w, target=target)
 
         # Build device lookup for group info
         dev_lookup: dict[str, str] = {}
