@@ -190,7 +190,9 @@ echo( ============================================================
 echo.
 echo(    Excel : %EXCEL%
 echo(    引擎  : %ENGINE_DISPLAY%
-echo(    并发  : BMC=%BMC_WORKERS% SSH=%SSH_WORKERS%
+if "%BMC_WORKERS%"=="" (set "BMC_DISP=default") else (set "BMC_DISP=%BMC_WORKERS%")
+if "%SSH_WORKERS%"=="" (set "SSH_DISP=default") else (set "SSH_DISP=%SSH_WORKERS%")
+echo(    并发  : BMC=!BMC_DISP! SSH=!SSH_DISP!
 echo.
 echo(    [1] 顺序执行(逐台设备,最稳定)
 echo(    [2] 并发执行(多设备同时,高效)

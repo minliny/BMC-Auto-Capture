@@ -157,7 +157,17 @@ def _run_launcher_mode(args_list: list[str]) -> int:
 
 
 def main():
-    _setup_browser_path()
+    # Skip browser setup print if only doing auth preflight (no browser needed)
+    _is_preflight_auth = "--preflight-auth" in sys.argv
+    if not _is_preflight_auth:
+        _setup_browser_path()
+    else:
+        # Still set env var for browser path, but don't print
+        import os as _os
+        for _d in [__import__("pathlib").Path(__file__).resolve().parent / "runtime" / "playwright_browsers"]:
+            if _d.is_dir():
+                _os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_d.resolve())
+                break
     _setup_encoding()
 
     # --- Server mode: minimal API boot for network validation ---
