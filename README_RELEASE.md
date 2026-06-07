@@ -113,7 +113,20 @@ Excel 需包含两个工作表：
 A: 右键用管理员运行 CMD，cd 到项目目录后手动执行 `启动.bat`，查看错误信息。
 
 **Q: 提示"找不到执行引擎"**
-A: 确保 `runtime/bmc-engine.exe` 存在。如果是从源码运行，需要 Python 3.9+ 和 `pip install -r requirements.txt`。
+A: 确保以下之一存在：
+   - `runtime/bmc-engine.exe`（编译版引擎）
+   - `offline_bmc_deps/python311/python.exe`（离线 Python）
+   - `.venv/Scripts/python.exe`（虚拟环境）
+
+**Q: Windows 提示"无法验证发布者"**
+A: 这是下载文件的安全标记或 exe 未签名导致，不是程序错误。
+   内测环境请在 PowerShell 中运行解除阻止：
+
+   ```powershell
+   Get-ChildItem "<解压目录>" -Recurse -File | Unblock-File
+   ```
+
+   或重新解压安装包（右键 zip → 属性 → 解除锁定 → 解压）。
 
 **Q: BMC 任务全部失败**
 A: 检查网络连通性 — 首先确认设备 BMC IP 可达（TCP 443 端口）。可以使用菜单 `[3]` 预检。

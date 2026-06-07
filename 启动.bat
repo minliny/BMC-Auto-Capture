@@ -38,19 +38,31 @@ if exist "%ROOT%\runtime\bmc-engine.exe" (
     set "ENGINE_DISPLAY=%ROOT%\runtime\bmc-engine"
 )
 
-:: 2. 离线 Python(打包部署场景自带的 Python)
+:: 2. 离线 Python(基于 ROOT 定位)
 if "%ENGINE_EXE%"=="" (
     if exist "%ROOT%\.venv\Scripts\python.exe" (
         set "ENGINE_EXE=%ROOT%\.venv\Scripts\python.exe"
         set "ENGINE_SCRIPT=%ROOT%\run.py"
         set "ENGINE_DISPLAY=%ROOT%\.venv\Scripts\python.exe %ROOT%\run.py"
         set "USE_PYTHON=1"
+    ) else if exist "%ROOT%\offline_bmc_deps\python311\python.exe" (
+        set "ENGINE_EXE=%ROOT%\offline_bmc_deps\python311\python.exe"
+        set "ENGINE_SCRIPT=%ROOT%\run.py"
+        set "ENGINE_DISPLAY=%ROOT%\offline_bmc_deps\python311\python.exe %ROOT%\run.py"
+        set "USE_PYTHON=1"
+    ) else if exist "%ROOT%\runtime\python311\python.exe" (
+        set "ENGINE_EXE=%ROOT%\runtime\python311\python.exe"
+        set "ENGINE_SCRIPT=%ROOT%\run.py"
+        set "ENGINE_DISPLAY=%ROOT%\runtime\python311\python.exe %ROOT%\run.py"
+        set "USE_PYTHON=1"
     ) else if exist "%USERPROFILE%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe" (
+        echo( [fallback] %%USERPROFILE%%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe
         set "ENGINE_EXE=%USERPROFILE%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe"
         set "ENGINE_SCRIPT=%ROOT%\run.py"
         set "ENGINE_DISPLAY=%USERPROFILE%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe %ROOT%\run.py"
         set "USE_PYTHON=1"
     ) else if exist "%USERPROFILE%\Documents\BMC离线部署包 - 多并发版本\offline_bmc_deps\python311\python.exe" (
+        echo( [fallback] %%USERPROFILE%%\Documents\BMC离线部署包 - 多并发版本\offline_bmc_deps\python311\python.exe
         set "ENGINE_EXE=%USERPROFILE%\Documents\BMC离线部署包 - 多并发版本\offline_bmc_deps\python311\python.exe"
         set "ENGINE_SCRIPT=%ROOT%\run.py"
         set "ENGINE_DISPLAY=%USERPROFILE%\Documents\BMC离线部署包 - 多并发版本\offline_bmc_deps\python311\python.exe %ROOT%\run.py"
@@ -74,12 +86,19 @@ if "%USE_PYTHON%"=="1" (
 )
 
 if "%ENGINE_EXE%"=="" (
-    echo( [错误] 未找到执行引擎或离线 Python。
+    echo( [错误] 未找到可用执行环境。
     echo.
-    echo( 请确保以下之一存在:
-    echo(   1. runtime\bmc-engine.exe     (推荐,编译版)
-    echo(   2. %%USERPROFILE%%\Documents\BMC离线部署包v0.2\offline_bmc_deps\python311\python.exe (离线 Python)
-    echo(   3. run.py (需自行安装 Python 3.9+)
+    echo( 检查路径:
+    echo(   1. runtime\bmc-engine.exe
+    echo(   2. .venv\Scripts\python.exe + run.py
+    echo(   3. offline_bmc_deps\python311\python.exe + run.py
+    echo(   4. runtime\python311\python.exe + run.py
+    echo.
+    echo( 如果文件存在但仍无法启动:
+    echo(   可能是下载安全标记导致 exe 被 Windows 阻止。
+    echo(   请在 PowerShell 中运行:
+    echo(     Get-ChildItem . -Recurse -File ^| Unblock-File
+    echo(   或重新解压安装包。
     echo.
     pause
     exit /b 1
