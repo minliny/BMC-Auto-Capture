@@ -423,10 +423,12 @@ def layer5_offline_integration(output_dir: str, quick: bool):
         fl_test = PROJ_ROOT / "tests" / "test_file_lock.py"
         if fl_test.exists():
             run_cmd([sys.executable, "-m", "pytest", str(fl_test),
-                     "::test_two_processes_same_endpoint_serial", "-q", "--tb=line"],
+                     "-k", "test_two_processes_same_endpoint_serial",
+                     "-q", "--tb=line"],
                     "integration: FileLock subprocess serial", timeout=30)
             run_cmd([sys.executable, "-m", "pytest", str(fl_test),
-                     "::test_two_processes_different_endpoint_concurrent", "-q", "--tb=line"],
+                     "-k", "test_two_processes_different_endpoint_concurrent",
+                     "-q", "--tb=line"],
                     "integration: FileLock subprocess concurrent", timeout=30)
 
     # 5c: Timing reports
