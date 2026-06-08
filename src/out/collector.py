@@ -72,3 +72,43 @@ def compute_summary(results: Sequence[ExecutionResult]) -> dict:
         "final_fail": sum(1 for r in results if r.final_verdict == "FAIL"),
         "final_warn": sum(1 for r in results if r.final_verdict == "WARN"),
     }
+
+
+def write_preflight_auth_csv(report, output_dir: str,
+                             filename: str = "auth_check_result.csv") -> str:
+    """Write credential auth check results to CSV."""
+    path = os.path.join(output_dir, filename)
+    os.makedirs(output_dir, exist_ok=True)
+
+    header = ["device_name", "device_group", "target", "endpoint",
+              "username", "status", "reason", "duration_seconds"]
+
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        for r in sorted(report.results, key=lambda x: x.device_name):
+            # BMC row
+            bmc_status = getattr(r, 'bmc_status', '')
+            if bmc_status:
+                writer.writerow([
+                    r.device_name, "", "BMC",
+                    getattr(r, 'bmc_endpoint', ''),
+                    getattr(r, 'bmc_username', ''),
+                    bmc_status,
+                    getattr(r, 'bmc_error', ''),
+                    str(round(getattr(r, 'bmc_duration', 0), 1)),
+                ])
+            # SSH row
+            ssh_status = getattr(r, 'ssh_status', '')
+            if ssh_status:
+                writer.writerow([
+                    r.device_name, "", "SSH",
+                    getattr(r, 'ssh_endpoint', ''),
+                    getattr(r, 'ssh_username', ''),
+                    ssh_status,
+                    getattr(r, 'ssh_error', ''),
+                    str(round(getattr(r, 'ssh_duration', 0), 1)),
+                ])
+
+    logger.info("Wrote auth_check_result.csv to %s (%d rows)", path, len(report.results) * 2)
+    return path

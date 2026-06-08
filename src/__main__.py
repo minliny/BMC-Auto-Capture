@@ -74,6 +74,12 @@ Examples:
                         help="BMC page timeout in seconds")
     parser.add_argument("--preflight-only", action="store_true",
                         help="Preflight only, no task execution")
+    parser.add_argument("--preflight-target", default="all",
+                        choices=["all", "bmc", "ssh"],
+                        help="Preflight target: all (default), bmc, ssh")
+    parser.add_argument("--preflight-auth", default=None,
+                        choices=["all", "bmc", "ssh", None],
+                        help="Preflight credential check: all, bmc, ssh")
     parser.add_argument("--no-preflight", action="store_true",
                         help="Skip connectivity preflight entirely")
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -113,6 +119,46 @@ Examples:
     if not excel_path.exists():
         print(f"ERROR: Excel file not found: {excel_path}", file=sys.stderr)
         sys.exit(1)
+
+    # Preflight-only mode
+    if args.preflight_only:
+        from src.loader.excel_reader import load_all as _load
+        from src.connectivity.preflight import check_all as _preflight_all
+        from src.connectivity.preflight import check_auth_all as _preflight_auth
+        from src.out.collector import write_preflight_auth_csv
+        devices, tasks = _load(str(excel_path))
+
+        if args.preflight_auth:
+            # Credential check mode
+            target = args.preflight_auth or "all"
+            print(f"\nPreflight (auth): loaded {len(devices)} rows from Excel, target={target}")
+            print(f"  checking credentials...\n")
+            max_w = config.max_bmc_workers + config.max_ssh_workers
+            report = _preflight_auth(devices, timeout=config.tcp_connect_timeout,
+                                     max_workers=max_w, target=target)
+            # Write auth result CSV
+            try:
+                p = write_preflight_auth_csv(report, config.output_root)
+                print(f"\nAuth check results saved to: {p}")
+            except Exception as e:
+                print(f"WARNING: Failed to write auth CSV: {e}")
+        else:
+            # Network connectivity check mode
+            target = args.preflight_target or "all"
+            print(f"\nPreflight (connectivity): loaded {len(devices)} rows from Excel, target={target}")
+            print(f"  checking unique enabled devices...\n")
+            max_w = config.max_bmc_workers + config.max_ssh_workers
+            report = _preflight_all(devices, timeout=config.tcp_connect_timeout,
+                                    max_workers=max_w, target=target)
+
+        # Print summary
+        if args.preflight_auth:
+            ok = report.bmc_ok + report.ssh_ok
+            total = report.total
+            print(f"\nAuth check: {ok}/{total} passed")
+            if ok < total:
+                sys.exit(1)
+        sys.exit(0)
 
     # Run
     app = App(config)

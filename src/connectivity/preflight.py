@@ -41,6 +41,13 @@ class PreflightResult:
     ssh_error: str = ""
     bmc_latency_ms: float = 0.0
     ssh_latency_ms: float = 0.0
+    device_group: str = ""
+    bmc_endpoint: str = ""
+    ssh_endpoint: str = ""
+    bmc_username: str = ""
+    ssh_username: str = ""
+    bmc_duration: float = 0.0
+    ssh_duration: float = 0.0
 
 
 @dataclass
@@ -215,53 +222,58 @@ def check_all(devices: list[Device], timeout: float = 5.0,
     return report
 
 
-def _check_ssh_auth(device: Device, timeout: float) -> tuple[str, str]:
-    """Try SSH authentication via paramiko. Returns (status, error_msg)."""
+def _check_ssh_auth(device: Device, timeout: float) -> tuple[str, str, float]:
+    """Try SSH authentication via paramiko. Returns (status, error_msg, duration)."""
     import socket as _socket
+    t0 = time.time()
+    if not device.inband_ip:
+        return "IP_EMPTY", "带内IP为空", 0.0
+    if not device.inband_username or not device.inband_password:
+        return "CREDENTIAL_EMPTY", "带内用户名或密码为空", 0.0
     try:
         import paramiko
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         client.connect(
-            hostname=device.inband_ip,
-            port=22,
-            username=device.inband_username,
-            password=device.inband_password,
-            timeout=timeout,
-            look_for_keys=False,
-            allow_agent=False,
+            hostname=device.inband_ip, port=22,
+            username=device.inband_username, password=device.inband_password,
+            timeout=timeout, look_for_keys=False, allow_agent=False,
         )
         client.close()
-        return "OK", ""
+        return "AUTH_OK", "", round(time.time() - t0, 3)
     except paramiko.AuthenticationException:
-        return "AUTH_FAILED", "SSH认证失败: 用户名或密码错误"
+        return "AUTH_FAILED", "SSH认证失败: 用户名或密码错误", round(time.time() - t0, 3)
     except _socket.timeout:
-        return "TIMEOUT", f"SSH连接超时 ({timeout}s)"
+        return "TIMEOUT", f"SSH连接超时 ({timeout}s)", round(time.time() - t0, 3)
     except _socket.error as e:
-        return "UNREACHABLE", f"SSH不可达: {e}"
+        s = str(e).lower()
+        return ("CONNECT_FAILED", f"SSH连接失败: {e}", round(time.time() - t0, 3))
     except Exception as e:
-        return "ERROR", f"SSH检测异常: {e}"
+        return "ERROR", f"SSH检测异常: {e}", round(time.time() - t0, 3)
 
 
-def _check_bmc_auth(device: Device, timeout: float) -> tuple[str, str]:
-    """Try BMC web interface connectivity via HTTP. Returns (status, error_msg)."""
+def _check_bmc_auth(device: Device, timeout: float) -> tuple[str, str, float]:
+    """Try BMC web interface via HTTPS. Returns (status, error_msg, duration)."""
     import socket as _socket
-    bmc_ip = device.bmc_ip
-    if not bmc_ip:
-        return "IP_EMPTY", "BMC IP为空"
+    t0 = time.time()
+    if not device.bmc_ip:
+        return "IP_EMPTY", "BMC IP为空", 0.0
+    if not device.bmc_username or not device.bmc_password:
+        return "CREDENTIAL_EMPTY", "BMC用户名或密码为空", 0.0
     try:
         import urllib.request as _req
-        url = f"https://{bmc_ip}"
+        url = f"https://{device.bmc_ip}"
         r = _req.urlopen(url, timeout=timeout)
         if r.status == 200 or r.status == 302:
-            return "OK", ""
-        return f"HTTP_{r.status}", f"BMC返回HTTP {r.status}"
+            return "AUTH_OK", "", round(time.time() - t0, 3)
+        return f"HTTP_{r.status}", f"BMC返回HTTP {r.status}", round(time.time() - t0, 3)
     except _socket.timeout:
-        return "TIMEOUT", f"BMC连接超时 ({timeout}s)"
+        return "TIMEOUT", f"BMC连接超时 ({timeout}s)", round(time.time() - t0, 3)
     except _socket.error as e:
-        return "UNREACHABLE", f"BMC不可达: {e}"
+        s = str(e).lower()
+        return ("CONNECT_FAILED", f"BMC连接失败: {e}", round(time.time() - t0, 3))
     except Exception as e:
-        return "ERROR", f"BMC检测异常: {e}"
+        return "ERROR", f"BMC检测异常: {e}", round(time.time() - t0, 3)
 
 
 def check_auth_all(devices: list[Device], timeout: float = 10.0,
@@ -298,34 +310,43 @@ def check_auth_all(devices: list[Device], timeout: float = 10.0,
 
         for future in futures:
             device, check_type = futures[future]
-            status, error = future.result()
+            status, error, duration = future.result()
             logger.info("Auth %s %s: %s%s", device.device_name, check_type.upper(), status,
                         f" ({error})" if error else "")
 
             # Find or create result entry for this device
             existing = next((r for r in results if r.device_name == device.device_name), None)
             if not existing:
-                existing = PreflightResult(device_name=device.device_name)
+                existing = PreflightResult(
+                    device_name=device.device_name,
+                    device_group=device.device_group,
+                )
                 results.append(existing)
 
             if check_type == "bmc":
                 existing.bmc_status = status
                 existing.bmc_error = error
+                existing.bmc_endpoint = f"{device.bmc_ip}:443"
+                existing.bmc_username = device.bmc_username
+                existing.bmc_duration = duration
             else:
                 existing.ssh_status = status
                 existing.ssh_error = error
+                existing.ssh_endpoint = f"{device.inband_ip}:22"
+                existing.ssh_username = device.inband_username
+                existing.ssh_duration = duration
 
-            icon = "OK" if status == "OK" else "FAIL"
+            icon = "OK" if status == "AUTH_OK" else "FAIL"
             print(f"    [{icon}] {device.device_name} {check_type.upper()}: {status}"
                   f"{' - ' + error if error else ''}")
 
     report = PreflightReport(
         results=results,
         total=total,
-        bmc_ok=sum(1 for r in results if r.bmc_status == "OK"),
-        bmc_fail=sum(1 for r in results if r.bmc_status != "OK"),
-        ssh_ok=sum(1 for r in results if r.ssh_status == "OK"),
-        ssh_fail=sum(1 for r in results if r.ssh_status not in ("OK", "IP_EMPTY")),
+        bmc_ok=sum(1 for r in results if r.bmc_status == "AUTH_OK"),
+        bmc_fail=sum(1 for r in results if r.bmc_status not in ("AUTH_OK", "IP_EMPTY", "CREDENTIAL_EMPTY")),
+        ssh_ok=sum(1 for r in results if r.ssh_status == "AUTH_OK"),
+        ssh_fail=sum(1 for r in results if r.ssh_status not in ("AUTH_OK", "IP_EMPTY", "CREDENTIAL_EMPTY")),
     )
 
     logger.info(

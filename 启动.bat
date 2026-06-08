@@ -344,9 +344,15 @@ if "%PF_MODE%"=="connect" echo(    正在检测网络连通性 target=%PF_TARGET% ...
 if "%PF_MODE%"=="auth" echo(    正在检测账户密码 target=%PF_TARGET% ...
 echo.
 if "%PF_MODE%"=="connect" call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-only --preflight-target "%PF_TARGET%" %WORKER_ARGS%
-if "%PF_MODE%"=="auth" call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-only --preflight-auth "%PF_TARGET%" %WORKER_ARGS%
-echo.
-echo(    预检完成。按任意键返回菜单...
+if "%PF_MODE%"=="auth" call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-auth "%PF_TARGET%" %WORKER_ARGS%
+
+set "PF_EXIT=%ERRORLEVEL%"
+if %PF_EXIT% neq 0 (
+    echo    [FAIL] Preflight/Auth failed, exit code: %PF_EXIT%
+) else (
+    echo    Preflight completed successfully.
+)
+echo    Press any key...
 pause >nul
 goto :menu
 
