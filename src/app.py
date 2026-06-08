@@ -165,6 +165,13 @@ class App:
         except Exception as e:
             logger.warning("Failed to write timing reports: %s", e)
 
+        # Evidence audit
+        try:
+            from .out.evidence_audit import write_evidence_audit_csv
+            write_evidence_audit_csv(self._results, str(output_dir))
+        except Exception as e:
+            logger.warning("Failed to write evidence audit: %s", e)
+
         summary = compute_summary(self._results)
         logger.info("汇总:  %s", summary)
         print_terminal_summary(self._results)
@@ -442,6 +449,13 @@ class App:
             )
         except Exception as e:
             logger.warning("Failed to write timing reports: %s", e)
+
+        # Evidence audit
+        try:
+            from .out.evidence_audit import write_evidence_audit_csv
+            write_evidence_audit_csv(self._results, str(output_dir))
+        except Exception as e:
+            logger.warning("Failed to write evidence audit: %s", e)
 
         summary = compute_summary(self._results)
         logger.info("汇总:  %s", summary)

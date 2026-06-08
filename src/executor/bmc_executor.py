@@ -24,6 +24,11 @@ from PIL import Image
 from .base import AbstractExecutor
 from .browser_manager import BrowserManager
 from .captcha_handler import detect_captcha, handle_captcha, CaptchaDetected
+from .bmc_health_check import (
+    check_bmc_page_health, check_evidence_files,
+    scan_html_for_keywords, scan_mhtml_for_keywords,
+    HealthResult,
+)
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
@@ -194,9 +199,27 @@ class BMCExecutor(AbstractExecutor):
         page_acquired = False
         current_stage = "init"
         _context = None  # browser context for cleanup
+        _health_results: list[HealthResult] = []
 
         # Hard task-level timeout: 2× task.timeout_seconds is the absolute ceiling.
         task_timeout = max(task.timeout_seconds, 30) * 2
+
+        async def _check_health(stage: str, target_url: str = "") -> HealthResult:
+            """Run health check and store result. Returns the HealthResult."""
+            try:
+                hr = await check_bmc_page_health(page, stage, target_url=target_url)
+            except Exception as e:
+                hr = HealthResult(stage)
+                hr.healthy = False
+                hr.status = "HEALTH_CHECK_ERROR"
+                hr.details = str(e)
+            _health_results.append(hr)
+            if not hr.healthy:
+                logger.warning(
+                    "[%s] 页面健康检查失败 [%s]: %s — %s",
+                    dname, stage, hr.status, hr.details[:120],
+                )
+            return hr
 
         async def _run_with_stages():
             nonlocal page, page_acquired, current_stage, _context
@@ -234,7 +257,16 @@ class BMCExecutor(AbstractExecutor):
                 result.ended_at = time.time()
                 result.duration_seconds = result.ended_at - result.started_at
                 return
+
             logger.info("[%s] 阶段 4/6: 登录 ok", dname)
+            hr = await _check_health("after_login")
+            if not hr.healthy:
+                # Login page returned or session preempted → fail early
+                result.execution_status = "EXEC_FAILED"
+                result.execution_failure_reason = f"BMC_PAGE_HEALTH_FAILED [{hr.status}]: {hr.details}"
+                result.ended_at = time.time()
+                result.duration_seconds = result.ended_at - result.started_at
+                return
 
             # --- Stage 5: dismiss popups + navigate + capture ---
             current_stage = "5/6 navigate_capture"
@@ -245,9 +277,17 @@ class BMCExecutor(AbstractExecutor):
                 await self._run_capture_flow(page, task, device, device.bmc_ip, output_dir, result)
             logger.info("[%s] 阶段 5/6: 采集完成", dname)
 
-            # --- Stage 6: success ---
-            current_stage = "6/6 done"
-            logger.info("[%s] Stage %s", dname, current_stage)
+            # --- Stage 6: final health gate ---
+            current_stage = "6/6 final_health_check"
+            hr = await _check_health("before_complete")
+            if not hr.healthy and result.execution_status not in ("EXEC_FAILED", "EXEC_PARTIAL"):
+                result.execution_status = "EXEC_FAILED"
+                result.execution_failure_reason = (
+                    f"BMC_PAGE_HEALTH_FAILED [{hr.status}]: {hr.details}"
+                )
+                logger.error("[%s] 最终页面健康检查失败: %s", dname, hr.status)
+                return
+
             # Only set success if no error/partial status was already recorded by capture flow
             if result.execution_status not in ("EXEC_FAILED", "EXEC_PARTIAL"):
                 result.execution_status = "EXEC_SUCCESS"
@@ -948,6 +988,16 @@ class BMCExecutor(AbstractExecutor):
                     logger.warning("[%s] 重新登录失败: %s", device.device_name, login_reason)
                     result.execution_status = "EXEC_FAILED"
                     result.execution_failure_reason = login_reason or "BMC重新登录失败"
+
+            # Health check after navigation
+            if result.execution_status not in ("EXEC_FAILED",):
+                hr = await check_bmc_page_health(page, "after_navigate", target_url=target_url)
+                if not hr.healthy:
+                    result.execution_status = "EXEC_FAILED"
+                    result.execution_failure_reason = (
+                        f"BMC_PAGE_HEALTH_FAILED [{hr.status}]: {hr.details}"
+                    )
+                    logger.error("[%s] 导航后页面健康检查失败: %s", device.device_name, hr.status)
         else:
             # No target_url from either command_or_url (BMC_URL) or actions_json goto (BMC_ACTIONS).
             execution_mode = getattr(task, "execution_mode", "unknown")
@@ -965,6 +1015,16 @@ class BMCExecutor(AbstractExecutor):
                 )
 
         await self._dismiss_all_blockers(page)
+
+        # Health check before actions
+        if result.execution_status not in ("EXEC_FAILED",):
+            hr = await check_bmc_page_health(page, "before_actions")
+            if not hr.healthy:
+                result.execution_status = "EXEC_FAILED"
+                result.execution_failure_reason = (
+                    f"BMC_PAGE_HEALTH_FAILED [{hr.status}]: {hr.details}"
+                )
+                logger.error("[%s] actions前页面健康检查失败: %s", device.device_name, hr.status)
 
         # --- Step 2: pre_capture_actions ---
         pre_actions = flow.get("pre_capture_actions", [])
@@ -987,6 +1047,16 @@ class BMCExecutor(AbstractExecutor):
                 result.ready_status = "READY_NOT_READY"
             if not result.ready_failure_reason:
                 result.ready_failure_reason = f"ready conditions failed: {ready_eval.summary()}"
+
+        # --- Health check before final capture ---
+        if result.execution_status not in ("EXEC_FAILED",):
+            hr = await check_bmc_page_health(page, "before_screenshot", target_url=target_url if raw_target else "")
+            if not hr.healthy:
+                result.execution_status = "EXEC_FAILED"
+                result.execution_failure_reason = (
+                    f"BMC_PAGE_HEALTH_FAILED [{hr.status}]: {hr.details}"
+                )
+                logger.error("[%s] 截图前页面健康检查失败: %s", device.device_name, hr.status)
 
         # --- Step 4: final_capture (always runs if page is alive) ---
         await self._execute_final_capture(page, task, bmc_ip, file_base, output_dir, result)
