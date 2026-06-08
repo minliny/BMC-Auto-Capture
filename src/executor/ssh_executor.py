@@ -189,6 +189,7 @@ class SSHExecutor(AbstractExecutor):
         variables: dict[str, str] = {}
 
         client = None
+        transcript_meta: dict | None = None
         all_output: list[str] = []
         has_failure = False
         has_timeout = False

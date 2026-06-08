@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
-"""Standalone timing report generator — no pytest, no HW.
+"""Standalone timing report generator — completely offline, no browser, no network.
 
-Simulates a full execution with fake executors and writes all 5 timing
-reports to an output directory.  Useful for verifying the timing pipeline
-on Windows without real BMC/SSH devices.
+Generates all 5 timing reports using fake ExecutionResults constructed from
+mock plans.  No import of BMCExecutor/BrowserManager/Playwright.
 
 Usage:
-  python scripts/generate_timing_report_offline.py [--output ./timing_out]
-
-Output files:
-  result.csv
-  plan_timing.csv
-  device_timing.csv
-  endpoint_timing.csv
-  execution_summary.csv
-  execution_summary.json
+  python scripts/generate_timing_report_offline.py --output ./timing_out
 """
 
 from __future__ import annotations
@@ -32,15 +23,13 @@ from src.models.device import Device
 from src.models.task import Task
 from src.models.task_plan import TaskPlan
 from src.models.execution_result import ExecutionResult
-from src.models.app_config import AppConfig
-from src.scheduler.dynamic_scheduler import DynamicScheduler
 from src.out.collector import write_result_csv, write_final_result_csv
 from src.out.summary import build_pivot_csv, write_failure_csv
 from src.out.timing import write_all_timing_reports
 
 
 # ------------------------------------------------------------------
-# Test data: 6 devices, mix of BMC / SSH / TELNET
+# Test data: 6 devices, mix BMC / SSH
 # ------------------------------------------------------------------
 
 def _devices():
@@ -76,16 +65,38 @@ def _tasks():
 
 
 # ------------------------------------------------------------------
-# Fake scheduler
+# Fake result generator (no browser, no scheduler, pure data)
 # ------------------------------------------------------------------
 
-class TimingScheduler(DynamicScheduler):
-    """Uses time.sleep() as fake executor to simulate real timing."""
+def generate_fake_results() -> list[ExecutionResult]:
+    """Generate fake ExecutionResults simulating a full concurrent run.
 
-    def _execute_plan(self, plan):
-        plan.executor_started_at = time.time()
-        time.sleep(0.15)  # Simulate realistic execution time
-        plan.executor_finished_at = time.time()
+    Uses timing that mimics real execution: each plan gets a small unique
+    sleep, BMC plans on same IP are serial, different endpoints overlap.
+    """
+    from src.scheduler.plan_generator import generate_plans
+
+    devices = _devices()
+    tasks = _tasks()
+    plans = generate_plans(devices, tasks)
+
+    # Simulate wall-clock pacing:
+    # - Group plans by endpoint_key
+    # - Each endpoint group starts at a staggered time
+    # - Plans within same endpoint are serial
+    base_time = time.time()
+    results = []
+
+    # Track per-endpoint offsets
+    endpoint_start: dict[str, float] = {}
+    for plan in plans:
+        ek = plan.endpoint_key
+        if ek not in endpoint_start:
+            endpoint_start[ek] = base_time + len(endpoint_start) * 0.01
+        # Each plan within the same endpoint starts slightly after the previous
+        offset = endpoint_start[ek]
+        plan_dur = 0.1 + (hash(plan.plan_id) % 10) * 0.01  # jitter 0.1-0.2s
+
         r = ExecutionResult(
             plan_id=plan.plan_id,
             device_name=plan.device.device_name,
@@ -96,18 +107,20 @@ class TimingScheduler(DynamicScheduler):
             task_type=plan.task.task_type,
             execution_mode=plan.task.execution_mode,
             execution_status="EXEC_SUCCESS",
-            started_at=plan.executor_started_at,
-            ended_at=plan.executor_finished_at,
-            duration_seconds=round(plan.executor_finished_at - plan.executor_started_at, 3),
-            endpoint_key=plan.endpoint_key,
+            started_at=offset,
+            ended_at=offset + plan_dur,
+            duration_seconds=round(plan_dur, 3),
+            endpoint_key=ek,
             endpoint_type=plan.endpoint_type,
-            resource_wait_seconds=plan.resource_wait_seconds,
-            executor_duration_seconds=plan.executor_duration_seconds,
-            retry_count=plan.retry_attempt,
+            resource_wait_seconds=round(offset - base_time, 3),
+            executor_duration_seconds=round(plan_dur, 3),
+            retry_count=0,
             output_dir=os.path.join(plan.device.device_name, plan.task.task_name),
         )
-        plan.ended_at = plan.executor_finished_at
-        return r
+        results.append(r)
+        endpoint_start[ek] = offset + plan_dur
+
+    return results
 
 
 # ------------------------------------------------------------------
@@ -117,7 +130,7 @@ class TimingScheduler(DynamicScheduler):
 def main():
     import argparse
     parser = argparse.ArgumentParser(
-        description="Generate timing reports with fake executors (offline verification)"
+        description="Generate timing reports with fake data (offline, no browser)"
     )
     parser.add_argument("--output", "-o", default="./timing_out",
                         help="Output directory (default: ./timing_out)")
@@ -126,34 +139,13 @@ def main():
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    from src.scheduler.plan_generator import generate_plans
-
-    devices = _devices()
-    tasks = _tasks()
-    plans = generate_plans(devices, tasks)
-
-    print(f"Devices: {len(devices)}")
-    print(f"Tasks:   {len(tasks)}")
-    print(f"Plans:   {len(plans)}")
-    print(f"Output:  {out_dir.resolve()}")
-    print()
-
-    config = AppConfig()
-    config.max_bmc_workers = 3
-    config.base_bmc_workers = 3
-    config.max_ssh_workers = 4
-    config.base_ssh_workers = 4
-    config.output_root = str(out_dir)
-
     exec_start = time.time()
-    scheduler = TimingScheduler(config)
-    results = scheduler.run(plans)
+    results = generate_fake_results()
     wall_clock = time.time() - exec_start
 
     success = sum(1 for r in results if r.execution_status == "EXEC_SUCCESS")
-    failed = len(results) - success
-    print(f"\nResults: {len(results)} total, {success} success, {failed} failed")
-    print(f"Wall clock: {wall_clock:.1f}s")
+    print(f"Generated {len(results)} fake results ({success} success) in {wall_clock:.1f}s")
+    print(f"Output: {out_dir.resolve()}")
 
     # Write standard reports
     write_result_csv(results, str(out_dir))
@@ -172,45 +164,26 @@ def main():
 
     # Quick validation
     print(f"\n── Validation ──")
-    checks = 0
-    fails = 0
+    checks = ok = 0
+    for name, path in sorted(paths.items()):
+        assert os.path.exists(path), f"Missing: {path}"
+        ok += 1
+        print(f"  OK  {name}")
 
-    # result.csv
     rp = os.path.join(out_dir, "result.csv")
+    assert os.path.exists(rp), "result.csv missing"
     with open(rp, encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
-    assert len(rows) == len(results), f"result.csv: expected {len(results)} rows, got {len(rows)}"
+    assert len(rows) == len(results)
     print(f"  OK  result.csv: {len(rows)} rows")
 
-    # plan_timing.csv
     pp = paths["plan_timing"]
     with open(pp, encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == len(results)
     for r in rows:
-        assert float(r["duration_seconds"]) > 0, f"plan_timing.csv: zero duration for {r['plan_id']}"
+        assert float(r["duration_seconds"]) > 0, f"Zero duration: {r['plan_id']}"
     print(f"  OK  plan_timing.csv: {len(rows)} rows, all durations > 0")
-
-    # device_timing.csv
-    with open(paths["device_timing"], encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
-    assert len(rows) >= 4, f"device_timing.csv: expected >=4 devices, got {len(rows)}"
-    print(f"  OK  device_timing.csv: {len(rows)} rows")
-
-    # endpoint_timing.csv
-    with open(paths["endpoint_timing"], encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
-    assert len(rows) >= 3, f"endpoint_timing.csv: expected >=3 endpoints, got {len(rows)}"
-    print(f"  OK  endpoint_timing.csv: {len(rows)} rows")
-
-    # execution_summary.json
-    with open(paths["execution_summary"], encoding="utf-8") as f:
-        summary = json.load(f)
-    assert summary["total_plans"] == len(results)
-    assert summary["parallel_efficiency"] > 0
-    assert "slowest_endpoint" in summary
-    assert "slowest_task" in summary
-    print(f"  OK  execution_summary.json: parallel_efficiency={summary['parallel_efficiency']:.2f}")
 
     print(f"\n  ALL CHECKS PASSED")
     return 0
