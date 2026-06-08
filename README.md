@@ -1,234 +1,238 @@
-# BMC Auto-Capture
+# BMC Auto-Capture v0.2.4-RC5
 
-面向服务器、BMC/iBMC、交换设备、SSH 命令采集场景的自动化测试证据采集平台。
+面向服务器 BMC/iBMC、交换设备、SSH/TELNET 命令采集场景的自动化测试证据采集平台。
 
 ## 核心能力
 
-- **BMC 浏览器自动化** — Playwright 驱动，自动处理 HTTPS 证书/登录/弹窗/验证码，全页长截图 + HTML 保存
-- **SSH/Telnet 命令采集** — Paramiko 纯 Python 实现，满足安全策略（仅 Python 可访问 22 端口）
-- **Excel 驱动配置** — 设备信息 + 任务列表两个 Sheet，支持分组/多标签匹配
-- **动态并发调度** — 根据实时 CPU/内存调整 BMC/SSH 工作池大小，同设备任务串行
-- **规则引擎** — 基础规则（证据采集）+ 高级规则（结果验证），执行状态与规则状态分离
-- **网络预检 + 路由保护** — TCP 端口探测，区分网络不通/端口拦截/超时；VPN 路由变更监控
-- **双平台开箱即用** — macOS / Windows 预编译包，内置 Chromium，解压即用
+- **BMC 浏览器自动化** — Playwright 驱动，自动处理 HTTPS 证书/登录/弹窗/验证码，全页截图+HTML/MHTML/State JSON 保存
+- **SSH/TELNET 命令采集** — Paramiko 纯 Python 实现，满足安全策略（仅 Python 可访问 22/23 端口）
+- **Endpoint-aware 动态调度** — 同一 BMC/INBAND endpoint 串行执行，不同 endpoint 并发，BMC/INBAND 分池调度，支持跨进程文件锁
+- **BMC 会话复用** — 同一 endpoint 下多个 BMC 任务共享一个登录会话，login once / execute many / logout once
+- **5-Gate 页面生命周期** — OPENED → AUTHENTICATED → PAGE_BASIC_HEALTH → READY_FOR_CAPTURE → SCREENSHOT_VALIDATED，区分 visible/hidden loading/error
+- **证据审计** — evidence_audit.csv 扫描已保存 HTML/MHTML/log，检测会话冲突/登录页返回/页面加载异常
+- **账户密码可用性检测** — `--preflight-auth all/bmc/ssh` 预检 BMC/SSH 认证凭证
+- **timing 报表** — plan_timing.csv / device_timing.csv / endpoint_timing.csv / execution_summary.csv+json
+- **双平台开箱即用** — Windows 预编译包内置 Chromium，macOS 源码运行
 
-## 快速开始（Windows 用户）
+## 快速开始（Windows）
 
 ### 部署
 
-从 [Release](https://github.com/minliny/BMC-Auto-Capture/releases) 下载两个包，解压到同一目录：
+从 [Release](https://github.com/minliny/BMC-Auto-Capture/releases) 下载 `bmc-auto-capture-vX.X.X-win-x64.zip`，解压：
 
 ```
 C:\bmc-auto-capture\
-├── 启动.bat                ← 双击这个
-├── bmc-auto-capture.exe    ← 引擎（不要直接双击）
-├── config\                 ← 全局配置
-├── examples\
-│   └── task_template.xlsx        ← 修改设备信息
-└── tasks.json              ← 任务执行定义
+├── 启动.bat                  ← 双击运行
+├── runtime\                  ← 引擎 + Python 运行时 + Chromium
+│   ├── bmc-engine.exe
+│   ├── _internal\
+│   └── playwright_browsers\
+├── app\                      ← 脚本 + 配置 + 示例
+│   ├── src\
+│   ├── config\
+│   ├── examples\
+│   └── tasks.json
+├── run.py                    ← Python 源码入口（引擎 fallback）
+└── output\                   ← 结果输出（自动创建）
 ```
 
 ### 配置设备
 
-打开 `examples/task_template.xlsx` → 「设备信息」sheet，填入你的设备：
+打开 `app/examples/task_template.xlsx` → 「设备信息」sheet：
 
-| 设备分类 | 设备名称 | 带外管理IP | 是否启用 | 带外管理用户名 | 带外管理密码 | 带内管理IP | 带内管理用户名 | 带内管理密码 | 标签 |
-|----------|----------|-----------|---------|--------------|-------------|-----------|--------------|-------------|------|
-| A3 | node-01 | 10.1.2.3 | 是 | admin | *** | | | | A3 |
-| L1 | sw-01 | | 是 | | | 10.1.2.4 | root | *** | L1,交换机 |
-
-任务列表已有 30 条预配置任务，一般不需要修改。
+| 设备分类 | 设备名称 | 带外管理IP | 是否启用 | 带外管理用户名 | 带外管理密码 | 带内管理IP | 带内管理用户名 | 带内管理密码 |
+|----------|----------|-----------|---------|--------------|-------------|-----------|--------------|-------------|
+| A3 | node-01 | 10.1.2.3 | 是 | admin | *** | | | |
+| L1 | sw-01 | | 是 | | | 10.1.2.4 | root | *** |
 
 ### 执行
 
-双击 `启动.bat`，选择操作：
+双击 `启动.bat`，菜单选择：
 
 ```
-[1] 开始执行（顺序模式）     ← 设备逐个执行，最稳定
-[2] 开始执行（并发模式）     ← 多设备并发执行，更高效
-[3] 仅网络预检              ← 检测连通性，不执行任务
-[4] 指定 Excel 文件         ← 切换配置文件
-[5] 查看最近结果            ← 显示 result.csv
+[1] 顺序执行（逐台设备，最稳定）
+[2] 并发执行（多 endpoint 并发，更高效）
+[3] 网络连通性预检（TCP 端口探测）
+[4] 账户密码可用性检测（BMC/SSH 凭证验证）
+[5] 仅 BMC 账户检测
+[6] 仅 SSH 账户检测
+[7] 设定 Excel 文件路径
+[8] Debug 模式（详细日志）
+[R] 直接命令模式
+[0] 启动 API Server
 ```
 
 ### 查看结果
 
 ```
-output/
-├── result.csv              ← 每设备每任务一行，含状态/原因/耗时
-├── final_result.csv        ← 同上，按状态排序
-├── summary_pivot.csv       ← 设备×任务 透视表
-├── A3/
-│   └── node-01/
-│       └── A3 BMC首页截图/
-│           ├── screenshot.png      ← 全页截图（含设备信息水印）
-│           ├── page.html           ← 页面 HTML
-│           └── task.log
-└── L1/
-    └── sw-01/
-        └── uname查询/
-            ├── output.txt          ← SSH 命令输出
-            ├── terminal.png        ← 终端截图
-            └── task.log
+output/20260608_120000/
+├── result.csv                    ← 每设备每任务一行
+├── final_result.csv              ← 同 result，按状态排序
+├── summary_pivot.csv             ← 设备 × 任务透视表
+├── failure_detail.csv            ← 失败任务详情
+├── plan_timing.csv               ← 每个 plan 完整耗时
+├── device_timing.csv             ← 每设备耗时汇总
+├── endpoint_timing.csv           ← 每 endpoint 耗时汇总
+├── execution_summary.csv+json    ← 整次执行总览
+├── evidence_audit.csv            ← 证据质量审计
+├── auth_check_result.csv         ← 账户密码检测结果（如运行预检）
+└── A3/node-01/A3 BMC首页截图/
+    ├── node-01_A3 BMC首页截图_*.png
+    ├── html/node-01_A3 BMC首页截图_*.html
+    ├── html/node-01_A3 BMC首页截图_*.mhtml
+    ├── html/node-01_A3 BMC首页截图_*.evidence.html
+    ├── html/node-01_A3 BMC首页截图_*.state.json
+    └── raw/  (可选)
 ```
 
-## 执行模式
+## CLI 命令行
 
-| 模式 | 用途 | 配置位置 |
-|------|------|----------|
-| `BMC_URL` | 打开 BMC 页面 → 全页截图 + 保存 HTML | tasks.json |
-| `SSH_CMD` | SSH 登录 → 执行命令 → 保存 TXT + 截图 | tasks.json |
-| `BMC_ACTIONS` | 复杂页面交互：点击/填写/等待/断言 | tasks.json (JSON DSL) |
-| `CUSTOM_SCRIPT` | 遗留脚本，默认禁用 | tasks.json (`_legacy` 标记) |
+```cmd
+:: 顺序执行
+bmc-engine.exe --app-dir app --excel tasks.xlsx --mode sequential
 
-BMC_ACTIONS 支持的动作：
+:: 并发执行（推荐）
+bmc-engine.exe --app-dir app --excel tasks.xlsx --mode full
 
-```
-goto  click  fill  press  wait_for_selector  wait  screenshot  save_html  assert_visible
-```
+:: 网络连通性预检
+bmc-engine.exe --app-dir app --excel tasks.xlsx --preflight-only
 
-## 架构
+:: 账户密码检测（all/bmc/ssh）
+bmc-engine.exe --app-dir app --excel tasks.xlsx --preflight-auth all
 
-```
-Excel V2
-  → PlanGenerator (设备 × 任务匹配，按分组/标签过滤)
-  → ConnectivityPreflight (TCP 443/22 探测)
-  → RouteGuard (VPN 路由变更监控)
-  → DynamicScheduler (BMC/SSH 并发池，资源自适应)
-  → Executor (BMC_URL / SSH_CMD / BMC_ACTIONS)
-  → RuleEngine (可选规则检查)
-  → ResultCollector (result.csv + 透视表)
+:: API Server
+bmc-engine.exe --app-dir app --server --host 0.0.0.0 --port 8080
+
+:: 详细日志
+bmc-engine.exe --app-dir app --excel tasks.xlsx --mode full --verbose
 ```
 
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--app-dir` | app 目录（含 src/config/tasks.json） | — |
+| `--excel` | Excel 配置文件路径 | 自动查找 |
+| `--mode` | sequential / full | sequential |
+| `--output` | 输出根目录 | YAML 配置 |
+| `--max-bmc-workers` | BMC 最大并发 endpoint 数 | 4 |
+| `--max-ssh-workers` | SSH 最大并发 endpoint 数 | 8 |
+| `--preflight-only` | 仅 TCP 预检，不执行任务 | — |
+| `--preflight-target` | 预检对象：all / bmc / ssh | all |
+| `--preflight-auth` | 凭证检测：all / bmc / ssh | — |
+| `--no-preflight` | 跳过连通性预检 | — |
+| `--server` | API Server 模式 | — |
+| `--host` | Server 监听地址 | 127.0.0.1 |
+| `--port` | Server 端口 | 8080 |
+| `--verbose` | Debug 日志 | — |
+
+## 调度架构
+
 ```
-src/
-├── app.py                # 流水线编排 + EventBus
-├── models/               # 数据模型 (Device/Task/TaskPlan/ExecutionResult)
-├── loader/               # Excel 读取 + schema 校验
-├── scheduler/            # 计划生成 + 动态调度 + 资源监控
-├── executor/             # BMC/SSH 执行器 + 浏览器生命周期管理
-├── connectivity/         # 网络预检 + Windows 路由保护
-├── rules/                # 规则引擎（可插拔 Action 注册表）
-└── output/               # 截图叠加/文件写入/结果收集/透视表
-api/                       # FastAPI REST 服务（Agent 集成）
-tui/                       # Textual 终端仪表盘
+Excel → PlanGenerator → Preflight → RouteGuard
+  → DynamicScheduler
+       ├── BMC pool (max_bmc_workers endpoint groups)
+       │     └── BMCEndpointSessionRunner (login once, execute many)
+       │           ├── Gate: OPENED
+       │           ├── Gate: AUTHENTICATED
+       │           ├── Gate: PAGE_BASIC_HEALTH
+       │           ├── Gate: READY_FOR_CAPTURE
+       │           ├── Gate: SCREENSHOT_VALIDATED
+       │           └── evidence_audit
+       └── INBAND pool (max_ssh_workers endpoint groups)
+             ├── SSH executor (exec_command / interactive_shell)
+             └── TELNET executor
+
+  → ResultCollector → result.csv + timing reports + evidence audit
 ```
+
+- 同一 endpoint_key（如 `BMC:10.0.0.1:443`）串行，不同 endpoint 并发
+- BMC 和 INBAND 分池，互不阻塞
+- ResourceRegistry（进程内）+ FileLock（跨进程）双重保障
+- BMC 同一 endpoint 下多任务共享登录会话（不再每任务重复 login/logout）
 
 ## 配置说明
-
-### Excel — 任务列表（简化 8 列格式）
-
-| 列 | 说明 |
-|----|------|
-| 任务序号 | 执行顺序 |
-| 任务名称 | 与 tasks.json 匹配的关键字段 |
-| 任务类型 | BMC / SSH |
-| 设备分组 | A3 / L1 / L2 / RM211 |
-| 标签 | 逗号分隔，设备须具备全部标签才匹配 |
-| 截图保存目录 | 模板，支持 `{device_group}` `{device_name}` `{task_name}` |
-| 图片命名格式 | 模板，支持 `{timestamp}` `{step}` 等 |
-| 是否启用 | 是/否 |
-
-任务的 URL、命令、超时、规则等执行细节在 `tasks.json` 中定义，对普通用户透明。
 
 ### default_config.yaml
 
 ```yaml
-browser_headless: true          # true=无头模式(性能高) false=可见浏览器
-preflight_enabled: true         # 执行前探测网络连通性
-route_guard_enabled: true       # 监控 VPN 路由变化
-tcp_connect_timeout: 5.0        # 预检超时(秒)
-max_bmc_workers: 4              # BMC 最大并发数
-max_ssh_workers: 8              # SSH 最大并发数
-resource_check_interval: 5.0    # 资源采样间隔(秒)
+browser_headless: true           # true=无头模式 false=可见浏览器
+preflight_enabled: true          # 执行前 TCP 端口探测
+route_guard_enabled: true        # VPN 路由变更监控
+tcp_connect_timeout: 5.0         # 预检超时（秒）
+max_bmc_workers: 4               # BMC 并发 endpoint group 数
+max_ssh_workers: 8               # INBAND 并发 endpoint group 数
+resource_check_interval: 5.0     # CPU/内存采样间隔（秒）
 output_root: "./output"
 ```
 
-### tasks.json
+## 任务类型
 
-Agent 可远程推送更新此文件，无需修改 Excel：
+| 模式 | 说明 | 配置位置 |
+|------|------|----------|
+| BMC_URL | 打开 BMC 页面 → 全页截图+HTML+MHTML+State JSON | tasks.json |
+| BMC_ACTIONS | DSL 驱动页面交互：goto/click/fill/press/screenshot/assert | tasks.json |
+| SSH_CMD | SSH 登录 → 执行命令 → TXT+终端截图 | tasks.json |
+| TELNET_CMD | TELNET 登录 → 执行命令（port 23） | tasks.json |
 
-```json
-{
-  "tasks": {
-    "A3 BMC首页截图": {
-      "task_type": "BMC",
-      "execution_mode": "BMC_URL",
-      "command_or_url": "/UI/Static/#/navigate/home",
-      "timeout_seconds": 60
-    }
-  }
-}
+## 开发
+
+### 环境
+
+```bash
+# macOS
+pip install -r requirements.txt
+python -m playwright install chromium
+
+# 运行
+python run.py --app-dir . --excel app/examples/task_template.xlsx --mode full --no-preflight
 ```
 
-## 高级用法
+### 离线验证
 
-### CLI 命令行
+```bash
+# 完整离线验证（无需真实设备）
+python scripts/dev_verify_all.py --offline --output ./dev_verify_out
 
-```batch
-# 顺序执行（默认）
-bmc-auto-capture.exe --excel task_template.xlsx
+# 快速模式（跳过 subprocess 慢测试）
+python scripts/dev_verify_all.py --offline --quick --output ./dev_verify_out
 
-# 动态并发
-bmc-auto-capture.exe --excel task_template.xlsx --mode full
-
-# 仅网络预检
-bmc-auto-capture.exe --excel task_template.xlsx --preflight-only
-
-# 详细日志
-bmc-auto-capture.exe --excel task_template.xlsx --verbose
-
-# 使用自定义配置
-bmc-auto-capture.exe --excel task_template.xlsx --config my_config.yaml
+# 源码级验证
+python verify_offline.py
 ```
 
-Excel 文件放在当前目录或 `examples/` 下时可省略 `--excel` 参数。
+### 测试
 
-### API 模式（Agent 集成）
-
-```batch
-uvicorn api.server:app --host 0.0.0.0 --port 8080
 ```
-
-| 端点 | 用途 |
-|------|------|
-| `POST /config/upload-excel` | 上传并校验 Excel |
-| `POST /execute/start` | 启动执行，返回 execution_id |
-| `GET /execute/{id}/stream` | SSE 实时推送执行状态 |
-| `GET /execute/{id}/results` | 下载合并后的 result.csv |
-| `GET /execute/{id}/screenshots?task=xxx&limit=2` | 获取每用例 1-2 台设备截图 |
-| `POST /execute/{id}/stop` | 停止执行 |
+tests/
+├── test_endpoint_scheduling.py       # 15 tests: endpoint-aware 调度
+├── test_bmc_generic_gates.py         # 52 tests: 5-gate 页面生命周期
+├── test_file_lock.py                 # 8 tests: 跨进程文件锁
+├── test_file_lock_windows.py         # 7 tests: Windows 兼容性
+├── test_bmc_session_reuse.py         # 16 tests: session 复用
+├── test_bmc_health_check.py          # 20 tests: 原健康检查
+├── test_timing_reports.py            # E2E: timing 报表
+├── test_resource_registry.py         # 22 tests: Registry
+├── test_endpoint_key.py              # 17 tests: endpoint_key 规则
+├── test_api_run_with_plans_*.py      # API mock 测试
+├── test_preflight_auth_cli.py        # 17 tests: CLI 参数
+├── test_128_plans.py                 # 大规模集成测试
+└── fakes.py                          # 统一 fake/mock 层
+```
 
 ## 版本更新
 
-Runtime 包（Python + Chromium + 依赖）很少更新，App 包（脚本 + 配置）频繁更新：
+Runtime 层（Python + Chromium + 依赖）很少更新，App 层（脚本+配置）频繁更新：
 
 ```
-首次: 下载 runtime-*.7z + app-*.zip → 解压到同一目录
-更新: 下载最新 app-*.zip → 覆盖 src/ config/ tasks.json 启动.bat
+首次: 下载 bmc-auto-capture-vX.X.X-win-x64.zip → 解压
+更新: 下载最新包 → 仅覆盖 app/ run.py 启动.bat
 ```
 
 ## CI/CD
 
-推送 `v*` tag 自动触发 GitHub Actions：
+推送 `v*` tag 触发 GitHub Actions 自动构建 Windows x64 完整包。
 
-```
-macOS arm64  → bmc-runtime-vX.X.X-macos-arm64.tar.gz
-Windows x64  → bmc-runtime-vX.X.X-win-x64.7z
-跨平台       → bmc-app-vX.X.X.zip
-```
-
-## 已收录任务
-
-| 模式 | 数量 | 内容 |
-|------|------|------|
-| BMC_URL | 10 | 首页截图、资产摘要、网络适配器、门限传感器、电源/风扇信息、RAID 配置、上电/下电、RM211 网络 |
-| SSH_CMD | 10 | uname、npu-smi、电子标签、CPLD 版本、光口状态、光模块、温度、端口查询 |
-| CUSTOM_SCRIPT | 10 | 上电测试(内存/CPU)、iBMC IP 设置、部件信息(CPU/NPU/内存)、冗余测试、ClearForeign(高风险) |
-
-## 安全约束
+## 安全
 
 - SSH 全部走 Paramiko（Python socket），满足仅 Python 可访问 22 端口的安全策略
-- 端口拦截与网络不通独立标记：`EXEC_SKIPPED_PORT_BLOCKED` vs `EXEC_SKIPPED_PRECHECK_FAILED`
+- 端口拦截与网络不通独立标记
 - `拔插硬盘后清除Foreign配置` 标记为高风险，永久禁用
-- Agent 导入不直接覆盖正式 Excel，须先预览确认
