@@ -326,7 +326,61 @@ class DynamicScheduler:
                     skipped += 1
                     continue
 
-                # Pop plan now (main thread) — we've confirmed dispatch can proceed
+                # BMC: dispatch all plans for this endpoint as a group (session reuse)
+                if ep_type == "BMC":
+                    # Pop ALL plans for this endpoint_key
+                    group_plans: list[TaskPlan] = []
+                    while q:
+                        group_plans.append(q.popleft())
+                    self._dispatched_count += len(group_plans)
+
+                    # Mark all plans
+                    now_t = time.time()
+                    for gp in group_plans:
+                        gp._resource_lease_held = True
+                        gp._execution_id = self._execution_id
+                        gp.status = "RUNNING"
+                        gp.ready_at = now_t
+                        gp.resource_wait_started_at = now_t
+                        gp.resource_acquired_at = now_t
+                        gp.executor_started_at = now_t
+
+                    logger.info(
+                        "开始 [BMC group] %s — %d plans (endpoint=%s)",
+                        group_plans[0].device.device_name, len(group_plans), endpoint_key,
+                    )
+
+                    def _bmc_group_worker(plans=group_plans, ek=endpoint_key):
+                        from .bmc_session_runner import BMCEndpointSessionRunner
+                        runner = BMCEndpointSessionRunner(
+                            browser_manager=self._bm,
+                            endpoint_key=ek,
+                            plans=plans,
+                            output_root=self._config.output_root,
+                            connect_timeout=self._config.tcp_connect_timeout,
+                            page_timeout=self._config.bmc_page_timeout,
+                            on_plan_done=lambda plan, result: self._on_bmc_plan_in_group(plan, result),
+                        )
+                        return runner.run()
+
+                    try:
+                        pool.dispatch(
+                            fn=_bmc_group_worker,
+                            resource_key=endpoint_key,
+                            on_complete=lambda results, ek=endpoint_key: self._on_bmc_group_done(results, ek),
+                        )
+                    except Exception:
+                        # Dispatch failed — push all plans back
+                        for gp in reversed(group_plans):
+                            q.appendleft(gp)
+                            gp.status = "PENDING"
+                        self._ready_endpoints.append(endpoint_key)
+                        logger.error("BMC group dispatch failed for %s, plans re-queued", endpoint_key)
+
+                    skipped = 0
+                    continue
+
+                # INBAND: dispatch single plan (no session reuse needed)
                 q.popleft()
 
                 # Mark lease held so executor skips double-acquire
@@ -440,6 +494,42 @@ class DynamicScheduler:
 
         status_icon = "OK" if result.execution_status == "EXEC_SUCCESS" else "FAIL"
         reason = ""
+        if status_icon == "FAIL" and result.execution_failure_reason:
+            reason = f"  [{result.execution_failure_reason[:60]}]"
+        cdone(len(self._results), self._dispatched_count, status_icon, result.device_name, result.task_name, reason)
+
+    def _on_bmc_plan_in_group(self, plan: TaskPlan, result: ExecutionResult):
+        """Per-plan callback during BMC session group — no release, no re-queue."""
+        plan.ended_at = time.time()
+        plan.completed_at = plan.ended_at
+        plan.status = "SUCCESS" if result.execution_status == "EXEC_SUCCESS" else result.execution_status
+        plan._resource_lease_held = False
+        plan._execution_id = ""
+
+        with self._results_lock:
+            self._results.append(result)
+
+        if self._event_bus:
+            self._event_bus.emit("plan_completed", plan=plan, result=result)
+
+        _icon = "OK" if result.execution_status == "EXEC_SUCCESS" else "FAIL"
+        _reason = ""
+        if _icon == "FAIL" and result.execution_failure_reason:
+            _reason = f"  [{result.execution_failure_reason[:60]}]"
+        cdone(len(self._results), self._dispatched_count, _icon,
+              result.device_name, result.task_name, _reason)
+
+    def _on_bmc_group_done(self, results: list[ExecutionResult], endpoint_key: str):
+        """Called when a BMC session group completes. Release registry + re-queue if needed."""
+        # Release global ResourceRegistry hold
+        try:
+            self._registry.release(endpoint_key)
+        except Exception:
+            pass
+
+        # Re-add endpoint to ready queue ONLY if it was re-created during session
+        # (Session runner pops ALL plans from queue, so no more plans for this endpoint)
+        # No re-queue needed — the endpoint queue is empty by design for BMC groups
         if status_icon == "FAIL" and result.execution_failure_reason:
             reason = f"  [{result.execution_failure_reason[:60]}]"
         cdone(len(self._results), self._dispatched_count, status_icon, result.device_name, result.task_name, reason)
