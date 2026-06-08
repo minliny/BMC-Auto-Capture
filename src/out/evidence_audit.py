@@ -1,14 +1,14 @@
 """
-Post-execution evidence audit — scans saved HTML/MHTML/log files for
-session anomalies and generates evidence_audit.csv.
+Post-execution evidence audit — scans saved evidence files per task type.
 
-Run standalone:
-  python -m src.out.evidence_audit <output_dir>
+BMC tasks expect: png, html/evidence_html, mhtml, state_json, page_health_debug
+SSH/TELNET tasks expect: txt, log, (png if rendered), no html/mhtml required.
 """
 
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
 from typing import Sequence
@@ -22,46 +22,67 @@ from ..executor.bmc_health_check import (
 
 logger = logging.getLogger("bmc_auto_capture.evidence_audit")
 
-# ---------------------------------------------------------------------------
-# Audit one plan's evidence
-# ---------------------------------------------------------------------------
+
+EVIDENCE_AUDIT_HEADER = [
+    "execution_id", "plan_id", "device_name", "task_name", "task_type",
+    "endpoint_key",
+    "result_status", "final_verdict",
+    "evidence_expected_type",
+    "evidence_status", "evidence_reason", "matched_keyword",
+    "screenshot_path", "html_path", "mhtml_path", "log_path",
+    "url", "title",
+    "screenshot_size", "html_size", "mhtml_size",
+    "opened_status", "authenticated_status", "page_basic_health_status",
+    "ready_for_capture_status", "screenshot_status",
+    "page_health_gate", "page_health_reason",
+    "page_health_debug_path",
+    "matched_selector", "matched_text", "is_visible",
+]
+
+
+def _expected_evidence(task_type: str) -> str:
+    t = task_type.upper()
+    if t in ("BMC",):
+        return "png,html,mhtml,state_json"
+    if t in ("SSH", "TELNET"):
+        return "txt,log[,png]"
+    return "unknown"
+
+
+def _read_page_health_debug(output_dir: str) -> dict | None:
+    if not output_dir:
+        return None
+    path = os.path.join(output_dir, "page_health_debug.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
 
 def audit_plan_evidence(result: ExecutionResult) -> dict:
-    """Audit the saved evidence files for a single plan.
-
-    Returns a dict with all evidence_audit.csv fields.
-    """
-    audit = {
-        "execution_id": result.plan_id,  # execution_id not yet wired
-        "plan_id": result.plan_id,
-        "device_name": result.device_name,
-        "task_name": result.task_name,
-        "endpoint_key": result.endpoint_key,
-        "result_status": result.execution_status,
-        "final_verdict": result.final_verdict,
-        "evidence_status": "OK",
-        "evidence_reason": "",
-        "matched_keyword": "",
-        "screenshot_path": "",
-        "html_path": "",
-        "mhtml_path": "",
-        "log_path": "",
-        "url": "",
-        "title": "",
-        "screenshot_size": 0,
-        "html_size": 0,
-        "mhtml_size": 0,
-    }
+    audit = {k: "" for k in EVIDENCE_AUDIT_HEADER}
+    audit["plan_id"] = result.plan_id
+    audit["execution_id"] = result.plan_id
+    audit["device_name"] = result.device_name
+    audit["task_name"] = result.task_name
+    audit["task_type"] = result.task_type
+    audit["endpoint_key"] = result.endpoint_key
+    audit["result_status"] = result.execution_status
+    audit["final_verdict"] = result.final_verdict
+    audit["evidence_expected_type"] = _expected_evidence(result.task_type)
 
     out_dir = result.output_dir
 
-    # Collect evidence paths
+    # Screenshot paths
     if result.screenshots:
         audit["screenshot_path"] = ";".join(result.screenshots)
     audit["html_path"] = result.html_file
     audit["log_path"] = result.log_file
 
-    # Find MHTML
+    # MHTML
     html_subdir = os.path.join(out_dir, "html") if out_dir else ""
     if os.path.isdir(html_subdir):
         for fname in os.listdir(html_subdir):
@@ -69,80 +90,122 @@ def audit_plan_evidence(result: ExecutionResult) -> dict:
                 audit["mhtml_path"] = os.path.join(html_subdir, fname)
                 break
 
-    # Check file presence/sizes
-    if audit["screenshot_path"]:
-        for sp in result.screenshots:
-            if os.path.exists(sp):
-                audit["screenshot_size"] = max(audit["screenshot_size"], os.path.getsize(sp))
-    if not audit["screenshot_path"] or audit["screenshot_size"] < 500:
-        audit["evidence_status"] = "SCREENSHOT_MISSING"
-        audit["evidence_reason"] = "No valid screenshot found"
+    task_type = result.task_type.upper()
 
-    # Scan HTML
-    html_scan = scan_html_for_keywords(audit["html_path"])
-    audit["html_size"] = html_scan["html_size"]
-    if not html_scan["healthy"]:
-        audit["evidence_status"] = html_scan["status"]
-        audit["matched_keyword"] = html_scan["matched_keyword"]
-        audit["evidence_reason"] = f"HTML scan failed: {html_scan['status']}"
-        return audit
+    # BMC-specific evidence check
+    if task_type in ("BMC",):
+        # Check screenshots
+        if audit["screenshot_path"]:
+            for sp in result.screenshots:
+                if os.path.exists(sp):
+                    audit["screenshot_size"] = str(max(
+                        int(audit["screenshot_size"] or "0"), os.path.getsize(sp)))
+        if not audit["screenshot_path"] or int(audit["screenshot_size"] or "0") < 500:
+            audit["evidence_status"] = "SCREENSHOT_MISSING"
+            audit["evidence_reason"] = "No valid screenshot for BMC task"
 
-    # Scan MHTML
-    mhtml_scan = scan_mhtml_for_keywords(audit["mhtml_path"])
-    audit["mhtml_size"] = mhtml_scan["mhtml_size"]
-    if not mhtml_scan["healthy"] and mhtml_scan["status"] != "MHTML_MISSING":
-        # MHTML has issue; use it only if HTML didn't already catch something
-        if audit["evidence_status"] == "OK":
-            audit["evidence_status"] = mhtml_scan["status"]
-            audit["matched_keyword"] = mhtml_scan["matched_keyword"]
-            audit["evidence_reason"] = f"MHTML scan failed: {mhtml_scan['status']}"
+        # Check HTML
+        html_scan = scan_html_for_keywords(audit["html_path"])
+        audit["html_size"] = str(html_scan["html_size"])
+        if not html_scan["healthy"]:
+            audit["evidence_status"] = html_scan["status"]
+            audit["matched_keyword"] = html_scan["matched_keyword"]
+            audit["evidence_reason"] = f"HTML: {html_scan['status']}"
+
+        # Check MHTML
+        mhtml_scan = scan_mhtml_for_keywords(audit["mhtml_path"])
+        audit["mhtml_size"] = str(mhtml_scan["mhtml_size"])
+        if not mhtml_scan["healthy"] and mhtml_scan["status"] != "MHTML_MISSING":
+            if audit["evidence_status"] == "OK":
+                audit["evidence_status"] = mhtml_scan["status"]
+                audit["matched_keyword"] = mhtml_scan["matched_keyword"]
+                audit["evidence_reason"] = f"MHTML: {mhtml_scan['status']}"
+
+        # HTML missing entirely
+        if not audit["html_path"] or not os.path.exists(audit["html_path"]):
+            if audit["evidence_status"] == "OK":
+                audit["evidence_status"] = "HTML_MISSING"
+                audit["evidence_reason"] = "No HTML file for BMC task"
+
+        # Read page_health_debug.json for gate results
+        phd = _read_page_health_debug(out_dir)
+        if phd:
+            audit["page_health_debug_path"] = os.path.join(out_dir, "page_health_debug.json")
+            all_gr = phd.get("all_gate_results", [])
+            for gr in all_gr:
+                gate = gr.get("gate", "")
+                status = gr.get("severity", "")
+                if gate == "OPENED":
+                    audit["opened_status"] = status
+                elif gate == "AUTHENTICATED":
+                    audit["authenticated_status"] = status
+                elif gate == "PAGE_BASIC_HEALTH":
+                    audit["page_basic_health_status"] = status
+                elif gate == "READY_FOR_CAPTURE":
+                    audit["ready_for_capture_status"] = status
+                elif gate == "SCREENSHOT_VALIDATED":
+                    audit["screenshot_status"] = status
+            audit["page_health_gate"] = phd.get("failed_gate", "")
+            audit["page_health_reason"] = phd.get("reason", "")
+            # Extract matched selector/text from the first non-pass gate
+            for gr in all_gr:
+                if gr.get("severity", "PASS") != "PASS":
+                    audit["matched_selector"] = gr.get("matched_selector", "")
+                    audit["matched_text"] = gr.get("matched_text", "")
+                    audit["is_visible"] = str(gr.get("is_visible", ""))
+                    break
+
+        # false positive check: result SUCCESS but gate FAIL
+        if result.execution_status == "EXEC_SUCCESS":
+            gate_failed = phd and phd.get("failed_gate", "")
+            if gate_failed:
+                audit["evidence_status"] = f"FALSE_POSITIVE_GATE_FAIL:{gate_failed}"
+                if not audit["evidence_reason"]:
+                    audit["evidence_reason"] = phd.get("reason", "")
+
+    # SSH/TELNET evidence check
+    elif task_type in ("SSH", "TELNET"):
+        txt_ok = bool(result.txt_file and os.path.exists(result.txt_file))
+        log_ok = bool(result.log_file and os.path.exists(result.log_file))
+        if not txt_ok and not log_ok:
+            audit["evidence_status"] = "TXT_LOG_MISSING"
+            audit["evidence_reason"] = "No TXT or log file for SSH/TELNET task"
+        elif not txt_ok:
+            audit["evidence_status"] = "TXT_MISSING"
+            audit["evidence_reason"] = "No TXT file for SSH/TELNET task"
+        else:
+            audit["evidence_status"] = "OK"
+            audit["evidence_reason"] = "TXT present"
+
+        # Png if rendered
+        if audit["screenshot_path"]:
+            for sp in result.screenshots:
+                if os.path.exists(sp):
+                    audit["screenshot_size"] = str(os.path.getsize(sp))
+
+    if not audit["evidence_status"]:
+        audit["evidence_status"] = "OK"
 
     return audit
 
 
 def audit_all(results: Sequence[ExecutionResult]) -> list[dict]:
-    """Audit evidence for all results. Returns list of audit dicts."""
     audits = []
     for r in results:
         try:
             audits.append(audit_plan_evidence(r))
         except Exception as e:
-            audits.append({
-                "plan_id": r.plan_id,
-                "device_name": r.device_name,
-                "task_name": r.task_name,
-                "result_status": r.execution_status,
-                "evidence_status": "AUDIT_ERROR",
-                "evidence_reason": str(e)[:200],
-                "matched_keyword": "",
-            })
+            audits.append({"plan_id": r.plan_id, "device_name": r.device_name,
+                           "task_name": r.task_name, "result_status": r.execution_status,
+                           "evidence_status": "AUDIT_ERROR",
+                           "evidence_reason": str(e)[:200]})
     return audits
 
 
-# ---------------------------------------------------------------------------
-# CSV output
-# ---------------------------------------------------------------------------
-
-EVIDENCE_AUDIT_HEADER = [
-    "execution_id", "plan_id", "device_name", "task_name",
-    "endpoint_key",
-    "result_status", "final_verdict",
-    "evidence_status", "evidence_reason", "matched_keyword",
-    "screenshot_path", "html_path", "mhtml_path", "log_path",
-    "url", "title",
-    "screenshot_size", "html_size", "mhtml_size",
-]
-
-
-def write_evidence_audit_csv(
-    results: Sequence[ExecutionResult],
-    output_dir: str,
-    filename: str = "evidence_audit.csv",
-) -> str:
-    """Generate evidence_audit.csv from execution results."""
+def write_evidence_audit_csv(results: Sequence[ExecutionResult], output_dir: str,
+                             filename: str = "evidence_audit.csv") -> str:
     path = os.path.join(output_dir, filename)
     os.makedirs(output_dir, exist_ok=True)
-
     audits = audit_all(results)
 
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
@@ -151,60 +214,33 @@ def write_evidence_audit_csv(
         for a in sorted(audits, key=lambda a: (a.get("device_name", ""), a.get("task_name", ""))):
             writer.writerow([a.get(k, "") for k in EVIDENCE_AUDIT_HEADER])
 
-    # Count anomalies
-    ok = sum(1 for a in audits if a["evidence_status"] == "OK")
+    ok = sum(1 for a in audits if a["evidence_status"] in ("OK", ""))
     bad = len(audits) - ok
-    logger.info(
-        "Wrote evidence_audit.csv: %d OK, %d anomalies → %s",
-        ok, bad, path,
-    )
+    logger.info("Wrote evidence_audit.csv: %d OK, %d anomalies → %s", ok, bad, path)
 
-    # Print summary of anomalies
     if bad > 0:
-        print(f"\n  Evidence Audit: {ok} OK, {bad} anomalies")
         by_status: dict[str, int] = {}
         for a in audits:
             s = a["evidence_status"]
-            if s != "OK":
+            if s not in ("OK", ""):
                 by_status[s] = by_status.get(s, 0) + 1
         for status, count in sorted(by_status.items(), key=lambda x: -x[1]):
             print(f"    {status}: {count}")
-        # List tasks where result is SUCCESS but evidence is bad (false positives)
-        false_positives = [
-            a for a in audits
-            if a["result_status"] == "EXEC_SUCCESS" and a["evidence_status"] != "OK"
-        ]
-        if false_positives:
-            print(f"\n  FALSE POSITIVES (result=SUCCESS, evidence=BAD): {len(false_positives)}")
-            for a in false_positives:
-                print(f"    {a['device_name']} / {a['task_name']} → {a['evidence_status']}: {a['evidence_reason'][:80]}")
 
+        false_pos = [a for a in audits if a["result_status"] == "EXEC_SUCCESS"
+                     and a["evidence_status"] not in ("OK", "")]
+        if false_pos:
+            print(f"\n  FALSE POSITIVES (result=SUCCESS, evidence=BAD): {len(false_pos)}")
+            for a in false_pos:
+                print(f"    {a['device_name']} / {a['task_name']} → "
+                      f"{a['evidence_status']}: {a['evidence_reason'][:80]}")
     return path
 
 
-def write_evidence_audit_summary(
-    results: Sequence[ExecutionResult],
-    output_dir: str,
-) -> dict:
-    """Return summary counts for evidence audit."""
+def write_evidence_audit_summary(results, output_dir) -> dict:
     audits = audit_all(results)
-    ok = sum(1 for a in audits if a["evidence_status"] == "OK")
-    false_pos = sum(
-        1 for a in audits
-        if a["result_status"] == "EXEC_SUCCESS" and a["evidence_status"] != "OK"
-    )
-    return {
-        "total": len(audits),
-        "evidence_ok": ok,
-        "evidence_bad": len(audits) - ok,
-        "false_positives": false_pos,
-        "by_status": _count_by_status(audits),
-    }
-
-
-def _count_by_status(audits: list[dict]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for a in audits:
-        s = a["evidence_status"]
-        counts[s] = counts.get(s, 0) + 1
-    return counts
+    ok = sum(1 for a in audits if a["evidence_status"] in ("OK", ""))
+    fp = sum(1 for a in audits if a["result_status"] == "EXEC_SUCCESS"
+             and a["evidence_status"] not in ("OK", ""))
+    return {"total": len(audits), "evidence_ok": ok, "evidence_bad": len(audits) - ok,
+            "false_positives": fp}

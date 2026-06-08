@@ -28,6 +28,9 @@ from src.scheduler.dynamic_scheduler import DynamicScheduler
 from src.scheduler.resource_registry import ResourceRegistry
 from src.scheduler.plan_generator import generate_plans
 
+# Module-level mock sleep for BMC session runner (set by FakeScheduler)
+_MOCK_BMC_SLEEP = 0.1
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -112,6 +115,8 @@ class FakeScheduler(DynamicScheduler):
     def __init__(self, config, sleep_seconds: float = 0.1, event_bus=None):
         super().__init__(config, event_bus=event_bus)
         self._fake_sleep = sleep_seconds
+        global _MOCK_BMC_SLEEP
+        _MOCK_BMC_SLEEP = sleep_seconds
 
     def _execute_plan(self, plan: TaskPlan) -> ExecutionResult:
         plan.executor_started_at = time.time()
@@ -126,17 +131,44 @@ class FakeScheduler(DynamicScheduler):
             ended_at=plan.executor_finished_at,
             duration_seconds=self._fake_sleep,
         )
-        # Copy timing into plan
         plan.ended_at = plan.executor_finished_at
         return result
 
 
 @pytest.fixture(autouse=True)
 def reset_registry():
-    """Reset the global ResourceRegistry before each test."""
+    """Reset the global ResourceRegistry and mock BMC session runner."""
     reg = ResourceRegistry()
     reg._reset_for_test()
+
+    # Mock BMCEndpointSessionRunner to prevent real browser creation in tests.
+    # Tests that need real session runner behavior should explicitly un-mock.
+    from src.scheduler.bmc_session_runner import BMCEndpointSessionRunner as _Runner
+    _orig_run = getattr(_Runner, '_run_async', None)
+
+    async def _mock_session_run(self):
+        results = []
+        sleep_s = _MOCK_BMC_SLEEP
+        for p in self._plans:
+            time.sleep(sleep_s)
+            p.status = "SUCCESS"
+            r = ExecutionResult(
+                plan_id=p.plan_id, device_name=p.device.device_name,
+                task_name=p.task.task_name, execution_status="EXEC_SUCCESS",
+                started_at=time.time(), ended_at=time.time() + sleep_s,
+                duration_seconds=sleep_s,
+                endpoint_key=p.endpoint_key, endpoint_type=p.endpoint_type,
+            )
+            results.append(r)
+            if self._on_plan_done:
+                self._on_plan_done(p, r)
+        if getattr(self, '_on_group_done', None):
+            self._on_group_done(self._endpoint_key, results)
+        return results
+
+    _Runner._run_async = _mock_session_run
     yield
+    _Runner._run_async = _orig_run
     reg._reset_for_test()
 
 

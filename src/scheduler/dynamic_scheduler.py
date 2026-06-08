@@ -148,25 +148,32 @@ class DynamicScheduler:
 
                 # Stall detection: no progress for 60s
                 if now - last_progress_at >= 60:
-                    logger.warning("调度器停滞: %.0f 秒无进展", now - last_progress_at)
-                    pending_dumped = 0
-                    for ekey, q in sorted(self._endpoint_queues.items()):
-                        if q and pending_dumped < 10:
-                            p = q[0]
-                            blocked_by = ""
-                            if self._bmc_pool.resource_has_running_task(ekey):
-                                blocked_by = " (endpoint busy in BMC pool)"
-                            elif self._ssh_pool.resource_has_running_task(ekey):
-                                blocked_by = " (endpoint busy in SSH pool)"
-                            logger.warning(
-                                "  PENDING: endpoint=%s device=%s task=%s protocol=%s%s",
-                                ekey, p.device.device_name, p.task.task_name, p.protocol, blocked_by,
-                            )
-                            pending_dumped += 1
-                    logger.warning("  BMC active resources: %s", list(self._bmc_pool._running_resources))
-                    logger.warning("  SSH active resources: %s", list(self._ssh_pool._running_resources))
-                    logger.warning("  Ready endpoints: %d, total endpoint queues: %d",
-                                   len(self._ready_endpoints), len(self._endpoint_queues))
+                    active_bmc = len(self._bmc_pool._active_futures)
+                    active_ssh = len(self._ssh_pool._active_futures)
+                    pending = sum(len(q) for q in self._endpoint_queues.values())
+
+                    if active_bmc > 0 or active_ssh > 0:
+                        # Resources are running but no progress — long-running tasks
+                        logger.warning(
+                            "Long running endpoint(s): %.0fs no progress, "
+                            "active BMC=%d SSH=%d, ready=%d pending=%d",
+                            now - last_progress_at, active_bmc, active_ssh,
+                            len(self._ready_endpoints), pending,
+                        )
+                    elif pending > 0 and len(self._ready_endpoints) == 0:
+                        # True stall: pending plans but no ready endpoints
+                        logger.warning("调度器停滞: %.0f 秒无进展, ready=0, pending=%d",
+                                       now - last_progress_at, pending)
+                        pending_dumped = 0
+                        for ekey, q in sorted(self._endpoint_queues.items()):
+                            if q and pending_dumped < 10:
+                                p = q[0]
+                                logger.warning("  PENDING: endpoint=%s device=%s task=%s",
+                                               ekey, p.device.device_name, p.task.task_name)
+                                pending_dumped += 1
+                    else:
+                        logger.warning("调度器空闲: %.0f 秒无进展 (no active, no pending)",
+                                       now - last_progress_at)
 
                 # 4. Brief sleep
                 time.sleep(0.5)
