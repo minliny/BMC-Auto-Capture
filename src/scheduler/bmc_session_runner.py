@@ -111,6 +111,7 @@ class BMCEndpointSessionRunner:
 
             if not login_ok:
                 # All plans in this group fail with login failure
+                _fail_ts = time.time()
                 for plan in self._plans:
                     plan.status = "EXEC_FAILED"
                     r = ExecutionResult(
@@ -123,8 +124,9 @@ class BMCEndpointSessionRunner:
                         task_type=plan.task.task_type,
                         execution_status="EXEC_FAILED",
                         execution_failure_reason=login_reason or "BMC登录失败 (session group)",
-                        started_at=time.time(),
-                        ended_at=time.time(),
+                        started_at=_fail_ts,
+                        ended_at=_fail_ts,
+                        duration_seconds=0.001,
                         endpoint_key=self._endpoint_key,
                         endpoint_type="BMC",
                     )
@@ -276,8 +278,9 @@ class BMCEndpointSessionRunner:
                         task_name=plan.task.task_name,
                         execution_status="EXEC_TIMEOUT",
                         execution_failure_reason="Session runner timeout",
-                        started_at=time.time(),
-                        ended_at=time.time(),
+                        started_at=_fail_ts,
+                        ended_at=_fail_ts,
+                        duration_seconds=0.001,
                     )
                     results.append(r)
                     if self._on_plan_done:

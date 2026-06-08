@@ -82,6 +82,15 @@ Examples:
                         help="Preflight credential check: all, bmc, ssh")
     parser.add_argument("--no-preflight", action="store_true",
                         help="Skip connectivity preflight entirely")
+    parser.add_argument("--server", action="store_true",
+                        help="Start as API server (minimal boot, no task execution)")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="API server bind host (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8080,
+                        help="API server bind port (default: 8080)")
+    parser.add_argument("--log-level", default="info",
+                        choices=["debug", "info", "warning", "error"],
+                        help="API server log level (default: info)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
