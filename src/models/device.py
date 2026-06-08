@@ -28,3 +28,40 @@ class Device:
     @property
     def ssh_port(self) -> int:
         return 22
+
+    # --- lock_uri compat (API v0.1) ---
+
+    @property
+    def ssh_type(self) -> str:
+        """Derive SSH sub-type from device_group. L1/L2 -> VRP, else generic SSH."""
+        group = (self.device_group or "").upper().strip()
+        if group in ("L1", "L2"):
+            return "SSH_VRP"
+        return "SSH"
+
+    @property
+    def lock_uri_bmc(self) -> str:
+        """bmc://{oob_ip} — raises if oob_ip is empty."""
+        ip = (self.bmc_ip or "").strip()
+        if not ip:
+            raise ValueError(
+                f"Device {self.device_name}: bmc_ip is empty, "
+                f"cannot derive bmc:// lock_uri"
+            )
+        return f"bmc://{ip}"
+
+    @property
+    def lock_uri_ssh(self) -> str:
+        """ssh:// or ssh-vrp:// or ssh-linux://{inband_ip} — raises if inband_ip is empty."""
+        ip = (self.inband_ip or "").strip()
+        if not ip:
+            raise ValueError(
+                f"Device {self.device_name}: inband_ip is empty, "
+                f"cannot derive ssh:// lock_uri"
+            )
+        st = self.ssh_type
+        if st == "SSH_VRP":
+            return f"ssh-vrp://{ip}"
+        if st == "SSH_LINUX":
+            return f"ssh-linux://{ip}"
+        return f"ssh://{ip}"

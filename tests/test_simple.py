@@ -49,6 +49,6 @@ print("Start...", flush=True)
 results = s.run(plans)
 
 print(f"Results: {len(results)}/{len(plans)}", flush=True)
-remaining = sum(len(q) for q in s._device_queues.values())
+remaining = sum(len(q) for q in s._endpoint_queues.values())
 print(f"Remaining: {remaining}", flush=True)
 print("PASS" if len(results) == len(plans) and remaining == 0 else "FAIL")

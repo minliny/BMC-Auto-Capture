@@ -129,8 +129,36 @@ class BMCExecutor(AbstractExecutor):
 
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         from .browser_manager import _get_thread_loop
-        loop = _get_thread_loop()
-        return loop.run_until_complete(self._execute_async(plan, output_root))
+
+        if plan._resource_lease_held:
+            # Scheduler already acquired the global ResourceRegistry lease.
+            # Executor must NOT double-acquire — would risk deadlock if
+            # reentrant holder_key didn't match.
+            loop = _get_thread_loop()
+            return loop.run_until_complete(self._execute_async(plan, output_root))
+
+        # Standalone executor call (no scheduler).  Self-acquire the
+        # global ResourceRegistry to prevent concurrent access to the
+        # same BMC endpoint from another thread/execution.
+        from ..scheduler.resource_registry import ResourceRegistry
+
+        _reg = ResourceRegistry()
+        _meta = {
+            "execution_id": plan._execution_id,
+            "plan_id": plan.plan_id,
+            "device_name": plan.device.device_name,
+            "task_name": plan.task.task_name,
+        }
+        _acquire_start = time.time()
+        with _reg.acquire(plan.endpoint_key, _meta):
+            _wait_sec = time.time() - _acquire_start
+            if _wait_sec > 0.05:
+                logger.info(
+                    "[%s] Executor fallback acquired %s (wait=%.2fs)",
+                    plan.device.device_name, plan.endpoint_key, _wait_sec,
+                )
+            loop = _get_thread_loop()
+            return loop.run_until_complete(self._execute_async(plan, output_root))
 
     async def _execute_async(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         device = plan.device
@@ -165,17 +193,19 @@ class BMCExecutor(AbstractExecutor):
         page = None
         page_acquired = False
         current_stage = "init"
+        _context = None  # browser context for cleanup
 
         # Hard task-level timeout: 2× task.timeout_seconds is the absolute ceiling.
         task_timeout = max(task.timeout_seconds, 30) * 2
 
         async def _run_with_stages():
-            nonlocal page, page_acquired, current_stage
+            nonlocal page, page_acquired, current_stage, _context
 
             # --- Stage 1: acquire browser context ---
             current_stage = "1/6 acquire_context"
             logger.info("[%s] Stage %s", dname, current_stage)
             context = await asyncio.wait_for(self._bm.get_context(), timeout=30)
+            _context = context
             logger.info("[%s] 阶段 1/6: 浏览器就绪", dname)
 
             # --- Stage 2: acquire page ---
@@ -259,6 +289,7 @@ class BMCExecutor(AbstractExecutor):
                 except Exception:
                     pass
 
+
         result.ended_at = time.time()
         result.duration_seconds = result.ended_at - result.started_at
 
@@ -292,9 +323,14 @@ class BMCExecutor(AbstractExecutor):
 
         await asyncio.sleep(2)  # Allow redirect to login page
 
-        # Check for "account already logged in elsewhere" before login
+        # If "already logged in elsewhere" appears, the session is still valid.
+        # Navigate directly to target URL (existing session works for same BMC).
         if await self._detect_account_conflict(page, device):
-            return False, "BMC登录失败: 账户已在其他地方登录"
+            logger.info("[%s] 检测到已有登录会话,跳过登录", device.device_name)
+            await page.goto(bmc_url, wait_until="domcontentloaded", timeout=self._connect_timeout * 1000)
+            await asyncio.sleep(2)
+            if await self._bypass_cert_warning(page, device):
+                await asyncio.sleep(2)
 
         # Check for CAPTCHA before login
         captcha_seen = await detect_captcha(page)
@@ -303,10 +339,15 @@ class BMCExecutor(AbstractExecutor):
             if not solved:
                 return False, "BMC登录失败: 验证码处理失败"
 
-        # Find login form elements
+        # Find login form elements — if none found, already logged in
         username_el = await self._find_visible(page, LOGIN_USERNAME_SELECTORS)
         password_el = await self._find_visible(page, LOGIN_PASSWORD_SELECTORS)
 
+        if not username_el or not password_el:
+            logger.info("[%s] 未检测到登录表单,认为已登录", device.device_name)
+            return True, ""
+
+        # Login form detected — perform login
         if username_el and password_el:
             logger.info(f"[{device.device_name}] 检测到登录表单, 正在填写凭证")
             await username_el.fill(device.bmc_username)
@@ -359,7 +400,9 @@ class BMCExecutor(AbstractExecutor):
 
             # Check for account conflict message that may appear after redirect
             if await self._detect_account_conflict(page, device):
-                return False, "BMC登录失败: 账户已在其他地方登录"
+                logger.info("[%s] 登录后检测到会话冲突,重新导航到目标页", device.device_name)
+                await page.goto(bmc_url, wait_until="domcontentloaded", timeout=self._connect_timeout * 1000)
+                await asyncio.sleep(2)
 
         return True, ""
 

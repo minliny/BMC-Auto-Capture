@@ -210,7 +210,7 @@ def main():
         return _run_launcher_mode(clean_args)
 
     parser = argparse.ArgumentParser(
-        description="BMC Auto-Capture v0.2.2 — BMC/SSH 自动化测试证据采集平台",
+        description="BMC Auto-Capture v0.2.4-RC1 — BMC/SSH 自动化测试证据采集平台",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

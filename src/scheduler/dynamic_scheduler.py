@@ -4,17 +4,19 @@ from __future__ import annotations
 Dynamic Scheduler — the core scheduling loop.
 
 Features:
-- Device-serialized execution (max 1 task per device at a time)
-- Protocol-split pools (BMC vs SSH)
+- Resource-serialized execution by endpoint_key (max 1 task per endpoint at a time)
+- Protocol-split pools (BMC vs INBAND)
 - Dynamic pool resizing based on CPU/memory
 - Graceful pause/resume/stop
-- Event-driven status reporting
+- Global ResourceRegistry for cross-execution serialization
+- Timing instrumentation
 """
 
 import logging
 import threading
 import time
-from collections import deque
+import uuid
+from collections import deque, defaultdict
 from typing import Callable
 
 from ..models.app_config import AppConfig
@@ -26,12 +28,23 @@ from ..executor.browser_manager import BrowserManager
 from ..out.console import start as cstart, done as cdone, heartbeat as cheartbeat, info as cinfo
 from .resource_monitor import ResourceMonitor
 from .worker_pool import WorkerPool
+from .resource_registry import ResourceRegistry
 
 logger = logging.getLogger("bmc_auto_capture.scheduler")
 
 
 class DynamicScheduler:
-    """Unified scheduler with dynamic concurrency and device serialization."""
+    """Unified scheduler with dynamic concurrency and endpoint-key serialization.
+
+    Scheduling model:
+      - Plans are grouped by endpoint_key (e.g. BMC:10.0.0.1:443).
+      - Within the same endpoint_key, plans run serially in FIFO order.
+      - Different endpoint_keys can run concurrently (up to per-pool worker limits).
+      - BMC pool uses BMC endpoint_keys; INBAND pool uses INBAND endpoint_keys.
+      - A process-wide Global ResourceRegistry prevents concurrent access to the
+        same endpoint_key across different scheduler instances (e.g. API multi-execution).
+      - device_name is used ONLY for display/logging — never as a scheduling lock key.
+    """
 
     def __init__(
         self,
@@ -41,9 +54,10 @@ class DynamicScheduler:
         self._config = config
         self._event_bus = event_bus
 
-        # Device queues: one FIFO per device
-        self._device_queues: dict[str, deque[TaskPlan]] = {}
-        self._ready_devices: deque[str] = deque()
+        # Endpoint-key queues: one FIFO per endpoint_key
+        self._endpoint_queues: dict[str, deque[TaskPlan]] = {}
+        self._ready_endpoints: deque[str] = deque()
+        self._endpoint_plan_order: dict[str, list[TaskPlan]] = defaultdict(list)
 
         # Results
         self._results: list[ExecutionResult] = []
@@ -54,34 +68,45 @@ class DynamicScheduler:
         self._pause_event = threading.Event()
         self._pause_event.set()
 
-        # Pools
+        # Pools — max_bmc_workers = max concurrent BMC endpoint groups,
+        # max_ssh_workers = max concurrent INBAND endpoint groups.
         self._bmc_pool = WorkerPool("bmc", config.base_bmc_workers, config.max_bmc_workers)
         self._ssh_pool = WorkerPool("ssh", config.base_ssh_workers, config.max_ssh_workers)
 
         # Resource monitor
         self._monitor = ResourceMonitor(interval=config.resource_check_interval)
 
+        # Global ResourceRegistry (process-wide singleton)
+        self._registry = ResourceRegistry()
+
+        # Execution context for reentrant registry acquire
+        self._execution_id: str = ""
+
         # Executors (created per worker — lazy init via factory)
         self._bm: BrowserManager | None = None
+
+        # Stats for logging
+        self._dispatched_count = 0
+        self._plan_order_for_show: list[str] = []
 
     # ------------------------------------------------------------------
     # Public
     # ------------------------------------------------------------------
     def run(self, plans: list[TaskPlan]) -> list[ExecutionResult]:
-        self._build_device_queues(plans)
+        if not self._execution_id:
+            self._execution_id = uuid.uuid4().hex[:12]
+        self._build_endpoint_queues(plans)
+        self._log_startup_stats(plans)
         self._monitor.start()
         self._bmc_pool.start()
         self._ssh_pool.start()
 
-        # Browser manager — shared across BMC workers (one for now; each worker uses its own page)
+        # Browser manager — shared across BMC workers
         self._bm = BrowserManager(
             headless=self._config.browser_headless,
             max_tasks=self._config.browser_max_tasks_before_recycle,
             max_age_seconds=self._config.browser_max_age_seconds,
         )
-
-        total = len(plans)
-        logger.info("动态调度器: %d 个计划, %d 台设备", total, len(self._device_queues))
 
         last_progress_at = time.time()
         last_heartbeat_at = time.time()
@@ -106,17 +131,16 @@ class DynamicScheduler:
                     completed_count = cur_completed
                     last_progress_at = now
 
-                # Heartbeat every 30s
                 if now - last_heartbeat_at >= 30:
                     last_heartbeat_at = now
-                    pending = sum(len(q) for q in self._device_queues.values())
+                    pending = sum(len(q) for q in self._endpoint_queues.values())
                     running_bmc = len(self._bmc_pool._active_futures)
                     running_ssh = len(self._ssh_pool._active_futures)
-                    ready = len(self._ready_devices)
-                    locked_bmc = len(self._bmc_pool._running_devices)
-                    locked_ssh = len(self._ssh_pool._running_devices)
+                    ready = len(self._ready_endpoints)
+                    locked_bmc = len(self._bmc_pool._running_resources)
+                    locked_ssh = len(self._ssh_pool._running_resources)
                     logger.info(
-                        "心跳: 已派发=%d 已完成=%d 待处理=%d 运行中(带外=%d 带内=%d) 就绪=%d",
+                        "心跳: 已派发=%d 已完成=%d 待处理=%d 运行中(BMC=%d SSH=%d) 就绪端点=%d",
                         self._dispatched_count, completed_count, pending, running_bmc, running_ssh, ready,
                     )
                     cheartbeat(self._dispatched_count, completed_count, pending,
@@ -125,26 +149,24 @@ class DynamicScheduler:
                 # Stall detection: no progress for 60s
                 if now - last_progress_at >= 60:
                     logger.warning("调度器停滞: %.0f 秒无进展", now - last_progress_at)
-                    # Dump first 10 pending plans with their status
                     pending_dumped = 0
-                    for did, q in sorted(self._device_queues.items()):
+                    for ekey, q in sorted(self._endpoint_queues.items()):
                         if q and pending_dumped < 10:
                             p = q[0]
                             blocked_by = ""
-                            if self._bmc_pool.device_has_running_task(did):
-                                blocked_by = " (device busy in BMC pool)"
-                            elif self._ssh_pool.device_has_running_task(did):
-                                blocked_by = " (device busy in SSH pool)"
+                            if self._bmc_pool.resource_has_running_task(ekey):
+                                blocked_by = " (endpoint busy in BMC pool)"
+                            elif self._ssh_pool.resource_has_running_task(ekey):
+                                blocked_by = " (endpoint busy in SSH pool)"
                             logger.warning(
-                                "  PENDING: device=%s task=%s protocol=%s%s",
-                                did, p.task.task_name, p.protocol, blocked_by,
+                                "  PENDING: endpoint=%s device=%s task=%s protocol=%s%s",
+                                ekey, p.device.device_name, p.task.task_name, p.protocol, blocked_by,
                             )
                             pending_dumped += 1
-                    # Dump device locks
-                    logger.warning("  BMC active devices: %s", list(self._bmc_pool._running_devices))
-                    logger.warning("  SSH active devices: %s", list(self._ssh_pool._running_devices))
-                    logger.warning("  Ready devices: %d, total device queues: %d",
-                                   len(self._ready_devices), len(self._device_queues))
+                    logger.warning("  BMC active resources: %s", list(self._bmc_pool._running_resources))
+                    logger.warning("  SSH active resources: %s", list(self._ssh_pool._running_resources))
+                    logger.warning("  Ready endpoints: %d, total endpoint queues: %d",
+                                   len(self._ready_endpoints), len(self._endpoint_queues))
 
                 # 4. Brief sleep
                 time.sleep(0.5)
@@ -154,9 +176,7 @@ class DynamicScheduler:
         finally:
             drained = self._drain()
 
-            # Close browsers on worker threads BEFORE pool shutdown.
-            # Each worker thread uses its own persistent event loop to
-            # close its browser, avoiding cross-loop deadlocks.
+            # Close browsers on worker threads BEFORE pool shutdown
             if self._bm and self._bmc_pool._executor is not None:
                 browser_count = len(self._bm._tls)
                 if browser_count > 0:
@@ -177,7 +197,6 @@ class DynamicScheduler:
             self._ssh_pool.shutdown(wait=drained)
             self._monitor.stop()
 
-            # Safety net: drop any remaining browser refs (no await on wrong loop)
             import asyncio
             if self._bm:
                 try:
@@ -189,7 +208,7 @@ class DynamicScheduler:
 
     def stop(self):
         self._stop_event.set()
-        self._pause_event.set()  # Unblock pause so stop can take effect
+        self._pause_event.set()
 
     def pause(self):
         self._pause_event.clear()
@@ -207,23 +226,41 @@ class DynamicScheduler:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
-    def _build_device_queues(self, plans: list[TaskPlan]):
+    def _build_endpoint_queues(self, plans: list[TaskPlan]):
+        """Group plans by endpoint_key instead of device_name."""
+        # Log warnings for missing IPs
         for plan in plans:
-            did = plan.device_id
-            if did not in self._device_queues:
-                self._device_queues[did] = deque()
-            self._device_queues[did].append(plan)
+            if plan.endpoint_type == "BMC" and not plan.device.bmc_ip:
+                logger.warning(
+                    "设备 %s BMC IP 为空 — endpoint_key=%s",
+                    plan.device.device_name, plan.endpoint_key,
+                )
+            elif plan.endpoint_type == "INBAND" and not plan.device.inband_ip:
+                logger.warning(
+                    "设备 %s INBAND IP 为空 — endpoint_key=%s",
+                    plan.device.device_name, plan.endpoint_key,
+                )
 
-        # Populate ready list
-        for did in self._device_queues:
-            self._ready_devices.append(did)
+        for plan in plans:
+            ekey = plan.endpoint_key
+            if ekey not in self._endpoint_queues:
+                self._endpoint_queues[ekey] = deque()
+            self._endpoint_queues[ekey].append(plan)
+            self._endpoint_plan_order[ekey].append(plan)
+
+        # Populate ready list (preserve original plan order within each endpoint)
+        seen = set()
+        # We iterate plans in original order to maintain fairness
+        for plan in plans:
+            ekey = plan.endpoint_key
+            if ekey not in seen and ekey in self._endpoint_queues:
+                seen.add(ekey)
+                self._ready_endpoints.append(ekey)
 
     def _has_remaining_work(self) -> bool:
-        # Check for tasks still in device queues
-        for q in self._device_queues.values():
+        for q in self._endpoint_queues.values():
             if q:
                 return True
-        # Check for tasks dispatched but not yet completed
         if self._bmc_pool._active_futures or self._ssh_pool._active_futures:
             return True
         return False
@@ -245,43 +282,71 @@ class DynamicScheduler:
         return 1.0
 
     def _dispatch(self):
-        for pool, protocol in [(self._bmc_pool, "BMC"), (self._ssh_pool, "SSH")]:
+        for pool, ep_type in [(self._bmc_pool, "BMC"), (self._ssh_pool, "INBAND")]:
             skipped = 0
-            ready_snapshot = len(self._ready_devices)
-            while pool.has_idle() and self._ready_devices:
-                # Guard: if we've cycled through all devices without a match,
-                # no dispatchable task exists for this pool right now.
+            ready_snapshot = len(self._ready_endpoints)
+            while pool.has_idle() and self._ready_endpoints:
                 if skipped >= ready_snapshot:
                     break
 
-                device_id = self._ready_devices.popleft()
+                endpoint_key = self._ready_endpoints.popleft()
 
-                if pool.device_has_running_task(device_id):
-                    self._ready_devices.append(device_id)  # Back of line
+                # Check if this endpoint_key is already running in this pool
+                if pool.resource_has_running_task(endpoint_key):
+                    self._ready_endpoints.append(endpoint_key)
                     skipped += 1
                     continue
 
-                q = self._device_queues.get(device_id)
+                q = self._endpoint_queues.get(endpoint_key)
                 if not q:
-                    continue  # Queue drained, device done
+                    continue  # Queue drained
 
-                # Pop task NOW (main thread) to prevent race with worker-thread callback
-                plan = q.popleft()
+                plan = q[0]  # Peek — don't pop until successfully dispatched
 
-                if plan.protocol != protocol:
-                    # Wrong pool — push back and re-add device
-                    q.appendleft(plan)
-                    self._ready_devices.append(device_id)
+                if plan.endpoint_type != ep_type:
+                    # Wrong pool — push back
+                    self._ready_endpoints.append(endpoint_key)
                     skipped += 1
                     continue
 
-                # Match! Dispatch and reset skip counter
+                # Atomically try to hold via Global ResourceRegistry
+                holder_meta = {
+                    "execution_id": self._execution_id,
+                    "plan_id": plan.plan_id,
+                    "device_name": plan.device.device_name,
+                    "task_name": plan.task.task_name,
+                    "endpoint_key": endpoint_key,
+                }
+                if not self._registry.try_hold(endpoint_key, holder_meta):
+                    logger.debug(
+                        "[Dispatch] %s held by global registry — waiting",
+                        endpoint_key,
+                    )
+                    self._ready_endpoints.append(endpoint_key)
+                    skipped += 1
+                    continue
+
+                # Pop plan now (main thread) — we've confirmed dispatch can proceed
+                q.popleft()
+
+                # Mark lease held so executor skips double-acquire
+                plan._resource_lease_held = True
+                plan._execution_id = self._execution_id
+
+                # Match! Dispatch
                 skipped = 0
                 plan.status = "RUNNING"
-                plan.started_at = time.time()
+                now_t = time.time()
+                plan.ready_at = now_t
+                plan.resource_wait_started_at = now_t
+                plan.resource_acquired_at = now_t
+                plan.executor_started_at = now_t
                 self._dispatched_count += 1
 
-                logger.info("开始 [%s] %s / %s", plan.protocol, plan.device.device_name, plan.task.task_name)
+                logger.info(
+                    "开始 [%s] %s / %s (endpoint=%s)",
+                    plan.protocol, plan.device.device_name, plan.task.task_name, endpoint_key,
+                )
                 cstart(plan.protocol, plan.device.device_name, plan.task.task_name)
 
                 if self._event_bus:
@@ -290,14 +355,14 @@ class DynamicScheduler:
                 try:
                     pool.dispatch(
                         fn=lambda p=plan: self._execute_plan(p),
-                        device_id=device_id,
-                        on_complete=lambda result, p=plan, did=device_id: self._on_plan_done(p, result, did),
+                        resource_key=endpoint_key,
+                        on_complete=lambda result, p=plan, ek=endpoint_key: self._on_plan_done(p, result, ek),
                     )
                 except Exception:
-                    # 派发失败 → push task back to queue front
+                    # Dispatch failed — push task back to queue front
                     q.appendleft(plan)
                     plan.status = "PENDING"
-                    self._ready_devices.append(device_id)
+                    self._ready_endpoints.append(endpoint_key)
                     logger.error("派发失败 for %s/%s, 任务已重新入队",
                                  plan.device.device_name, plan.task.task_name)
 
@@ -318,10 +383,21 @@ class DynamicScheduler:
                     ended_at=time.time(),
                 )
 
-            return exec_.execute(plan, self._config.output_root)
+            # Mark executor start timing
+            plan.executor_started_at = time.time()
+            result = exec_.execute(plan, self._config.output_root)
+            plan.executor_finished_at = time.time()
+
+            # Copy timing + endpoint data from plan into result
+            result.endpoint_key = plan.endpoint_key
+            result.endpoint_type = plan.endpoint_type
+            result.resource_wait_seconds = plan.resource_wait_seconds
+            result.executor_duration_seconds = plan.executor_duration_seconds
+            result.retry_count = plan.retry_attempt
+
+            return result
         except BaseException as e:
-            # Catch everything including KeyboardInterrupt/SystemExit
-            # so worker threads never crash silently
+            plan.executor_finished_at = time.time()
             logger.error("_execute_plan crashed for %s/%s: %s",
                          plan.device.device_name, plan.task.task_name, e)
             return ExecutionResult(
@@ -334,21 +410,30 @@ class DynamicScheduler:
                 ended_at=time.time(),
             )
 
-    def _on_plan_done(self, plan: TaskPlan, result: ExecutionResult, device_id: str):
-        """Called from worker thread when a task completes.
-        Task was already popped from device queue in _dispatch (main thread).
-        Just record result and re-add device if it has more pending tasks.
-        """
-        plan.completed_at = time.time()
+    def _on_plan_done(self, plan: TaskPlan, result: ExecutionResult, endpoint_key: str):
+        """Called from worker thread when a task completes."""
+        now_t = time.time()
+        plan.ended_at = now_t
+        plan.completed_at = now_t
         plan.status = "SUCCESS" if result.execution_status == "EXEC_SUCCESS" else result.execution_status
+
+        # Release global ResourceRegistry hold (if any)
+        try:
+            self._registry.release(endpoint_key)
+        except Exception:
+            pass
+
+        # Clear lease flag — executor fallback protection no longer needed
+        plan._resource_lease_held = False
+        plan._execution_id = ""
 
         with self._results_lock:
             self._results.append(result)
 
-        # Re-add device to ready queue if it still has pending tasks
-        q = self._device_queues.get(device_id)
+        # Re-add endpoint to ready queue if it still has pending tasks
+        q = self._endpoint_queues.get(endpoint_key)
         if q:
-            self._ready_devices.append(device_id)
+            self._ready_endpoints.append(endpoint_key)
 
         if self._event_bus:
             self._event_bus.emit("plan_completed", plan=plan, result=result)
@@ -360,9 +445,9 @@ class DynamicScheduler:
         cdone(len(self._results), self._dispatched_count, status_icon, result.device_name, result.task_name, reason)
 
     def _drain(self) -> bool:
-        """Wait for running tasks to finish. Returns True if all drained, False if timed out."""
+        """Wait for running tasks to finish."""
         logger.info("等待运行中的任务完成...")
-        drain_deadline = time.time() + 300  # 5 min absolute max
+        drain_deadline = time.time() + 300  # 5 min
         last_log = time.time()
         while self._bmc_pool._active_futures or self._ssh_pool._active_futures:
             now = time.time()
@@ -374,7 +459,7 @@ class DynamicScheduler:
                 )
                 return False
             if now - last_log >= 30:
-                pending = sum(len(q) for q in self._device_queues.values())
+                pending = sum(len(q) for q in self._endpoint_queues.values())
                 logger.info(
                     "DRAIN: waiting on %d bmc + %d ssh futures (pending=%d completed=%d)",
                     len(self._bmc_pool._active_futures),
@@ -388,3 +473,28 @@ class DynamicScheduler:
             time.sleep(1)
         logger.info("等待完成")
         return True
+
+    def _log_startup_stats(self, plans: list[TaskPlan]):
+        """Log scheduling startup statistics."""
+        endpoint_keys = set()
+        bmc_endpoints = set()
+        inband_endpoints = set()
+        for p in plans:
+            ek = p.endpoint_key
+            endpoint_keys.add(ek)
+            if p.endpoint_type == "BMC":
+                bmc_endpoints.add(ek)
+            else:
+                inband_endpoints.add(ek)
+
+        logger.info(
+            "调度启动: total_plans=%d total_endpoint_groups=%d "
+            "bmc_endpoint_groups=%d inband_endpoint_groups=%d "
+            "max_bmc_endpoint_workers=%d max_inband_endpoint_workers=%d",
+            len(plans),
+            len(endpoint_keys),
+            len(bmc_endpoints),
+            len(inband_endpoints),
+            self._config.max_bmc_workers,
+            self._config.max_ssh_workers,
+        )

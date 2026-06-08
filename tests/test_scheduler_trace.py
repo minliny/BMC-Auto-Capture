@@ -28,13 +28,13 @@ tasks = []
 for j in range(3):
     tasks.append(Task(
         row_index=j, sequence=j, task_name=f"BMC_T{j}", task_type="BMC",
-        execution_mode="BMC_URL", match_group="", match_tags=(),
+        execution_mode="BMC_URL", match_group="",
         command_or_url="/test", timeout_seconds=10, enabled=True,
     ))
 for j in range(3):
     tasks.append(Task(
         row_index=j+3, sequence=j+3, task_name=f"SSH_T{j}", task_type="SSH",
-        execution_mode="SSH_CMD", match_group="", match_tags=(),
+        execution_mode="SSH_CMD", match_group="",
         command_or_url="show ver", timeout_seconds=10, enabled=True,
     ))
 
@@ -70,9 +70,9 @@ elapsed = time.time() - t0
 
 print(f"\nDone: {len(results)}/{len(plans)} results in {elapsed:.1f}s")
 
-remaining = sum(len(q) for q in scheduler._device_queues.values())
+remaining = sum(len(q) for q in scheduler._endpoint_queues.values())
 running = len(scheduler._bmc_pool._active_futures) + len(scheduler._ssh_pool._active_futures)
-locked = len(scheduler._bmc_pool._running_devices) + len(scheduler._ssh_pool._running_devices)
+locked = len(scheduler._bmc_pool._running_resources) + len(scheduler._ssh_pool._running_resources)
 
 print(f"Remaining: queues={remaining} running={running} locked={locked}")
 

@@ -124,6 +124,33 @@ class SSHExecutor(AbstractExecutor):
     # Main execute entry point
     # ------------------------------------------------------------------
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
+        if plan._resource_lease_held:
+            # Scheduler already holds the global ResourceRegistry lease
+            return self._execute_impl(plan, output_root)
+
+        # Standalone executor call (no scheduler).  Self-acquire the
+        # global ResourceRegistry to prevent concurrent access to the
+        # same INBAND endpoint from another thread/execution.
+        from ..scheduler.resource_registry import ResourceRegistry
+
+        _reg = ResourceRegistry()
+        _meta = {
+            "execution_id": plan._execution_id,
+            "plan_id": plan.plan_id,
+            "device_name": plan.device.device_name,
+            "task_name": plan.task.task_name,
+        }
+        _acquire_start = time.time()
+        with _reg.acquire(plan.endpoint_key, _meta):
+            _wait_sec = time.time() - _acquire_start
+            if _wait_sec > 0.05:
+                logger.info(
+                    "[%s] Executor fallback acquired %s (wait=%.2fs)",
+                    plan.device.device_name, plan.endpoint_key, _wait_sec,
+                )
+            return self._execute_impl(plan, output_root)
+
+    def _execute_impl(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         device = plan.device
         task = plan.task
 

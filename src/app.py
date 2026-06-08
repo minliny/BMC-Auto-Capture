@@ -158,6 +158,13 @@ class App:
         except Exception as e:
             logger.warning("Failed to write connectivity summary: %s", e)
 
+        # Timing reports
+        try:
+            from .out.timing import write_all_timing_reports
+            write_all_timing_reports(self._results, str(output_dir))
+        except Exception as e:
+            logger.warning("Failed to write timing reports: %s", e)
+
         summary = compute_summary(self._results)
         logger.info("汇总:  %s", summary)
         print_terminal_summary(self._results)
@@ -344,12 +351,15 @@ class App:
     # ------------------------------------------------------------------
     # Run with pre-parsed plans (in-memory execution via API)
     # ------------------------------------------------------------------
-    def run_with_plans(self, plans: list[TaskPlan]) -> list[ExecutionResult]:
+    def run_with_plans(self, plans: list[TaskPlan], mode: str = "full") -> list[ExecutionResult]:
         """Execute pre-parsed plans directly without loading Excel.
         Called by the API when plans_json is provided to /execute/start.
+
+        mode: "sequential" = one-by-one; "full" = endpoint-aware dynamic scheduler.
         """
         # Set up timestamped output root
         run_ts = time.strftime("%Y%m%d_%H%M%S")
+        execution_started_at = time.time()
         self.config.output_root = str(Path(self.config.output_root) / run_ts)
         logger.info("输出目录 (in-memory):  %s", self.config.output_root)
 
@@ -396,9 +406,12 @@ class App:
 
         # Execute
         ready_plans = [p for p in plans if not p.status.startswith("EXEC_SKIPPED")]
-        logger.info("正在执行 %d 个计划", len(ready_plans))
+        logger.info("正在执行 %d 个计划 (mode=%s)", len(ready_plans), mode)
 
-        self._execute_sequential(ready_plans)
+        if mode == "full":
+            self._execute_dynamic(ready_plans)
+        else:
+            self._execute_sequential(ready_plans)
 
         # Route guard cleanup
         if route_guard:
@@ -406,6 +419,7 @@ class App:
 
         # Collect
         output_dir = self._ensure_writable_output_dir()
+
         write_result_csv(self._results, str(output_dir))
         write_final_result_csv(self._results, str(output_dir))
 
@@ -418,6 +432,16 @@ class App:
             write_failure_csv(self._results, str(output_dir))
         except Exception as e:
             logger.warning("Failed to write connectivity summary: %s", e)
+
+        # Timing reports
+        try:
+            from .out.timing import write_all_timing_reports
+            write_all_timing_reports(
+                self._results, str(output_dir),
+                execution_started_at=execution_started_at,
+            )
+        except Exception as e:
+            logger.warning("Failed to write timing reports: %s", e)
 
         summary = compute_summary(self._results)
         logger.info("汇总:  %s", summary)

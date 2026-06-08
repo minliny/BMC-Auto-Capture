@@ -26,8 +26,8 @@ class WorkerPool:
         self._target = base_workers
         self._executor: ThreadPoolExecutor | None = None
         self._lock = threading.Lock()
-        self._running_devices: set[str] = set()
-        self._active_futures: dict[Future, str] = {}  # future -> device_id
+        self._running_resources: set[str] = set()
+        self._active_futures: dict[Future, str] = {}  # future -> resource_key (endpoint_key)
 
     @property
     def target_size(self) -> int:
@@ -56,32 +56,33 @@ class WorkerPool:
             return True
         return len(self._active_futures) < self._target
 
-    def device_has_running_task(self, device_id: str) -> bool:
+    def resource_has_running_task(self, endpoint_key: str) -> bool:
+        """Check if this endpoint_key is currently running in this pool."""
         with self._lock:
-            return device_id in self._running_devices
+            return endpoint_key in self._running_resources
 
-    def dispatch(self, fn: Callable, device_id: str, on_complete: Callable | None = None):
-        """Submit work. device_id enforces per-device serialization."""
+    def dispatch(self, fn: Callable, resource_key: str, on_complete: Callable | None = None):
+        """Submit work. resource_key (endpoint_key) enforces per-endpoint serialization."""
         if self._executor is None:
             self.start()
 
         with self._lock:
-            self._running_devices.add(device_id)
+            self._running_resources.add(resource_key)
 
         try:
             future = self._executor.submit(fn)
         except Exception:
             with self._lock:
-                self._running_devices.discard(device_id)
+                self._running_resources.discard(resource_key)
             raise
 
         with self._lock:
-            self._active_futures[future] = device_id
+            self._active_futures[future] = resource_key
 
         if on_complete:
-            future.add_done_callback(lambda f: self._on_done(f, device_id, on_complete))
+            future.add_done_callback(lambda f: self._on_done(f, resource_key, on_complete))
         else:
-            future.add_done_callback(lambda f: self._on_done(f, device_id))
+            future.add_done_callback(lambda f: self._on_done(f, resource_key))
 
     def shutdown(self, wait: bool = True):
         if self._executor:
@@ -89,9 +90,9 @@ class WorkerPool:
             self._executor = None
             logger.info("[%s] 工作池已关闭 (wait=%s)", self.name, wait)
 
-    def _on_done(self, future: Future, device_id: str, callback: Callable | None = None):
+    def _on_done(self, future: Future, resource_key: str, callback: Callable | None = None):
         with self._lock:
-            self._running_devices.discard(device_id)
+            self._running_resources.discard(resource_key)
             self._active_futures.pop(future, None)
 
         if not callback:
@@ -100,11 +101,11 @@ class WorkerPool:
         try:
             result = future.result()
         except Exception as e:
-            logger.error("[%s] 工作线程异常, 设备:  %s: %s", self.name, device_id, e)
+            logger.error("[%s] 工作线程异常, 资源: %s: %s", self.name, resource_key, e)
             # Synthesize an error result so callback always fires
             from ..models.execution_result import ExecutionResult
             result = ExecutionResult(
-                device_name=device_id,
+                device_name=resource_key,
                 task_name="(crashed)",
                 execution_status="EXEC_ERROR",
                 execution_failure_reason=f"Worker exception: {e}",
@@ -115,4 +116,4 @@ class WorkerPool:
         try:
             callback(result)
         except Exception as e:
-            logger.error("[%s] Callback error for device %s: %s", self.name, device_id, e)
+            logger.error("[%s] Callback error for resource %s: %s", self.name, resource_key, e)

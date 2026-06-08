@@ -27,7 +27,6 @@ def make_device(idx: int, group: str, has_bmc: bool = True, has_ssh: bool = True
         inband_username="user",
         inband_password="pass",
         enabled=True,
-        tags=(),
     )
 
 
@@ -39,7 +38,6 @@ def make_bmc_task(name: str, seq: int, group: str = "") -> Task:
         task_type="BMC",
         execution_mode="BMC_URL",
         match_group=group,
-        match_tags=(),
         command_or_url="/UI/Static/#/test",
         output_dir_template="{device_name}/{task_name}",
         image_name_template="{device_name}_{task_name}_{timestamp}",
@@ -56,7 +54,6 @@ def make_ssh_task(name: str, seq: int, group: str = "") -> Task:
         task_type="SSH",
         execution_mode="SSH_CMD",
         match_group=group,
-        match_tags=(),
         command_or_url="show version",
         output_dir_template="{device_name}/{task_name}",
         image_name_template="{device_name}_{task_name}_{timestamp}",
@@ -134,9 +131,9 @@ def test_28_devices_128_plans():
             print(f"FAIL: Only {completed}/{total} plans completed (missing {total - completed})")
 
         # Check device queue cleanup
-        remaining = sum(len(q) for q in scheduler._device_queues.values())
+        remaining = sum(len(q) for q in scheduler._endpoint_queues.values())
         running = len(scheduler._bmc_pool._active_futures) + len(scheduler._ssh_pool._active_futures)
-        locked = len(scheduler._bmc_pool._running_devices) + len(scheduler._ssh_pool._running_devices)
+        locked = len(scheduler._bmc_pool._running_resources) + len(scheduler._ssh_pool._running_resources)
         print(f"Cleanup: remaining_in_queues={remaining}, running_futures={running}, locked_devices={locked}")
 
         if remaining == 0 and running == 0 and locked == 0:

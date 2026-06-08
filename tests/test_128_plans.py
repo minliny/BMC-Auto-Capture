@@ -19,18 +19,18 @@ for i in range(28):
         row_index=i, device_name=f"D{i:02d}", device_group="G1",
         bmc_ip=f"10.0.{i}.1", bmc_username="a", bmc_password="p",
         inband_ip=f"10.0.{i}.2", inband_username="u", inband_password="p",
-        enabled=True, tags=(),
+        enabled=True,
     ))
 
 tasks = []
 # 2 BMC tasks
 for j in range(2):
-    tasks.append(Task(j, j, f"BMC_T{j}", "BMC", "BMC_URL", "", (), "/test", timeout_seconds=10, enabled=True))
+    tasks.append(Task(j, j, f"BMC_T{j}", "BMC", "BMC_URL", "", "/test", timeout_seconds=10, enabled=True))
 # 2 SSH tasks
 for j in range(2):
-    tasks.append(Task(j+2, j+2, f"SSH_T{j}", "SSH", "SSH_CMD", "", (), "show", timeout_seconds=10, enabled=True))
+    tasks.append(Task(j+2, j+2, f"SSH_T{j}", "SSH", "SSH_CMD", "", "show", timeout_seconds=10, enabled=True))
 # 1 shared task (no group filter)
-tasks.append(Task(4, 4, "Common", "SSH", "SSH_CMD", "", (), "ping", timeout_seconds=10, enabled=True))
+tasks.append(Task(4, 4, "Common", "SSH", "SSH_CMD", "", "ping", timeout_seconds=10, enabled=True))
 
 plans = generate_plans(devices, tasks)
 print(f"Plans: {len(plans)} ({len(devices)} devices × {len(tasks)} tasks)")
@@ -58,9 +58,9 @@ results = s.run(plans)
 elapsed = time.time() - t0
 
 print(f"Results: {len(results)}/{len(plans)} in {elapsed:.1f}s")
-remaining = sum(len(q) for q in s._device_queues.values())
+remaining = sum(len(q) for q in s._endpoint_queues.values())
 running = len(s._bmc_pool._active_futures) + len(s._ssh_pool._active_futures)
-locked = len(s._bmc_pool._running_devices) + len(s._ssh_pool._running_devices)
+locked = len(s._bmc_pool._running_resources) + len(s._ssh_pool._running_resources)
 
 if len(results) == len(plans) and remaining == 0 and running == 0:
     print("PASS: All plans completed, clean shutdown")

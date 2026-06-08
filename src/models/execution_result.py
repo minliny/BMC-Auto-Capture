@@ -49,6 +49,12 @@ class ExecutionResult:
     duration_seconds: float = 0.0
     started_at: float = 0.0
     ended_at: float = 0.0
+    # New endpoint-aware + timing fields
+    endpoint_key: str = ""
+    endpoint_type: str = ""
+    resource_wait_seconds: float = 0.0
+    executor_duration_seconds: float = 0.0
+    retry_count: int = 0
 
     def _checkpoint_summary(self) -> str:
         if not self.checkpoint_results:
@@ -92,6 +98,14 @@ class ExecutionResult:
             str(round(self.duration_seconds, 1)),
             self.ready_status,
             self.ready_failure_reason,
+            # New endpoint-aware + timing fields
+            self.endpoint_key,
+            self.endpoint_type,
+            _fmt_time(self.started_at),
+            _fmt_time(self.ended_at),
+            str(round(self.duration_seconds, 1)),
+            str(round(self.resource_wait_seconds, 1)),
+            str(round(self.executor_duration_seconds, 1)),
         ]
 
     @staticmethod
@@ -108,6 +122,10 @@ class ExecutionResult:
             "截图路径", "HTML路径", "文本路径", "日志路径",
             "输出目录", "开始时间", "结束时间", "耗时秒",
             "就绪状态", "就绪失败原因",
+            # New
+            "endpoint_key", "endpoint_type",
+            "started_at", "ended_at",
+            "duration_seconds", "resource_wait_seconds", "executor_duration_seconds",
         ]
 
 def _fmt_time(ts: float) -> str:
