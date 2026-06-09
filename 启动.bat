@@ -201,13 +201,14 @@ echo(    [R] 直接测试 IP:端口(无需 Excel)
 echo(    [4] Debug 模式顺序执行
 echo(    [5] 设定 Excel 配置文件路径
 echo(    [6] 调整 BMC/SSH 并发量
+echo(    [0] 启动 API Server
 echo(    [7] 退出
 echo.
 echo(    Server 模式: 启动.bat --server [--host 0.0.0.0] [--port 8080]
 echo.
 
 set "CHOICE="
-set /p CHOICE="   请选择 [1-7]: "
+set /p CHOICE="   请选择 [0-7]: "
 
 if "%CHOICE%"=="1" goto :run_seq
 if "%CHOICE%"=="2" goto :run_full
@@ -217,8 +218,15 @@ if /i "%CHOICE%"=="r" goto :test_ip
 if "%CHOICE%"=="4" goto :run_debug
 if "%CHOICE%"=="5" goto :set_excel
 if "%CHOICE%"=="6" goto :set_workers
+if "%CHOICE%"=="0" goto :run_server_menu
 if "%CHOICE%"=="7" goto :end
 goto :menu
+
+:run_server_menu
+if "%HOST%"=="" set "HOST=0.0.0.0"
+if "%PORT%"=="" set "PORT=8080"
+if "%LOG_LEVEL%"=="" set "LOG_LEVEL=info"
+goto :run_server
 
 :test_ip
 cls
