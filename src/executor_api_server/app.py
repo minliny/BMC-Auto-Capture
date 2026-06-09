@@ -1,9 +1,13 @@
 """
-FastAPI application for the Executor API v1 + plan/run dispatch.
+FastAPI application for the Executor API v1 + plan/run dispatch + legacy compat.
 """
 
 from __future__ import annotations
 import logging
+import os
+import socket
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -24,6 +28,11 @@ def create_app(
     app = FastAPI(title="BMC Auto-Capture Executor API v0.2", version="0.2.0")
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                        allow_methods=["*"], allow_headers=["*"])
+
+    # ==================================================================
+    # Legacy compat routes (replaces api/boot.py)
+    # ==================================================================
+    _register_legacy_routes(app)
 
     # ==================================================================
     # Direct dispatch (existing)
@@ -57,13 +66,82 @@ def create_app(
         _register_run_routes(app, run_service)
 
     # ==================================================================
-    # Plan Run Item Status Callback (new)
+    # Plan Run Item Status Callback
     # ==================================================================
 
     if plan_run_service is not None:
         _register_plan_run_routes(app, plan_run_service)
 
     return app
+
+
+# ==================================================================
+# Legacy compat routes
+# ==================================================================
+
+def _register_legacy_routes(app: FastAPI):
+    """Register /health, /version, /network/ping, /routes — compat with api/boot.py."""
+
+    @app.get("/health")
+    async def health():
+        return {
+            "status": "ok",
+            "service": "executor-api",
+            "mode": "executor",
+            "legacyCompatible": True,
+        }
+
+    @app.get("/version")
+    async def version():
+        info = {
+            "name": "bmc-auto-capture",
+            "mode": "executor-api",
+            "status": "ok",
+            "legacyCompatible": True,
+        }
+        # Try to read build_info.json
+        for candidate in [
+            Path(__file__).resolve().parent.parent.parent / "runtime" / "build_info.json",
+            Path(os.getcwd()) / "runtime" / "build_info.json",
+        ]:
+            if candidate.exists():
+                try:
+                    import json
+                    bi = json.loads(candidate.read_text(encoding="utf-8"))
+                    info["version"] = bi.get("version", "")
+                    info["git_commit"] = bi.get("git_commit", "")
+                    info["git_branch"] = bi.get("git_branch", "")
+                    info["git_tag"] = bi.get("git_tag", "")
+                    info["build_time"] = bi.get("build_time", "")
+                    info["workflow_run_id"] = bi.get("workflow_run_id", "")
+                except Exception:
+                    pass
+                break
+        return info
+
+    @app.get("/network/ping")
+    async def network_ping(request: Request):
+        client_host = request.client.host if request.client else "unknown"
+        return {
+            "status": "ok",
+            "message": "pong",
+            "client_host": client_host,
+            "server_host": socket.gethostname(),
+            "server_port": request.url.port or 8080,
+            "service": "executor-api",
+        }
+
+    @app.get("/routes")
+    async def list_routes(request: Request):
+        routes = []
+        for route in request.app.routes:
+            if hasattr(route, "path") and hasattr(route, "methods"):
+                routes.append({
+                    "path": route.path,
+                    "methods": list(route.methods),
+                    "name": route.name,
+                })
+        return {"routes": routes}
 
 
 def _register_plan_run_routes(app: FastAPI, prs):

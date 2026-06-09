@@ -170,38 +170,56 @@ def main():
                 break
     _setup_encoding()
 
-    # --- Server mode: minimal API boot for network validation ---
+    # --- Server mode: Executor API (replaces legacy Network Boot API) ---
     if "--server" in sys.argv:
-        # Extract server args without full argparse (server mode doesn't need --excel etc.)
         server_parser = argparse.ArgumentParser(add_help=False)
         server_parser.add_argument("--server", action="store_true", default=True)
-        server_parser.add_argument("--host", default="127.0.0.1")
-        server_parser.add_argument("--port", type=int, default=8080)
-        server_parser.add_argument("--app-dir", default=None)
+        server_parser.add_argument("--host", default="0.0.0.0")
+        server_parser.add_argument("--port", type=int, default=18000)
         server_parser.add_argument("--log-level", default="info")
+        server_parser.add_argument("--runner", default="fake", choices=("fake","real"))
+        server_parser.add_argument("--callback-transport", default="fake", choices=("fake","http"))
+        server_parser.add_argument("--executor-id", default="exec-default")
+        server_parser.add_argument("--legacy-network-boot", action="store_true",
+                                   help="Start legacy Network Boot API instead of Executor API")
         server_args, _ = server_parser.parse_known_args()
 
-        # Resolve app_dir before import so frozen exe can find api/
-        if server_args.app_dir:
-            from pathlib import Path as _Path
-            _ad = str(_Path(server_args.app_dir).resolve())
-            if _ad not in sys.path:
-                sys.path.insert(0, _ad)
-        elif getattr(sys, "frozen", False) and "--excel" not in sys.argv:
-            # In frozen mode with server flag, app/ is ../app from exe
-            from pathlib import Path as _Path
-            _ad = str(_Path(sys.executable).resolve().parent.parent / "app")
-            if _ad not in sys.path:
-                sys.path.insert(0, _ad)
+        # Legacy mode (explicit opt-in)
+        if server_args.legacy_network_boot:
+            from api.boot import start_minimal_server
+            start_minimal_server(
+                host=server_args.host, port=server_args.port,
+                log_level=server_args.log_level, app_dir=None,
+            )
+            return 0
 
-        from api.boot import start_minimal_server
-        start_minimal_server(
-            host=server_args.host,
-            port=server_args.port,
-            log_level=server_args.log_level,
-            app_dir=server_args.app_dir,
+        # New Executor API (default)
+        from src.executor_api_server.service import DirectDispatchService
+        from src.executor_api_server.app import create_app
+        from src.plan_run_service import PlanRunService
+        import uvicorn
+
+        use_http = server_args.callback_transport == "http"
+        use_real = server_args.runner == "real"
+
+        svc = DirectDispatchService(
+            executor_id=server_args.executor_id,
+            use_http_callback=use_http, runner_mode="real" if use_real else "fake",
         )
-        return 0
+        svc.start_background_worker()
+
+        prs = PlanRunService(use_http_callback=use_http)
+
+        app = create_app(svc, plan_run_service=prs)
+
+        print(f"Executor API server starting (legacy compat enabled):")
+        print(f"  host={server_args.host} port={server_args.port}")
+        print(f"  runner={server_args.runner} callback={server_args.callback_transport}")
+        print(f"  Legacy endpoints: /health /version /network/ping /routes")
+        print(f"  Executor endpoints: /executor/v1/status /executor/v1/plans/...")
+
+        uvicorn.run(app, host=server_args.host, port=server_args.port,
+                    log_level=server_args.log_level)
 
     # 检查是否为 launcher 模式 (由 启动.cmd 调用)
     if "--launcher" in sys.argv:

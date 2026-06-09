@@ -102,3 +102,7 @@ def start_minimal_server(
         uvicorn.run(app, host=host, port=port, log_level=log_level)
     except KeyboardInterrupt:
         print("\nAPI server stopped.")
+
+
+# Alias for legacy callers
+start_minimal_server_legacy = start_minimal_server
