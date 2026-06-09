@@ -16,9 +16,17 @@ import argparse
 import sys
 from pathlib import Path
 
-# Ensure project root is on path
+# Ensure project root and app/ are on path
+# In a release artifact: bmc-auto-capture/
+#   scripts/start_executor_api_server.py  ← we are here
+#   app/src/                              ← source modules live here
+# In dev checkout: <project_root>/src/    ← source modules live here
 _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root))
+# Also add app/ for release artifact layout (src → app/src)
+_app_dir = _project_root / "app"
+if _app_dir.is_dir() and str(_app_dir) not in sys.path:
+    sys.path.insert(0, str(_app_dir))
 
 
 def main():
