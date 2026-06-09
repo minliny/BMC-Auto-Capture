@@ -1,0 +1,28 @@
+{
+  "schema_version": "0.1.0",
+  "planner_version": "0.1.0",
+  "required_sheets": ["设备信息", "任务列表"],
+  "required_device_columns": ["device_name", "bmc_ip", "bmc_username"],
+  "required_task_columns": ["task_name", "task_type", "execution_mode"],
+  "task_types": ["BMC", "SSH", "TELNET", "NETWORK_TEST"],
+  "network_tests": [
+    {
+      "network_test_id": "net-ping-default",
+      "name": "ping 网关测试",
+      "device_groups": ["A3"],
+      "execution_mode": "SSH_CMD",
+      "command": "ping -c 4 {target_ip}",
+      "target_ip": "10.0.0.1",
+      "timeout_seconds": 30
+    },
+    {
+      "network_test_id": "net-traceroute",
+      "name": "traceroute 测试",
+      "device_groups": ["A3", "L1"],
+      "execution_mode": "SSH_CMD",
+      "command": "traceroute {inband_ip}",
+      "target_ip": "",
+      "timeout_seconds": 60
+    }
+  ]
+}

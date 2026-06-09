@@ -93,7 +93,10 @@ def main():
         output_root=args.output,
     )
 
-    app = create_app(service, run_service=run_service)
+    from src.plan_run_service import PlanRunService
+    plan_run_service = PlanRunService(use_http_callback=use_http)
+
+    app = create_app(service, run_service=run_service, plan_run_service=plan_run_service)
 
     transport_label = "HTTP (real)" if use_http else "Fake (test)"
     runner_label = "RealRunnerAdapter (BMC/SSH)" if use_real else "FakeRunner (dry-run)"

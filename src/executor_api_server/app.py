@@ -19,6 +19,7 @@ logger = logging.getLogger("bmc_auto_capture.executor_api")
 def create_app(
     service: DirectDispatchService,
     run_service=None,  # RunDispatchService, optional
+    plan_run_service=None,  # PlanRunService, optional
 ) -> FastAPI:
     app = FastAPI(title="BMC Auto-Capture Executor API v0.2", version="0.2.0")
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
@@ -48,14 +49,51 @@ def create_app(
         return ExecutorStatusResponse(**service.get_executor_status())
 
     # ==================================================================
-    # Plan import + query
+    # Plan import + query (existing)
     # ==================================================================
 
     if run_service is not None:
         _register_plan_routes(app, run_service)
         _register_run_routes(app, run_service)
 
+    # ==================================================================
+    # Plan Run Item Status Callback (new)
+    # ==================================================================
+
+    if plan_run_service is not None:
+        _register_plan_run_routes(app, plan_run_service)
+
     return app
+
+
+def _register_plan_run_routes(app: FastAPI, prs):
+    """POST /executor/v1/config/excel:path, POST /plans/{id}:run, GET /plans/{id}/runs/{rid}"""
+
+    @app.post("/executor/v1/config/excel:path")
+    async def set_latest_excel(req: Request):
+        body = await req.json()
+        path = body.get("excelPath", "")
+        if not path:
+            raise HTTPException(status_code=400, detail="excelPath is required")
+        result = prs.set_latest_excel(path)
+        if not result.get("accepted"):
+            raise HTTPException(status_code=400, detail=result)
+        return result
+
+    @app.post("/executor/v1/plans/{plan_id}:run")
+    async def start_plan_run(plan_id: int, req: Request):
+        body = await req.json()
+        result = prs.start_plan_run(plan_id, body)
+        if not result.get("accepted"):
+            return JSONResponse(content=result, status_code=400)
+        return result
+
+    @app.get("/executor/v1/plans/{plan_id}/runs/{run_id}")
+    async def get_plan_run(plan_id: int, run_id: str):
+        r = prs.get_run(run_id)
+        if r is None:
+            raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+        return r
 
 
 def _register_plan_routes(app: FastAPI, rs):
