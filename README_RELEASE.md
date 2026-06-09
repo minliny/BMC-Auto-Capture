@@ -58,19 +58,51 @@ runtime\bmc-engine.exe --app-dir app --excel tasks.xlsx --mode full
 runtime\bmc-engine.exe --app-dir app --excel tasks.xlsx --preflight-auth all
 ```
 
-### 方式四：API Server
+### 方式四：Executor API 服务（推荐用于远程调用）
+
+Executor API 是默认的 server 模式，启动新版 API（基于 FastAPI + uvicorn），
+**不需要系统安装 Python**。不需要额外启动 mock callback server，内置 debug callback receiver。
 
 ```cmd
-runtime\bmc-engine.exe --app-dir app --server --host 0.0.0.0 --port 8080
+REM 默认启动 Executor API（不是旧 Network Boot API）
+runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --runner fake
+
+REM 推荐用于测试：开启内置 debug callback receiver，无需额外 Python 进程
+runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --runner fake --enable-debug-callback-receiver
+
+REM 如需旧 Network Boot API（仅 health/ping/version），加 --legacy-network-boot
+runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --legacy-network-boot
 ```
 
-提供端点：
-- `GET /health` — 健康检查
-- `GET /version` — 版本信息
-- `POST /config/upload-excel` — 上传 Excel
-- `POST /execute/start` — 启动执行
-- `GET /execute/{id}/stream` — SSE 实时推送
-- `GET /execute/{id}/results` — 下载 result.csv
+提供端点（默认 Executor API 模式）：
+- `GET /executor/v1/status` — Executor 状态
+- `POST /executor/v1/config/excel:path` — 设置最新 Excel
+- `POST /executor/v1/plans/{planId}:run` — 启动 plan 执行
+- `GET /executor/v1/plans/{planId}/runs/{runId}` — 查询执行进度
+- `GET /health` — 兼容健康检查
+- `GET /version` — 兼容版本信息
+- `GET /network/ping` — 兼容网络检测
+- `GET /routes` — 路由列表
+
+如果启动时加 `--enable-debug-callback-receiver`，额外提供：
+- `POST /debug/plan-item-statuses` — 接收 plan item 状态回调
+- `GET /debug/plan-item-statuses` — 查询已收到回调
+- `DELETE /debug/plan-item-statuses` — 清空回调记录
+
+> **注意：** `--legacy-network-boot` 参数可启动旧版 API（仅 health/ping/version/routes），
+> 默认不传时启动的是完整 Executor API（含 plan run、callback 等能力）。
+
+开箱即用验证：
+
+```powershell
+.\scripts\smoke_executor_runtime.ps1
+```
+
+该脚本启动 `runtime\bmc-engine.exe`，检查所有 Executor API 端点，
+使用内置 debug callback receiver 接收 plan run 回调，验证 total/success/failed。
+**不需要系统安装 Python。**
+
+也可以双击 `启动.bat` 后选 `[0] 启动 Executor API`。
 
 ## 四、常用 CLI 参数
 
@@ -85,9 +117,14 @@ runtime\bmc-engine.exe --app-dir app --server --host 0.0.0.0 --port 8080
 | `--preflight-target` | 预检对象 all/bmc/ssh | all |
 | `--preflight-auth` | 凭证检测 all/bmc/ssh | — |
 | `--no-preflight` | 跳过预检 | — |
-| `--server` | API Server 模式 | — |
-| `--host` | Server 地址 | 127.0.0.1 |
-| `--port` | Server 端口 | 8080 |
+| `--server` | Executor API Server 模式（默认新版 API） | — |
+| `--host` | Server 地址 | 0.0.0.0 |
+| `--port` | Server 端口 | 18000 |
+| `--runner` | 执行器模式: fake / real | fake |
+| `--callback-transport` | 回调传输: fake / http | fake |
+| `--executor-id` | Executor 唯一标识 | exec-default |
+| `--enable-debug-callback-receiver` | 启用内置调试回调接收器 | — |
+| `--legacy-network-boot` | 启用旧版 Network Boot API（仅 health/ping） | — |
 | `--verbose` | Debug 日志 | — |
 
 ## 五、Excel 配置
@@ -152,6 +189,18 @@ A: 右键管理员运行 CMD，cd 到项目目录后手动执行 `启动.bat`，
 
 **Q: 提示"找不到执行引擎"**
 A: 确保 `runtime/bmc-engine.exe` 存在。如使用源码模式，需 `python run.py`。
+
+**Q: 默认启动的是旧版 Network Boot API 还是新版 Executor API？**
+A: 默认启动新版 Executor API。如需旧版 Network Boot API，加 `--legacy-network-boot`。
+
+**Q: 客户机器没有 Python，能否启动 Executor API？**
+A: 可以。使用 `runtime\bmc-engine.exe --server` 或 `启动.bat --server`，无需系统安装 Python。
+   `python scripts/*.py` 只是开发态命令。
+
+**Q: 测试 Plan Run 时需要 mock callback receiver，但没有 Python 怎么办？**
+A: 使用内置 debug callback receiver。启动时加 `--enable-debug-callback-receiver`，
+   然后将 `itemStatusUrl` 指向 `http://127.0.0.1:18000/debug/plan-item-statuses`，
+   无需额外 Python 进程。支持 POST/GET/DELETE 三个路由。
 
 **Q: Windows 安全提示**
 A: 在 PowerShell 中运行：

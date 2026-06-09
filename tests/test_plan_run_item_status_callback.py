@@ -20,6 +20,12 @@ def _clear_store():
         _excel_store.clear()
 
 
+# Clear shared Excel store before each test in this file
+@pytest.fixture(autouse=True)
+def auto_clear_store():
+    _clear_store()
+
+
 # ===========================================================================
 # Excel config tests (1-6)
 # ===========================================================================
@@ -109,10 +115,10 @@ class TestPlanRun:
         svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {"itemStatusUrl": "http://cb/items"}})
-        svc.run_all_sync(r["runId"])
+        # Wait for background thread to complete
+        time.sleep(3)
         run = svc.get_run(r["runId"])
         assert run is not None
-        # After sync execution, all items should be completed
         assert run["summary"]["total"] > 0
         assert run["summary"]["total"] == run["summary"]["success"]
         # Callback transport should have recorded calls
@@ -172,7 +178,7 @@ class TestPlanRun:
         svc = PlanRunService()
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {}})
-        svc.run_all_sync(r["runId"])
+        time.sleep(3)
         run = svc.get_run(r["runId"])
         assert "summary" in run
         assert run["summary"]["total"] > 0
@@ -461,6 +467,10 @@ class TestMockServer:
         port = sock.getsockname()[1]
         sock.close()
 
+        import sys as _sys
+        _scripts_dir = str(Path(__file__).resolve().parent.parent / "scripts")
+        if _scripts_dir not in _sys.path:
+            _sys.path.insert(0, _scripts_dir)
         from mock_plan_status_server import Handler, _store
         _store._items.clear()
 

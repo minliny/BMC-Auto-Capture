@@ -180,6 +180,8 @@ def main():
         server_parser.add_argument("--runner", default="fake", choices=("fake","real"))
         server_parser.add_argument("--callback-transport", default="fake", choices=("fake","http"))
         server_parser.add_argument("--executor-id", default="exec-default")
+        server_parser.add_argument("--enable-debug-callback-receiver", action="store_true",
+                                   help="Enable built-in debug callback receiver at /debug/plan-item-statuses")
         server_parser.add_argument("--legacy-network-boot", action="store_true",
                                    help="Start legacy Network Boot API instead of Executor API")
         server_args, _ = server_parser.parse_known_args()
@@ -210,13 +212,16 @@ def main():
 
         prs = PlanRunService(use_http_callback=use_http)
 
-        app = create_app(svc, plan_run_service=prs)
+        app = create_app(svc, plan_run_service=prs,
+                         debug_callback_receiver=server_args.enable_debug_callback_receiver)
 
         print(f"Executor API server starting (legacy compat enabled):")
         print(f"  host={server_args.host} port={server_args.port}")
         print(f"  runner={server_args.runner} callback={server_args.callback_transport}")
         print(f"  Legacy endpoints: /health /version /network/ping /routes")
         print(f"  Executor endpoints: /executor/v1/status /executor/v1/plans/...")
+        if server_args.enable_debug_callback_receiver:
+            print(f"  Debug callback: POST/GET/DELETE /debug/plan-item-statuses")
 
         uvicorn.run(app, host=server_args.host, port=server_args.port,
                     log_level=server_args.log_level)

@@ -176,8 +176,11 @@ class PlanRunService:
             for task in enabled_tasks:
                 match_group = getattr(task, "match_group", "") or ""
                 dg = getattr(device, "device_group", "") or ""
-                if match_group and dg != match_group:
-                    continue
+                if match_group:
+                    # match_group supports "/"-separated groups, e.g. "L1/L2/A3"
+                    allowed_groups = [g.strip().upper() for g in match_group.split("/") if g.strip()]
+                    if dg.upper() not in allowed_groups:
+                        continue
                 lock_uri = _derive_lock_uri(device, task)
                 items.append(PlanRunItem(
                     plan_id=plan_id,
@@ -301,6 +304,14 @@ class PlanRunService:
         exec_mode = getattr(task, "execution_mode", "")
         cmd = getattr(task, "command_or_url", "") or ""
 
+        # Check for per_group_commands override
+        try:
+            pgc = getattr(task, '_per_group_commands', None) or {}
+            if pgc and item.device_group.upper() in pgc:
+                cmd = pgc[item.device_group.upper()]
+        except Exception:
+            pass
+
         # Derive ssh_type for secrets
         dg = (getattr(device, "device_group", "") or "").upper()
         st = "SSH_VRP" if dg in ("L1", "L2") else "SSH"
@@ -367,10 +378,36 @@ class PlanRunService:
         return {"planId": run.plan_id, "runId": run.run_id,
                 "status": run.status, "summary": run.summary}
 
-    def run_all_sync(self, run_id: str):
-        """Execute run synchronously (for testing)."""
+    def get_run_items(self, run_id: str) -> dict[str, Any] | None:
+        """Get run with per-item details. Returns None if run not found."""
         run = self._runs.get(run_id)
         if run is None:
+            return None
+        items = [
+            {
+                "deviceName": item.device_name,
+                "taskName": item.task_name,
+                "status": item.status,
+                "errorMessage": item.error_message,
+            }
+            for item in run.items
+        ]
+        return {
+            "planId": run.plan_id,
+            "runId": run.run_id,
+            "status": run.status,
+            "summary": run.summary,
+            "items": items,
+        }
+
+    def run_all_sync(self, run_id: str):
+        """Execute run synchronously (for testing).
+        If run is already running (background thread), wait for it.
+        """
+        run = self._runs.get(run_id)
+        if run is None:
+            return
+        if run.status == "COMPLETED":
             return
         transport = self._cb_transport or FakeCallbackTransport()
         cb = PlanItemStatusCallbackClient(transport=transport)

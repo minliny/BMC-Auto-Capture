@@ -12,6 +12,11 @@ __pycache__/
 output/
 screenshots/
 *.log
+.runtime/
+runtime/output/
+dev_verify_out/
+timing_out/
+self_check_output/
 
 # IDE
 .vscode/

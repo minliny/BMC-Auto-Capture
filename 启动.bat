@@ -191,25 +191,34 @@ goto :menu
 :: ============================================================
 :run_server
 if "%HOST%"=="" set "HOST=0.0.0.0"
-if "%PORT%"=="" set "PORT=8080"
+if "%PORT%"=="" set "PORT=18000"
 if "%LOG_LEVEL%"=="" set "LOG_LEVEL=info"
 
 cls
 echo( ============================================================
-echo(   BMC Auto-Capture — API Server
+echo(   BMC Auto-Capture Executor API
 echo( ============================================================
-echo.
-echo(   引擎 : %ENGINE_DISPLAY%
+echo(
+echo(   程序 : %ENGINE_DISPLAY%
 echo(   Host : %HOST%
 echo(   Port : %PORT%
-echo.
-echo(   --- 健康检查: http://%HOST%:%PORT%/health ---
-echo(   --- 网络检测: http://%HOST%:%PORT%/network/ping ---
-echo(   --- 版本信息: http://%HOST%:%PORT%/version ---
-echo.
+echo(
+echo(   --- Executor API: http://%HOST%:%PORT%/executor/v1/status ---
+echo(   --- 配置 Excel:  POST /executor/v1/config/excel:path ---
+echo(   --- 执行计划:    POST /executor/v1/plans/{planId}:run ---
+echo(   --- 查询进度:    GET  /executor/v1/plans/{planId}/runs/{runId} ---
+echo(
+echo(   调试回调接收器: 加 --enable-debug-callback-receiver 参数
+echo(   --- 接收回调:    POST /debug/plan-item-statuses ---
+echo(   --- 查询回调:    GET  /debug/plan-item-statuses ---
+echo(   --- 清空回调:    DELETE /debug/plan-item-statuses ---
+echo(
+echo(   Legacy 兼容: /health /version /network/ping /routes
+echo(   旧 Network Boot: 使用 --legacy-network-boot 参数
+echo(
 echo(   按 Ctrl+C 停止服务
 echo( ============================================================
-echo.
+echo(
 
 set "PYTHONPATH=%ROOT%\app;%ROOT%;%PYTHONPATH%"
 call :run_engine --app-dir "%APP_DIR%" --server --host %HOST% --port %PORT% --log-level %LOG_LEVEL%
@@ -235,7 +244,7 @@ if "%BMC_WORKERS%"=="" (set "BMC_DISP=default") else (set "BMC_DISP=%BMC_WORKERS
 if "%SSH_WORKERS%"=="" (set "SSH_DISP=default") else (set "SSH_DISP=%SSH_WORKERS%")
 echo(    并发  : BMC=!BMC_DISP! SSH=!SSH_DISP!
 echo.
-echo(    [0] 启动 API Server
+echo(    [0] 启动 Executor API
 echo(    [1] 顺序执行(逐台设备,最稳定)
 echo(    [2] 并发执行(多设备同时,高效)
 echo(    [3] 网络连通性预检
@@ -245,7 +254,7 @@ echo(    [5] 设定 Excel 配置文件路径
 echo(    [6] 调整 BMC/SSH 并发量
 echo(    [7] 退出
 echo.
-echo(    Server 模式: 启动.bat --server [--host 0.0.0.0] [--port 8080]
+echo(    Executor API: 启动.bat --server [--host 0.0.0.0] [--port 18000] [--enable-debug-callback-receiver]
 echo.
 
 set "CHOICE="
@@ -266,15 +275,15 @@ goto :menu
 :run_server_menu
 cls
 echo( ============================================================
-echo(    API Server 配置
+echo(    Executor API 配置
 echo( ============================================================
 echo.
 echo(    默认值直接回车即可
 echo.
 set /p HOST="    监听地址 [0.0.0.0]: "
 if "!HOST!"=="" set "HOST=0.0.0.0"
-set /p PORT="    监听端口 [8080]: "
-if "!PORT!"=="" set "PORT=8080"
+set /p PORT="    监听端口 [18000]: "
+if "!PORT!"=="" set "PORT=18000"
 set /p LOG_LEVEL="    日志级别 (debug/info/warning/error) [info]: "
 if "!LOG_LEVEL!"=="" set "LOG_LEVEL=info"
 echo.

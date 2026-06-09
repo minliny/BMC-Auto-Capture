@@ -336,6 +336,8 @@ def load_tasks(
         timeout_seconds = tdef.get("timeout_seconds", 60)
         retry_count = tdef.get("retry_count", 0)
         rules_json = json.dumps(tdef.get("rules", [])) if tdef.get("rules") else ""
+        per_group_commands = tdef.get("per_group_commands") or {}
+        per_group_commands_json = json.dumps(per_group_commands, ensure_ascii=False) if per_group_commands else ""
 
         # Excel columns depend on format:
         # Simplified (7 cols):  seq | name | type | group | outdir | imgname | enabled
@@ -423,6 +425,9 @@ def load_tasks(
         # Attach tasks.json definition for runtime lookup (checkpoints, ready conditions, etc.)
         if tdef:
             object.__setattr__(task, '_task_def', tdef)
+        # Attach per_group_commands
+        if per_group_commands_json:
+            object.__setattr__(task, '_per_group_commands', per_group_commands)
         tasks.append(task)
 
     return tasks

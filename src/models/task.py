@@ -64,6 +64,7 @@ class Task:
     full_screenshot: bool = False
     screenshot_mode: str = "auto"
     sequence_str: str = ""
+    per_group_commands: str = ""  # JSON string: {"GROUP": "command", ...}
 
     def parsed_rules(self) -> tuple[Rule, ...]:
         """Parse rules_json into Rule objects.

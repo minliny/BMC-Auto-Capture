@@ -219,6 +219,7 @@ jobs:
           copy scripts\submit_direct_job.py bmc-auto-capture\scripts\ >nul
           copy scripts\build_plan_manifest.py bmc-auto-capture\scripts\ >nul
           copy scripts\mock_callback_server.py bmc-auto-capture\scripts\ >nul
+          copy scripts\smoke_executor_runtime.ps1 bmc-auto-capture\scripts\ >nul
 
           REM Clean up __pycache__
           for /d /r bmc-auto-capture %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
@@ -259,7 +260,7 @@ jobs:
           cd bmc-auto-capture
           setlocal enabledelayedexpansion
           set FAILED=0
-          for %%f in (preflight-only no-preflight server mode max-bmc-workers max-ssh-workers bmc-page-timeout) do (
+          for %%f in (preflight-only no-preflight server mode max-bmc-workers max-ssh-workers bmc-page-timeout enable-debug-callback-receiver legacy-network-boot) do (
             runtime\bmc-engine.exe --help | findstr "%%f" >nul
             if !ERRORLEVEL! NEQ 0 (
               echo [FAIL] Flag "%%f" not found in exe --help
@@ -326,18 +327,22 @@ jobs:
             echo [FAIL] src\plan_item_status_callback_client missing
             set ERR=1
           )
+          if not exist bmc-auto-capture\scripts\smoke_executor_runtime.ps1 (
+            echo [FAIL] smoke_executor_runtime.ps1 missing
+            set ERR=1
+          )
           if %ERR% EQU 1 exit /b 1
           echo [OK] All API server files present
 
-      - name: Smoke test — API server starts and has routes
+      - name: Smoke test — API server starts and has routes (via exe)
         shell: cmd
         run: |
           cd bmc-auto-capture
-          set EXECUTOR_PORT=18765
-          REM Start API server in background
-          start "executor-api" /B python scripts\start_executor_api_server.py --host 127.0.0.1 --port %EXECUTOR_PORT% --runner fake --callback-transport fake --executor-id ci-smoke
+          set EXECUTOR_PORT=18000
+          REM Start API server in background using exe directly (no Python)
+          start "executor-api" /B runtime\bmc-engine.exe --server --host 127.0.0.1 --port %EXECUTOR_PORT% --runner fake --callback-transport fake --executor-id ci-smoke --enable-debug-callback-receiver
           REM Wait for startup
-          timeout /t 5 /nobreak >nul
+          timeout /t 8 /nobreak >nul
           REM Check /executor/v1/status
           curl -s http://127.0.0.1:%EXECUTOR_PORT%/executor/v1/status | findstr "executor_id"
           if %ERRORLEVEL% NEQ 0 (
@@ -364,9 +369,73 @@ jobs:
             taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
             exit /b 1
           )
-          REM Stop API server
+
+      - name: Smoke test — debug callback receiver routes
+        shell: cmd
+        run: |
+          cd bmc-auto-capture
+          set EXECUTOR_PORT=18000
+          REM Verify debug callback receiver routes
+          curl -s http://127.0.0.1:%EXECUTOR_PORT%/openapi.json | findstr "debug/plan-item-statuses"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] debug/plan-item-statuses not in openapi routes
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
+          REM POST a test callback
+          curl -s -X POST http://127.0.0.1:%EXECUTOR_PORT%/debug/plan-item-statuses -H "Content-Type: application/json" -d "{\"planId\":1,\"deviceName\":\"D1\",\"taskName\":\"T1\",\"status\":\"SUCCESS\",\"updater\":\"ci-test\",\"errorMessage\":null}" | findstr "ok"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] Debug POST failed
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
+          REM GET stored callbacks
+          curl -s http://127.0.0.1:%EXECUTOR_PORT%/debug/plan-item-statuses | findstr "planId"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] Debug GET failed to show received callbacks
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
+          REM DELETE and verify cleared
+          curl -s -X DELETE http://127.0.0.1:%EXECUTOR_PORT%/debug/plan-item-statuses | findstr "cleared"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] Debug DELETE failed
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
+          REM Verify cleared
+          curl -s http://127.0.0.1:%EXECUTOR_PORT%/debug/plan-item-statuses | findstr "\"total\": 0"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] Debug store not empty after DELETE
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
+          echo [OK] Debug callback receiver smoke test passed
+
+      - name: Smoke test — legacy Network Boot is NOT the default
+        shell: cmd
+        run: |
+          cd bmc-auto-capture
+          set EXECUTOR_PORT=18001
+          REM Start server WITHOUT --legacy-network-boot — must start Executor API
+          start "executor-api" /B runtime\bmc-engine.exe --server --host 127.0.0.1 --port %EXECUTOR_PORT% --runner fake --callback-transport fake
+          timeout /t 5 /nobreak >nul
+          REM Check Executor API route, NOT just legacy /network/ping
+          curl -s http://127.0.0.1:%EXECUTOR_PORT%/executor/v1/status | findstr "executor_id"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] Default server mode does NOT start Executor API
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
+          REM Verify it has plan run routes (not just legacy ping)
+          curl -s http://127.0.0.1:%EXECUTOR_PORT%/openapi.json | findstr "executor/v1/config/excel:path"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] Plan run routes not present in default server mode
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
           taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-          echo [OK] API server smoke test passed
+          echo [OK] Default server mode correctly starts Executor API (not legacy Network Boot)
 
       - name: Package full release
         run: |

@@ -237,6 +237,9 @@
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "display interface transceiver",
+      "per_group_commands": {
+        "A3": "for i in $(seq 0 15); do echo \"==============> $i\"; hccn_tool -i $i -optical-g;done"
+      },
       "timeout_seconds": 900,
       "retry_count": 0,
       "rules": [],
