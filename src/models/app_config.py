@@ -26,6 +26,12 @@ class AppConfig:
     mem_emergency_pct: float = 92.0
     resource_check_interval: float = 5.0
 
+    # --- Dynamic scaling coefficients ---
+    resource_scale_emergency: float = 0.3
+    resource_scale_down: float = 0.6
+    resource_scale_up: float = 1.3
+    resource_scale_normal: float = 1.0
+
     # --- Browser lifecycle ---
     browser_max_tasks_before_recycle: int = 50
     browser_max_age_seconds: int = 1800
@@ -36,6 +42,7 @@ class AppConfig:
     ssh_command_timeout: float = 60.0
     ssh_idle_timeout: float = 5.0
     bmc_page_timeout: float = 60.0
+    popup_dismiss_selector_timeout: int = 1000
 
     # --- Preflight ---
     preflight_enabled: bool = True
@@ -103,6 +110,10 @@ class AppConfig:
             cpu_emergency_pct=float(data.get("cpu_emergency_pct", 95.0)),
             mem_emergency_pct=float(data.get("mem_emergency_pct", 92.0)),
             resource_check_interval=float(data.get("resource_check_interval", 5.0)),
+            resource_scale_emergency=float(data.get("resource_scale_emergency", 0.3)),
+            resource_scale_down=float(data.get("resource_scale_down", 0.6)),
+            resource_scale_up=float(data.get("resource_scale_up", 1.3)),
+            resource_scale_normal=float(data.get("resource_scale_normal", 1.0)),
             browser_max_tasks_before_recycle=int(data.get("browser_max_tasks_before_recycle", 50)),
             browser_max_age_seconds=int(data.get("browser_max_age_seconds", 1800)),
             browser_headless=bool(data.get("browser_headless", True)),
@@ -110,6 +121,7 @@ class AppConfig:
             ssh_command_timeout=float(data.get("ssh_command_timeout", 60.0)),
             ssh_idle_timeout=float(data.get("ssh_idle_timeout", 5.0)),
             bmc_page_timeout=float(data.get("bmc_page_timeout", 60.0)),
+            popup_dismiss_selector_timeout=int(data.get("popup_dismiss_selector_timeout", 1000)),
             preflight_enabled=bool(data.get("preflight_enabled", True)),
             route_guard_enabled=bool(data.get("route_guard_enabled", True)),
             route_guard_check_interval=float(data.get("route_guard_check_interval", 30.0)),

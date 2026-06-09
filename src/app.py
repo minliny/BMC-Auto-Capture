@@ -8,6 +8,7 @@ No interface reimplements execution logic.
 from __future__ import annotations
 import asyncio
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -179,8 +180,14 @@ class App:
         return self._results
 
     def _ensure_writable_output_dir(self) -> Path:
-        """Try configured output_root, fall back to home/temp if not writable."""
+        """Try configured output_root, fall back to home/temp if not writable.
+
+        Uses atomic file creation (os.open with O_CREAT|O_EXCL) to avoid
+        TOCTOU race conditions when multiple processes or external cleanup
+        touch the same directory concurrently.
+        """
         import tempfile
+        import uuid
 
         candidates = [
             Path(self.config.output_root),
@@ -191,10 +198,34 @@ class App:
         for d in candidates:
             try:
                 d.mkdir(parents=True, exist_ok=True)
-                # Test write
-                test_file = d / ".write_test"
-                test_file.touch()
-                test_file.unlink()
+                # Atomic write test: unique file per process
+                probe_name = f".write_test_{os.getpid()}_{uuid.uuid4().hex[:8]}.tmp"
+                probe_path = d / probe_name
+                try:
+                    fd = os.open(
+                        str(probe_path),
+                        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                        0o644,
+                    )
+                    os.close(fd)
+                except FileExistsError:
+                    # Extremely unlikely (UUID collision), retry once
+                    probe_name = f".write_test_{os.getpid()}_{uuid.uuid4().hex[:8]}.tmp"
+                    probe_path = d / probe_name
+                    fd = os.open(
+                        str(probe_path),
+                        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                        0o644,
+                    )
+                    os.close(fd)
+                finally:
+                    # Clean up our own test file only
+                    try:
+                        if probe_path.exists():
+                            probe_path.unlink()
+                    except OSError:
+                        pass
+
                 if d != candidates[0]:
                     logger.warning("Output dir '%s' not writable, using '%s'", candidates[0], d)
                     print(f"WARNING: Cannot write to {candidates[0]}, output: {d}")
@@ -229,7 +260,8 @@ class App:
     def _execute_sequential(self, plans: list[TaskPlan]):
         ssh_exec = SSHExecutor(connect_timeout=self.config.tcp_connect_timeout)
         bm = BrowserManager(headless=self.config.browser_headless)
-        bmc_exec = BMCExecutor(bm, connect_timeout=self.config.tcp_connect_timeout)
+        bmc_exec = BMCExecutor(bm, connect_timeout=self.config.tcp_connect_timeout,
+                                 popup_timeout=self.config.popup_dismiss_selector_timeout)
 
         total = len(plans)
         logger.info("Sequential execution of %d plans", total)

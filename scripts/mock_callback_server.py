@@ -16,6 +16,7 @@ Endpoints:
 
 from __future__ import annotations
 import argparse
+import copy
 import json
 import sys
 import threading
@@ -33,17 +34,18 @@ class CallbackStore:
         self._lock = threading.Lock()
 
     def add(self, external_task_id: str, payload: dict):
+        """Add a callback. Uses deepcopy to prevent external mutation."""
         record = {
             "received_at": time.time(),
             "external_task_id": external_task_id,
-            "payload": payload,
+            "payload": copy.deepcopy(payload),
         }
         with self._lock:
             self._callbacks.append(record)
 
     def list_all(self) -> list[dict]:
         with self._lock:
-            return list(self._callbacks)
+            return copy.deepcopy(self._callbacks)
 
     def summary(self) -> dict:
         with self._lock:
@@ -55,6 +57,27 @@ class CallbackStore:
                 "total": len(self._callbacks),
                 "by_status": statuses,
             }
+
+    def grouped_by_task(self) -> list[dict]:
+        """Group callbacks by external_task_id with count/received/latest."""
+        with self._lock:
+            groups: dict[str, list[dict]] = {}
+            for cb in self._callbacks:
+                tid = cb["external_task_id"] or "__unknown__"
+                if tid not in groups:
+                    groups[tid] = []
+                groups[tid].append(copy.deepcopy(cb["payload"]))
+
+        result = []
+        for tid in sorted(groups.keys()):
+            items = groups[tid]
+            result.append({
+                "external_task_id": tid if tid != "__unknown__" else "",
+                "count": len(items),
+                "received": items,
+                "latest": copy.deepcopy(items[-1]) if items else None,
+            })
+        return result
 
 
 # Global store shared across requests
@@ -97,7 +120,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
         if path == "callbacks":
             data = {
                 "summary": _store.summary(),
-                "callbacks": _store.list_all(),
+                "callbacks": _store.grouped_by_task(),
             }
             self._respond(200, data)
         elif path == "health":

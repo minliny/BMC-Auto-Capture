@@ -126,11 +126,13 @@ class BMCExecutor(AbstractExecutor):
         connect_timeout: float = 30.0,
         page_timeout: float = 60.0,
         screenshot_policy: str = "final_only",
+        popup_timeout: int = 1000,
     ):
         self._bm = browser_manager
         self._screenshot_policy = screenshot_policy
         self._connect_timeout = connect_timeout
         self._page_timeout = page_timeout
+        self._popup_timeout = popup_timeout
 
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         from .browser_manager import _get_thread_loop
@@ -610,13 +612,20 @@ class BMCExecutor(AbstractExecutor):
         return ""
 
     async def _dismiss_popups(self, page) -> None:
-        """Try to dismiss common post-login popups (called after initial login)."""
+        """Try to dismiss common post-login popups (called after initial login).
+
+        Uses a short independent timeout per selector (self._popup_timeout ms)
+        so that waiting for non-existent popups does not consume the global
+        bmc_page_timeout.  Failures are best-effort and do not cascade.
+        """
         for _ in range(5):  # max 5 popups
             dismissed = False
             for sel in POPUP_DISMISS_SELECTORS:
                 try:
-                    el = await page.query_selector(sel)
-                    if el and await el.is_visible():
+                    el = await page.wait_for_selector(
+                        sel, timeout=self._popup_timeout, state="visible",
+                    )
+                    if el:
                         logger.info("正在关闭弹窗:  %s", sel)
                         await el.click()
                         await asyncio.sleep(1)
@@ -629,14 +638,40 @@ class BMCExecutor(AbstractExecutor):
 
     async def _dismiss_all_blockers(self, page) -> None:
         """Aggressively dismiss ALL known blockers (popups, password risks, etc.).
+
         Retries multiple times because some popups cascade (dismiss one → another appears).
+
+        Account conflict / session expired popups are NOT dismissed — they cause
+        an immediate FAIL because continuing with a preempted session is meaningless.
         """
+        # Before attempting dismiss, check for account conflict / session expired
+        conflict_texts = [
+            "已选择在其他地方登录", "已在其他地方登录", "账户已在其他地方登录",
+            "session conflict", "会话冲突", "该用户已登录", "用户已在线",
+            "session expired", "会话已过期", "登录已过期", "login expired",
+            "token invalid", "unauthorized", "未授权",
+        ]
+        for kw in conflict_texts:
+            try:
+                el = await page.query_selector(f"text={kw}")
+                if el and await el.is_visible():
+                    text = await el.inner_text()
+                    raise Exception(
+                        f"BMC_SESSION_PREEMPTED: 账号冲突或会话过期弹窗，无法继续。detail='{text}'"
+                    )
+            except Exception as e:
+                if "BMC_SESSION_PREEMPTED" in str(e):
+                    raise
+                continue
+
         for round_num in range(5):
             clicked = False
             for sel in POPUP_DISMISS_SELECTORS:
                 try:
-                    el = await page.query_selector(sel)
-                    if el and await el.is_visible():
+                    el = await page.wait_for_selector(
+                        sel, timeout=self._popup_timeout, state="visible",
+                    )
+                    if el:
                         logger.info("正在关闭阻塞弹窗:  %s (round %d)", sel, round_num + 1)
                         await el.click()
                         await asyncio.sleep(2)

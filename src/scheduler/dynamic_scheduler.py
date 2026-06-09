@@ -280,13 +280,14 @@ class DynamicScheduler:
         self._ssh_pool.resize(min(target_ssh, self._config.max_ssh_workers))
 
     def _compute_scale(self, cpu: float, mem: float) -> float:
-        if mem > self._config.mem_emergency_pct or cpu > self._config.cpu_emergency_pct:
-            return 0.3
-        if mem > self._config.mem_scale_down_pct or cpu > self._config.cpu_scale_down_pct:
-            return 0.6
-        if mem < self._config.mem_scale_up_pct and cpu < self._config.cpu_scale_up_pct:
-            return 1.3
-        return 1.0
+        cfg = self._config
+        if mem > cfg.mem_emergency_pct or cpu > cfg.cpu_emergency_pct:
+            return cfg.resource_scale_emergency
+        if mem > cfg.mem_scale_down_pct or cpu > cfg.cpu_scale_down_pct:
+            return cfg.resource_scale_down
+        if mem < cfg.mem_scale_up_pct and cpu < cfg.cpu_scale_up_pct:
+            return cfg.resource_scale_up
+        return cfg.resource_scale_normal
 
     def _dispatch(self):
         for pool, ep_type in [(self._bmc_pool, "BMC"), (self._ssh_pool, "INBAND")]:
@@ -430,7 +431,8 @@ class DynamicScheduler:
     def _execute_plan(self, plan: TaskPlan) -> ExecutionResult:
         try:
             if plan.protocol == "BMC" and self._bm:
-                exec_ = BMCExecutor(self._bm, connect_timeout=self._config.tcp_connect_timeout)
+                exec_ = BMCExecutor(self._bm, connect_timeout=self._config.tcp_connect_timeout,
+                             popup_timeout=self._config.popup_dismiss_selector_timeout)
             elif plan.protocol == "SSH":
                 exec_ = SSHExecutor(connect_timeout=self._config.tcp_connect_timeout)
             else:
@@ -527,19 +529,25 @@ class DynamicScheduler:
               result.device_name, result.task_name, _reason)
 
     def _on_bmc_group_done(self, results: list[ExecutionResult], endpoint_key: str):
-        """Called when a BMC session group completes. Release registry + re-queue if needed."""
+        """Called when a BMC session group completes. Release registry + log group summary.
+
+        Per-plan output is already handled by _on_bmc_plan_in_group.
+        This callback only releases the global registry hold and logs a group-level summary.
+        """
         # Release global ResourceRegistry hold
         try:
             self._registry.release(endpoint_key)
         except Exception:
             pass
 
-        # Re-add endpoint to ready queue ONLY if it was re-created during session
-        # (Session runner pops ALL plans from queue, so no more plans for this endpoint)
-        # No re-queue needed — the endpoint queue is empty by design for BMC groups
-        if status_icon == "FAIL" and result.execution_failure_reason:
-            reason = f"  [{result.execution_failure_reason[:60]}]"
-        cdone(len(self._results), self._dispatched_count, status_icon, result.device_name, result.task_name, reason)
+        # Log group-level summary (per-plan output already handled by _on_bmc_plan_in_group)
+        if results:
+            passed = sum(1 for r in results if r.execution_status == "EXEC_SUCCESS")
+            failed = len(results) - passed
+            logger.info(
+                "BMC group done: endpoint=%s plans=%d passed=%d failed=%d",
+                endpoint_key, len(results), passed, failed,
+            )
 
     def _drain(self) -> bool:
         """Wait for running tasks to finish."""

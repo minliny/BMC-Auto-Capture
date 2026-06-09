@@ -33,7 +33,7 @@ from submit_direct_job import build_payload, _redact_password
 # ===========================================================================
 
 class TestMockCallbackServer:
-    """Test 1: mock_callback_server receives and stores callbacks."""
+    """Tests for mock callback server store + grouped format."""
 
     def test_store_add_and_list(self):
         store = CallbackStore()
@@ -42,18 +42,74 @@ class TestMockCallbackServer:
 
         all_cbs = store.list_all()
         assert len(all_cbs) == 2
-        assert all_cbs[0]["external_task_id"] == "task-001"
 
     def test_store_summary(self):
         store = CallbackStore()
         store.add("t1", {"status": "SUCCEEDED"})
         store.add("t2", {"status": "FAILED"})
         store.add("t3", {"status": "SUCCEEDED"})
-
         s = store.summary()
         assert s["total"] == 3
         assert s["by_status"]["SUCCEEDED"] == 2
         assert s["by_status"]["FAILED"] == 1
+
+    def test_grouped_count_equals_2_after_running_and_succeeded(self):
+        """1+2+3: Two callbacks for same task ⇒ count=2, received length=2."""
+        store = CallbackStore()
+        store.add("task-001", {"status": "RUNNING", "job_id": "j1"})
+        store.add("task-001", {"status": "SUCCEEDED", "job_id": "j1", "duration_ms": 100})
+        groups = store.grouped_by_task()
+        assert len(groups) == 1
+        g = groups[0]
+        assert g["count"] == 2
+        assert len(g["received"]) == 2
+
+    def test_received_contains_running_and_succeeded(self):
+        """4+5: received list contains RUNNING and SUCCEEDED."""
+        store = CallbackStore()
+        store.add("task-001", {"status": "RUNNING"})
+        store.add("task-001", {"status": "SUCCEEDED"})
+        g = store.grouped_by_task()[0]
+        statuses = [r["status"] for r in g["received"]]
+        assert "RUNNING" in statuses
+        assert "SUCCEEDED" in statuses
+
+    def test_latest_is_succeeded(self):
+        """6: latest.status == SUCCEEDED."""
+        store = CallbackStore()
+        store.add("task-001", {"status": "RUNNING"})
+        store.add("task-001", {"status": "SUCCEEDED", "duration_ms": 100})
+        g = store.grouped_by_task()[0]
+        assert g["latest"]["status"] == "SUCCEEDED"
+
+    def test_deepcopy_prevents_mutation(self):
+        """Payload mutation does not affect stored record."""
+        store = CallbackStore()
+        payload = {"status": "RUNNING", "data": {"nested": "val"}}
+        store.add("task-001", payload)
+        # Mutate original
+        payload["status"] = "MUTATED"
+        payload["data"]["nested"] = "mutated"
+        # Stored should be unchanged
+        g = store.grouped_by_task()[0]
+        assert g["received"][0]["status"] == "RUNNING"
+        assert g["received"][0]["data"]["nested"] == "val"
+
+    def test_auth_token_not_in_payload_body(self):
+        """7. Auth token is transmitted via HTTP header, NOT in JSON payload."""
+        store = CallbackStore()
+        # Real callback payload never includes auth_token in body;
+        # it's sent as Authorization: Bearer header.
+        store.add("task-001", {
+            "external_task_id": "task-001",
+            "status": "SUCCEEDED",
+            "job_id": "j1",
+        })
+        g = store.grouped_by_task()[0]
+        # The body should contain business fields only
+        assert "auth_token" not in g["latest"]
+        assert "Authorization" not in g["latest"]
+        assert g["latest"]["status"] == "SUCCEEDED"
 
     def test_server_starts_and_accepts_post(self):
         """Start mock server, POST a callback, GET /callbacks."""

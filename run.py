@@ -209,57 +209,9 @@ def main():
         sys.argv = [sys.argv[0]] + clean_args
         return _run_launcher_mode(clean_args)
 
-    parser = argparse.ArgumentParser(
-        description="BMC Auto-Capture v0.2.4-RC1 — BMC/SSH 自动化测试证据采集平台",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python run.py --app-dir app --excel app/examples/_test_one_per_group.xlsx
-  python run.py --app-dir app --excel my_tasks.xlsx --output ./results --no-preflight
-  bmc-engine.exe --app-dir app --excel tasks.xlsx --mode sequential
-        """,
-    )
-    parser.add_argument("--excel", "-e", default=None,
-                        help="Path to Excel config (.xlsx)")
-    parser.add_argument("--config", "-c", default=None,
-                        help="Path to YAML config (default: config/default_config.yaml)")
-    parser.add_argument("--output", "-o", default=None,
-                        help="Output root directory (overrides YAML output_root)")
-    parser.add_argument("--app-dir", default=None,
-                        help="App directory containing src/, config/, tasks.json (default: ./app)")
-    parser.add_argument("--mode", "-m", choices=["sequential", "full"], default="sequential",
-                        help="Execution mode: sequential (one-by-one) or full (dynamic scheduler)")
-    parser.add_argument("--max-bmc-workers", type=int, default=None,
-                        help="Max BMC concurrent workers (overrides YAML)")
-    parser.add_argument("--max-ssh-workers", type=int, default=None,
-                        help="Max SSH concurrent workers (overrides YAML)")
-    parser.add_argument("--ssh-command-timeout", type=float, default=None,
-                        help="SSH single-command timeout in seconds (overrides YAML)")
-    parser.add_argument("--ssh-idle-timeout", type=float, default=None,
-                        help="SSH idle read timeout in seconds (overrides YAML)")
-    parser.add_argument("--bmc-page-timeout", type=float, default=None,
-                        help="BMC page load/selector timeout in seconds (overrides YAML)")
-    parser.add_argument("--preflight-only", action="store_true",
-                        help="Connectivity preflight only, no task execution")
-    parser.add_argument("--preflight-target", default="all",
-                        choices=["all", "bmc", "ssh"],
-                        help="Preflight target: all (default), bmc, ssh")
-    parser.add_argument("--preflight-auth", default=None,
-                        choices=["all", "bmc", "ssh", None],
-                        help="Preflight credential check: all, bmc, ssh")
-    parser.add_argument("--no-preflight", action="store_true",
-                        help="Skip connectivity preflight entirely")
-    parser.add_argument("--server", action="store_true",
-                        help="Start as API server (minimal boot, no task execution)")
-    parser.add_argument("--host", default="127.0.0.1",
-                        help="API server bind host (default: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=8080,
-                        help="API server bind port (default: 8080)")
-    parser.add_argument("--log-level", default="info",
-                        choices=["debug", "info", "warning", "error"],
-                        help="API server log level (default: info)")
-    parser.add_argument("--verbose", "-v", action="store_true",
-                        help="Enable debug-level logging")
+    from src.cli.args import build_parser
+    parser = build_parser()
+    # --excel is optional in shared parser; run.py validates below
     args = parser.parse_args()
 
     # Resolve app directory

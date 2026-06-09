@@ -105,6 +105,47 @@ if "%ENGINE_EXE%"=="" (
 )
 
 :: ============================================================
+::  Exe 来源验证 & 构建信息
+:: ============================================================
+if exist "%ROOT%\runtime\build_info.json" (
+    echo( [构建信息]
+    for /f "tokens=*" %%a in ('type "%ROOT%\runtime\build_info.json"') do set "JSON_LINE=%%a"
+    :: 提取 version, git_commit, build_time
+    for /f "tokens=2 delims=:" %%v in ('type "%ROOT%\runtime\build_info.json" ^| findstr "version"') do set "EXE_VER=%%v"
+    for /f "tokens=2 delims=:" %%c in ('type "%ROOT%\runtime\build_info.json" ^| findstr "git_commit"') do set "EXE_COMMIT=%%c"
+    for /f "tokens=2 delims=:" %%t in ('type "%ROOT%\runtime\build_info.json" ^| findstr "build_time"') do set "EXE_TIME=%%t"
+    if defined EXE_VER (
+        set "EXE_VER=%EXE_VER:"=%
+        echo(   引擎版本: %EXE_VER%
+    )
+    if defined EXE_COMMIT (
+        set "EXE_COMMIT=%EXE_COMMIT:"=%
+        echo(   构建提交: %EXE_COMMIT%
+    )
+    if defined EXE_TIME (
+        set "EXE_TIME=%EXE_TIME:"=%
+        echo(   构建时间: %EXE_TIME%
+    )
+)
+
+:: 验证 exe 是否包含 --preflight-auth (仅在编译 exe 模式)
+if /i "%ENGINE_EXE:~-4%"==".exe" if "%USE_PHTHON%"=="0" (
+    echo( [校验] 检测编译引擎参数 ...
+    "%ENGINE_EXE%" --help 2>&1 | findstr "preflight-auth" >nul
+    if !ERRORLEVEL! NEQ 0 (
+        echo( ╔══════════════════════════════════════════════════════════╗
+        echo( ║ [警告] 当前 bmc-engine.exe 缺少 --preflight-auth 参数。 ║
+        echo( ║   请重新打包或替换 runtime\bmc-engine.exe。              ║
+        echo( ║   如果使用旧版 exe，账户密码检测功能不可用。             ║
+        echo( ╚══════════════════════════════════════════════════════════╝
+        echo(
+    ) else (
+        echo( [OK] 引擎参数完整，包含 --preflight-auth
+    )
+    echo(
+)
+
+:: ============================================================
 ::  参数解析
 :: ============================================================
 set "IS_SERVER=0"

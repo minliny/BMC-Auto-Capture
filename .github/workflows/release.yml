@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual build"
+        required: false
+        default: "Manual rebuild"
 
 jobs:
   # ── Windows Build + Package ─────────────────────────────
@@ -21,6 +27,13 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
+
+      - name: Pre-build cleanup (force fresh build)
+        shell: cmd
+        run: |
+          if exist build rmdir /s /q build
+          if exist dist rmdir /s /q dist
+          echo [OK] Cleaned build/ and dist/
 
       - name: Install Playwright Chromium
         run: python -m playwright install chromium
@@ -198,20 +211,73 @@ jobs:
 
           echo [OK] full release assembled: bmc-auto-capture/
 
+      # ── Generate build metadata ───────────────────────────
+      - name: Generate build_info.json
+        shell: cmd
+        run: |
+          python scripts\generate_build_info.py bmc-auto-capture\runtime ^
+            --workflow "Build & Release" ^
+            --run-id "%GITHUB_RUN_ID%" ^
+            --entrypoint run.py
+          if %ERRORLEVEL% NEQ 0 exit /b 1
+          echo [OK] build_info.json generated
+
       # ── Smoke tests ────────────────────────────────────────
-      - name: Smoke test — engine help
+      - name: Smoke test — help has --preflight-auth
         shell: cmd
         run: |
           cd bmc-auto-capture
-          runtime\bmc-engine.exe --help
-          if %ERRORLEVEL% NEQ 0 exit /b 1
+          runtime\bmc-engine.exe --help | findstr "preflight-auth"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] --preflight-auth not found in exe --help
+            exit /b 1
+          )
+          echo [OK] --preflight-auth IS present in exe --help
 
-      - name: Smoke test — preflight with bundled Excel
+      - name: Smoke test — help has all required flags
+        shell: cmd
+        run: |
+          cd bmc-auto-capture
+          setlocal enabledelayedexpansion
+          set FAILED=0
+          for %%f in (preflight-only no-preflight server mode max-bmc-workers max-ssh-workers bmc-page-timeout) do (
+            runtime\bmc-engine.exe --help | findstr "%%f" >nul
+            if !ERRORLEVEL! NEQ 0 (
+              echo [FAIL] Flag "%%f" not found in exe --help
+              set FAILED=1
+            )
+          )
+          if !FAILED! EQU 1 exit /b 1
+          echo [OK] All required flags present in exe --help
+
+      - name: Smoke test — preflight-auth invalid choice
+        shell: cmd
+        run: |
+          cd bmc-auto-capture
+          runtime\bmc-engine.exe --excel app\examples\task_template.xlsx --preflight-auth invalid >nul 2>&1
+          if %ERRORLEVEL% EQU 0 (
+            echo [FAIL] --preflight-auth invalid should return non-zero
+            exit /b 1
+          )
+          echo [OK] --preflight-auth invalid correctly returns non-zero
+
+      - name: Smoke test — preflight with bundled Excel (no real devices)
         shell: cmd
         run: |
           cd bmc-auto-capture
           runtime\bmc-engine.exe --app-dir app --excel app\examples\task_template.xlsx --preflight-only
           if %ERRORLEVEL% NEQ 0 exit /b 1
+          echo [OK] Preflight-only smoke test passed
+
+      - name: Verify build_info.json
+        shell: cmd
+        run: |
+          if not exist bmc-auto-capture\runtime\build_info.json (
+            echo [FAIL] build_info.json not found
+            exit /b 1
+          )
+          type bmc-auto-capture\runtime\build_info.json
+          echo [OK] build_info.json present
 
       - name: Package full release
         run: |

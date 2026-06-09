@@ -83,7 +83,17 @@ def main():
     )
     service.start_background_worker()
 
-    app = create_app(service)
+    # Run dispatch service (plan + run API)
+    from src.run_dispatch_service import RunDispatchService
+    run_service = RunDispatchService(
+        executor_id=args.executor_id,
+        runner_mode="real" if use_real else "fake",
+        use_http_callback=use_http,
+        callback_timeout_seconds=args.callback_timeout,
+        output_root=args.output,
+    )
+
+    app = create_app(service, run_service=run_service)
 
     transport_label = "HTTP (real)" if use_http else "Fake (test)"
     runner_label = "RealRunnerAdapter (BMC/SSH)" if use_real else "FakeRunner (dry-run)"
@@ -95,9 +105,15 @@ def main():
     print(f"  Output      : {args.output}")
     print(f"  Docs        : http://{args.host}:{args.port}/docs")
     print(f"  Endpoints:")
-    print(f"    POST /executor/v1/jobs          — receive dispatched job")
-    print(f"    GET  /executor/v1/jobs/{{job_id}} — query job status")
-    print(f"    GET  /executor/v1/status         — executor health")
+    print(f"    POST /executor/v1/jobs              — receive dispatched job")
+    print(f"    GET  /executor/v1/jobs/{{job_id}}     — query job status")
+    print(f"    GET  /executor/v1/status             — executor health")
+    print(f"    POST /executor/v1/plans:import       — import plan from Excel+JSON")
+    print(f"    GET  /executor/v1/plans/{{id}}         — query plan")
+    print(f"    GET  /executor/v1/plans/{{id}}/tasks   — list plan tasks")
+    print(f"    POST /executor/v1/runs               — dispatch run")
+    print(f"    GET  /executor/v1/runs/{{id}}          — query run")
+    print(f"    GET  /executor/v1/runs/{{id}}/tasks/{{tid}} — query task status")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 

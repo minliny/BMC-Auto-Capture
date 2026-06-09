@@ -1,4 +1,4 @@
-# BMC Auto-Capture v0.2.1 — Default Configuration
+# BMC Auto-Capture v0.2.4-RC5 — Default Configuration
 # All values can be overridden per deployment.
 
 # --- Worker pool sizing ---
@@ -16,6 +16,12 @@ cpu_emergency_pct: 95.0
 mem_emergency_pct: 92.0
 resource_check_interval: 5.0
 
+# --- Dynamic scaling coefficients ---
+resource_scale_emergency: 0.3
+resource_scale_down: 0.6
+resource_scale_up: 1.3
+resource_scale_normal: 1.0
+
 # --- Browser lifecycle ---
 browser_max_tasks_before_recycle: 50
 browser_max_age_seconds: 1800
@@ -28,6 +34,7 @@ tcp_connect_timeout: 5.0
 ssh_command_timeout: 60.0
 ssh_idle_timeout: 5.0
 bmc_page_timeout: 60.0
+popup_dismiss_selector_timeout: 1000
 
 # --- Preflight ---
 preflight_enabled: true
