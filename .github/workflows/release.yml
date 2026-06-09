@@ -110,6 +110,16 @@ jobs:
           xcopy /E /I /Y dist\bmc-engine\playwright_browsers runtime\playwright_browsers >nul
           echo [OK] runtime layer assembled: runtime/
 
+      - name: Generate build_info.json for runtime
+        shell: cmd
+        run: |
+          python scripts\generate_build_info.py runtime ^
+            --workflow "${{ github.workflow }}" ^
+            --run-id "${{ github.run_id }}" ^
+            --entrypoint run.py
+          if %ERRORLEVEL% NEQ 0 exit /b 1
+          echo [OK] build_info.json generated for runtime
+
       - name: Package runtime (dependency) layer
         run: |
           7z a bmc-runtime-${{ github.ref_name }}-win-x64.7z runtime
