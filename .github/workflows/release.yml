@@ -211,6 +211,15 @@ jobs:
           copy run.py bmc-auto-capture\ >nul
           for %%f in (*.bat) do copy "%%f" bmc-auto-capture\ >nul
 
+          REM Scripts (CLI + API server)
+          mkdir bmc-auto-capture\scripts
+          copy scripts\start_executor_api_server.py bmc-auto-capture\scripts\ >nul
+          copy scripts\submit_plan_run.py bmc-auto-capture\scripts\ >nul
+          copy scripts\mock_plan_status_server.py bmc-auto-capture\scripts\ >nul
+          copy scripts\submit_direct_job.py bmc-auto-capture\scripts\ >nul
+          copy scripts\build_plan_manifest.py bmc-auto-capture\scripts\ >nul
+          copy scripts\mock_callback_server.py bmc-auto-capture\scripts\ >nul
+
           REM Clean up __pycache__
           for /d /r bmc-auto-capture %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
 
@@ -292,6 +301,72 @@ jobs:
           )
           type bmc-auto-capture\runtime\build_info.json
           echo [OK] build_info.json present
+
+      - name: Smoke test — API server scripts present
+        shell: cmd
+        run: |
+          set ERR=0
+          if not exist bmc-auto-capture\scripts\start_executor_api_server.py (
+            echo [FAIL] start_executor_api_server.py missing
+            set ERR=1
+          )
+          if not exist bmc-auto-capture\scripts\submit_plan_run.py (
+            echo [FAIL] submit_plan_run.py missing
+            set ERR=1
+          )
+          if not exist bmc-auto-capture\app\src\executor_api_server (
+            echo [FAIL] src\executor_api_server missing
+            set ERR=1
+          )
+          if not exist bmc-auto-capture\app\src\plan_run_service (
+            echo [FAIL] src\plan_run_service missing
+            set ERR=1
+          )
+          if not exist bmc-auto-capture\app\src\plan_item_status_callback_client (
+            echo [FAIL] src\plan_item_status_callback_client missing
+            set ERR=1
+          )
+          if %ERR% EQU 1 exit /b 1
+          echo [OK] All API server files present
+
+      - name: Smoke test — API server starts and has routes
+        shell: cmd
+        run: |
+          cd bmc-auto-capture
+          set EXECUTOR_PORT=18765
+          REM Start API server in background
+          start "executor-api" /B python scripts\start_executor_api_server.py --host 127.0.0.1 --port %EXECUTOR_PORT% --runner fake --callback-transport fake --executor-id ci-smoke
+          REM Wait for startup
+          timeout /t 5 /nobreak >nul
+          REM Check /executor/v1/status
+          curl -s http://127.0.0.1:%EXECUTOR_PORT%/executor/v1/status | findstr "executor_id"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] /executor/v1/status not reachable
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
+          REM Check openapi routes
+          curl -s http://127.0.0.1:%EXECUTOR_PORT%/openapi.json | findstr "executor/v1/status"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] executor/v1/status not in openapi routes
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
+          curl -s http://127.0.0.1:%EXECUTOR_PORT%/openapi.json | findstr "executor/v1/config/excel:path"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] config/excel:path not in openapi routes
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
+          curl -s http://127.0.0.1:%EXECUTOR_PORT%/openapi.json | findstr "executor/v1/plans"
+          if %ERRORLEVEL% NEQ 0 (
+            echo [FAIL] executor/v1/plans not in openapi routes
+            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+            exit /b 1
+          )
+          REM Stop API server
+          taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
+          echo [OK] API server smoke test passed
 
       - name: Package full release
         run: |
