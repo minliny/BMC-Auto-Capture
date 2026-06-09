@@ -194,6 +194,7 @@ if "%BMC_WORKERS%"=="" (set "BMC_DISP=default") else (set "BMC_DISP=%BMC_WORKERS
 if "%SSH_WORKERS%"=="" (set "SSH_DISP=default") else (set "SSH_DISP=%SSH_WORKERS%")
 echo(    并发  : BMC=!BMC_DISP! SSH=!SSH_DISP!
 echo.
+echo(    [0] 启动 API Server
 echo(    [1] 顺序执行(逐台设备,最稳定)
 echo(    [2] 并发执行(多设备同时,高效)
 echo(    [3] 网络连通性预检
@@ -201,7 +202,6 @@ echo(    [R] 直接测试 IP:端口(无需 Excel)
 echo(    [4] Debug 模式顺序执行
 echo(    [5] 设定 Excel 配置文件路径
 echo(    [6] 调整 BMC/SSH 并发量
-echo(    [0] 启动 API Server
 echo(    [7] 退出
 echo.
 echo(    Server 模式: 启动.bat --server [--host 0.0.0.0] [--port 8080]
@@ -223,9 +223,23 @@ if "%CHOICE%"=="7" goto :end
 goto :menu
 
 :run_server_menu
-if "%HOST%"=="" set "HOST=0.0.0.0"
-if "%PORT%"=="" set "PORT=8080"
-if "%LOG_LEVEL%"=="" set "LOG_LEVEL=info"
+cls
+echo( ============================================================
+echo(    API Server 配置
+echo( ============================================================
+echo.
+echo(    默认值直接回车即可
+echo.
+set /p HOST="    监听地址 [0.0.0.0]: "
+if "!HOST!"=="" set "HOST=0.0.0.0"
+set /p PORT="    监听端口 [8080]: "
+if "!PORT!"=="" set "PORT=8080"
+set /p LOG_LEVEL="    日志级别 (debug/info/warning/error) [info]: "
+if "!LOG_LEVEL!"=="" set "LOG_LEVEL=info"
+echo.
+echo(    启动中: %ENGINE_DISPLAY%
+echo(    Host: !HOST!  Port: !PORT!  Log: !LOG_LEVEL!
+echo.
 goto :run_server
 
 :test_ip
