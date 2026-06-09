@@ -25,17 +25,17 @@ Server                          Executor
 
 ```bash
 # 测试模式（fake callback — 回调不发出真实 HTTP）
-python3 scripts/start_executor_api_server.py --host 0.0.0.0 --port 8765
+python3 scripts/start_executor_api_server.py --host 0.0.0.0 --port 18000
 
 # 生产模式（real HTTP callback）
 python3 scripts/start_executor_api_server.py \
-  --host 0.0.0.0 --port 8765 \
+  --host 0.0.0.0 --port 18000 \
   --executor-id exec-win-001 \
   --callback-transport http \
   --callback-timeout 30
 
 # Windows PowerShell
-python scripts/start_executor_api_server.py --host 0.0.0.0 --port 8765 --executor-id exec-win-001 --callback-transport http
+python scripts/start_executor_api_server.py --host 0.0.0.0 --port 18000 --executor-id exec-win-001 --callback-transport http
 ```
 
 ## Server 下发任务到执行机
@@ -43,7 +43,7 @@ python scripts/start_executor_api_server.py --host 0.0.0.0 --port 8765 --executo
 ### POST /executor/v1/jobs
 
 ```bash
-curl -X POST http://<executor-ip>:8765/executor/v1/jobs \
+curl -X POST http://<executor-ip>:18000/executor/v1/jobs \
   -H "Content-Type: application/json" \
   -d '{
     "command_id": "cmd-001",
@@ -186,7 +186,7 @@ curl -X POST http://<executor-ip>:8765/executor/v1/jobs \
 
 ```bash
 python3 scripts/start_executor_api_server.py \
-  --host 0.0.0.0 --port 8765 \
+  --host 0.0.0.0 --port 18000 \
   --executor-id exec-win-001 \
   --callback-transport http \
   --runner real \

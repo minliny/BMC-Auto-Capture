@@ -122,8 +122,8 @@ def main():
                         help="Server callback URL for status updates")
 
     # Executor
-    parser.add_argument("--executor-url", default="http://127.0.0.1:8765",
-                        help="Executor API base URL (default: http://127.0.0.1:8765)")
+    parser.add_argument("--executor-url", default="http://127.0.0.1:18000",
+                        help="Executor API base URL (default: http://127.0.0.1:18000)")
 
     # Device
     parser.add_argument("--device-id", default="", help="Device ID")

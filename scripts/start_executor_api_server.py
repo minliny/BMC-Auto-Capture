@@ -4,11 +4,11 @@ Start the Executor API server for receiving dispatched jobs.
 
 Usage:
   python scripts/start_executor_api_server.py
-  python scripts/start_executor_api_server.py --host 0.0.0.0 --port 8765
+  python scripts/start_executor_api_server.py --host 0.0.0.0 --port 18000
   python scripts/start_executor_api_server.py --executor-id exec-win-001 --callback-transport http
 
 Windows PowerShell:
-  python scripts/start_executor_api_server.py --host 0.0.0.0 --port 8765 --executor-id exec-win-001 --callback-transport http
+  python scripts/start_executor_api_server.py --host 0.0.0.0 --port 18000 --executor-id exec-win-001 --callback-transport http
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ def main():
         help="Listen host (default: 0.0.0.0)",
     )
     parser.add_argument(
-        "--port", type=int, default=8765,
-        help="Listen port (default: 8765)",
+        "--port", type=int, default=18000,
+        help="Listen port (default: 18000)",
     )
     parser.add_argument(
         "--executor-id", default="exec-win-001",

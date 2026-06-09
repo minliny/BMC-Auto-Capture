@@ -35,7 +35,7 @@ Mock Callback Server starting on http://127.0.0.1:18080
 
 ```bash
 python3 scripts/start_executor_api_server.py \
-  --host 127.0.0.1 --port 8765 \
+  --host 127.0.0.1 --port 18000 \
   --runner fake \
   --callback-transport http \
   --executor-id exec-test-001
@@ -72,7 +72,7 @@ python3 scripts/mock_callback_server.py --host 0.0.0.0 --port 18080
 # 终端 2：Executor with real runner
 export BMC_PASS="真实BMC密码"
 python3 scripts/start_executor_api_server.py \
-  --host 0.0.0.0 --port 8765 \
+  --host 0.0.0.0 --port 18000 \
   --runner real \
   --callback-transport http \
   --executor-id exec-win-001 \
@@ -159,7 +159,7 @@ python3 scripts/submit_direct_job.py \
 ### callback server 不通
 ```
 Connection error: [Errno 61] Connection refused
-Is the executor API server running at http://127.0.0.1:8765?
+Is the executor API server running at http://127.0.0.1:18000?
 ```
 → 确认终端 2 已启动。
 

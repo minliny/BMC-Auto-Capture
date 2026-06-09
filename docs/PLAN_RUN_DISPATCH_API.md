@@ -22,7 +22,7 @@ FINAL_OUTPUT_BEGIN
 ## /plans:import
 
 ```bash
-curl -X POST http://127.0.0.1:8765/executor/v1/plans:import \
+curl -X POST http://127.0.0.1:18000/executor/v1/plans:import \
   -H "Content-Type: application/json" \
   -d '{"excel_path":"input.xlsx","validation_json_path":"validation.json"}'
 ```
@@ -35,7 +35,7 @@ curl -X POST http://127.0.0.1:8765/executor/v1/plans:import \
 ## /runs 全量下发
 
 ```bash
-curl -X POST http://127.0.0.1:8765/executor/v1/runs \
+curl -X POST http://127.0.0.1:18000/executor/v1/runs \
   -H "Content-Type: application/json" \
   -d '{"command_id":"cmd-001","run_id":"run-001","plan_id":"cd1afada205368a3","plan_hash":"1f6adeedeb5170d5","scope":"ALL","callback":{"task_status_url":"http://server/api/tasks/{task_id}/status"}}'
 ```
@@ -45,9 +45,9 @@ curl -X POST http://127.0.0.1:8765/executor/v1/runs \
 ## task_id 查询
 
 ```bash
-curl http://127.0.0.1:8765/executor/v1/runs/run-001
-curl http://127.0.0.1:8765/executor/v1/runs/run-001/tasks
-curl http://127.0.0.1:8765/executor/v1/runs/run-001/tasks/{task_id}
+curl http://127.0.0.1:18000/executor/v1/runs/run-001
+curl http://127.0.0.1:18000/executor/v1/runs/run-001/tasks
+curl http://127.0.0.1:18000/executor/v1/runs/run-001/tasks/{task_id}
 ```
 
 ## callback task_status_url 示例

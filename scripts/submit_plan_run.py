@@ -20,7 +20,7 @@ def _post(url: str, data: dict) -> dict | None:
 
 def main():
     p = argparse.ArgumentParser(description="Submit plan run to executor")
-    p.add_argument("--executor-url", default="http://127.0.0.1:8765")
+    p.add_argument("--executor-url", default="http://127.0.0.1:18000")
     p.add_argument("--plan-id", type=int, required=True)
     p.add_argument("--item-status-url", default="http://127.0.0.1:18080/api/plans/items/status")
     p.add_argument("--updater", default="downstream-system")
