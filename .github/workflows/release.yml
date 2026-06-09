@@ -254,12 +254,16 @@ jobs:
         shell: cmd
         run: |
           cd bmc-auto-capture
+          set ERR=0
           runtime\bmc-engine.exe --excel app\examples\task_template.xlsx --preflight-auth invalid >nul 2>&1
           if %ERRORLEVEL% EQU 0 (
             echo [FAIL] --preflight-auth invalid should return non-zero
-            exit /b 1
+            set ERR=1
+          ) else (
+            echo [OK] --preflight-auth invalid correctly returns non-zero
           )
-          echo [OK] --preflight-auth invalid correctly returns non-zero
+          if %ERR% EQU 1 exit /b 1
+          exit /b 0
 
       - name: Smoke test — preflight with bundled Excel (no real devices)
         shell: cmd
