@@ -58,6 +58,7 @@ class PlanRun:
     updater: str = "downstream-system"
     item_status_url: str = ""
     callback_mode: str = "batch"  # "batch" or "single"
+    callback_plan_id: str = ""  # service-side planId, e.g. "1"
     started_at: float = 0.0
     finished_at: float = 0.0
 
@@ -67,7 +68,7 @@ class PlanRun:
             "total": len(self.items),
             "success": sum(1 for i in self.items if i.status == "SUCCESS"),
             "failed": sum(1 for i in self.items if i.status == "FAILED"),
-            "running": sum(1 for i in self.items if i.status == "RUNNING"),
+            "in_progress": sum(1 for i in self.items if i.status == "IN_PROGRESS"),
             "pending": sum(1 for i in self.items if i.status == "PENDING"),
         }
 
@@ -184,6 +185,7 @@ class PlanRunService:
         callback = request.get("callback", {})
         item_status_url = callback.get("itemStatusUrl", "")
         callback_mode = callback.get("mode", "batch")
+        callback_plan_id = str(callback.get("planId", "")) if callback.get("planId") else ""
         if callback_mode not in ("batch", "single"):
             return {"accepted": False, "status": "FAILED",
                     "errorMessage": f"INVALID_CALLBACK_MODE: {callback_mode}"}
@@ -224,6 +226,7 @@ class PlanRunService:
             config_version=excel["configVersion"], items=items,
             updater=updater, item_status_url=item_status_url,
             callback_mode=callback_mode,
+            callback_plan_id=callback_plan_id,
             started_at=time.time(),
         )
 
@@ -303,6 +306,7 @@ class PlanRunService:
 
         callback = request.get("callback", {})
         item_status_url = callback.get("itemStatusUrl", "")
+        callback_plan_id = str(callback.get("planId", "")) if callback.get("planId") else ""
         callback_mode = callback.get("mode", "batch")
         if callback_mode not in ("batch", "single"):
             return {"accepted": False, "reason": f"INVALID_CALLBACK_MODE: {callback_mode}"}
@@ -353,6 +357,7 @@ class PlanRunService:
             runner_mode=runner_mode, config_version=excel["configVersion"],
             items=items, updater=updater, item_status_url=item_status_url,
             callback_mode=callback_mode,
+            callback_plan_id=callback_plan_id,
             started_at=time.time(),
         )
 
@@ -376,6 +381,41 @@ class PlanRunService:
     # Execute
     # ------------------------------------------------------------------
 
+    def _resolve_callback_url(self, run: PlanRun) -> str:
+        """Resolve callback URL with priority:
+        1. master_registry active server
+        2. request callback.itemStatusUrl
+        3. env var EXECUTOR_PLAN_ITEM_STATUS_URL
+        4. empty string (no callback)
+        """
+        # Priority 1: master_registry
+        registry_url = os.environ.get("EXECUTOR_MASTER_REGISTRY_URL", "")
+        if registry_url:
+            try:
+                from ..server_registry_client import discover_callback_url
+                discovered = discover_callback_url()
+                if discovered:
+                    logger.info(
+                        "Callback URL resolved via registry: %s", discovered,
+                    )
+                    return discovered
+            except Exception as e:
+                logger.warning("CALLBACK_REGISTRY_RESOLVE_FAILED: %s", e)
+
+        # Priority 2: request callback.itemStatusUrl
+        if run.item_status_url:
+            logger.info("Callback URL from request: %s", run.item_status_url)
+            return run.item_status_url
+
+        # Priority 3: environment variable
+        env_url = os.environ.get("EXECUTOR_PLAN_ITEM_STATUS_URL", "")
+        if env_url:
+            logger.info("Callback URL from env: %s", env_url)
+            return env_url
+
+        # Priority 4: not configured
+        return ""
+
     def _execute_run(self, run: PlanRun, cb: PlanItemStatusCallbackClient):
         is_real = run.runner_mode == "real"
         runner = None
@@ -385,7 +425,7 @@ class PlanRunService:
 
         # Execute each item (serial, same as before)
         for item in run.items:
-            item.status = "RUNNING"
+            item.status = "IN_PROGRESS"
 
             # Lock
             if item.lock_uri:
@@ -406,15 +446,25 @@ class PlanRunService:
         run.finished_at = time.time()
         run.status = "COMPLETED"
 
-        # --- Send callbacks after all items complete ---
-        if not run.item_status_url:
-            logger.info("No itemStatusUrl configured, skipping callback")
+        # --- Resolve callback URL ---
+        callback_url = self._resolve_callback_url(run)
+        if not callback_url:
+            logger.info("CALLBACK_URL_NOT_CONFIGURED: no callback URL resolved, skipping server callback")
             return
 
-        # Build callback items with server-mapped status
+        # --- Check callback.planId for server callback ---
+        callback_plan_id = run.callback_plan_id
+        if not callback_plan_id:
+            logger.warning(
+                "CALLBACK_PLAN_ID_MISSING: itemStatusUrl=%s configured but no callback.planId, "
+                "skipping server callback", callback_url,
+            )
+            return
+
+        # --- Build callback items ---
         cb_items = [
             build_callback_item(
-                plan_id=str(item.plan_id),
+                plan_id=callback_plan_id,
                 device_name=item.device_name,
                 task_name=item.task_name,
                 status=item.status,
@@ -428,14 +478,14 @@ class PlanRunService:
             logger.info("No callback items to send (plan has zero items)")
             return
 
-        # Dispatch based on callback mode
+        # --- Dispatch based on callback mode ---
         if run.callback_mode == "batch":
-            result: CallbackResult = cb.send_batch(run.item_status_url, cb_items)
+            result: CallbackResult = cb.send_batch(callback_url, cb_items)
         else:
             # Single mode: send each item individually
             result = CallbackResult(total=len(cb_items))
             for item in cb_items:
-                r = cb.send_single(run.item_status_url, item)
+                r = cb.send_single(callback_url, item)
                 result.success += r.success
                 result.failed += r.failed
                 result.batches += 1
@@ -447,18 +497,21 @@ class PlanRunService:
         # Log aggregated result
         if result.ok:
             logger.info(
-                "Callback completed: mode=%s total=%d success=%d batches=%d",
-                run.callback_mode, result.total, result.success, result.batches,
+                "Callback completed: url=%s mode=%s planId=%s total=%d success=%d batches=%d",
+                callback_url, run.callback_mode, callback_plan_id,
+                result.total, result.success, result.batches,
             )
         elif result.last_error == "CALLBACK_PARTIAL_FAILURE":
             logger.warning(
-                "Callback partial failure: mode=%s total=%d success=%d failed=%d errors=%d",
-                run.callback_mode, result.total, result.success, result.failed, len(result.errors),
+                "Callback partial failure: url=%s mode=%s planId=%s total=%d success=%d failed=%d errors=%d",
+                callback_url, run.callback_mode, callback_plan_id,
+                result.total, result.success, result.failed, len(result.errors),
             )
         else:
             logger.error(
-                "Callback failed: mode=%s total=%d failed=%d error=%s",
-                run.callback_mode, result.total, result.failed, result.last_error,
+                "Callback failed: url=%s mode=%s planId=%s total=%d failed=%d error=%s",
+                callback_url, run.callback_mode, callback_plan_id,
+                result.total, result.failed, result.last_error,
             )
 
     def _execute_fake(self, item: PlanRunItem):

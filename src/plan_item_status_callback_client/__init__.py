@@ -29,7 +29,8 @@ logger = logging.getLogger("bmc_auto_capture.plan_item_cb")
 
 _STATUS_TO_SERVER: dict[str, str] = {
     "PENDING": "PENDING",
-    "RUNNING": "IN_PROGRESS",
+    "RUNNING": "IN_PROGRESS",       # Legacy compat (PlanItem now uses IN_PROGRESS natively)
+    "IN_PROGRESS": "IN_PROGRESS",   # Identity for PlanItem server-aligned status
     "SUCCESS": "SUCCESS",
     "FAILED": "FAILED",
 }

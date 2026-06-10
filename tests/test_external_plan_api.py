@@ -101,7 +101,7 @@ class TestStartExternalPlan:
         excel_hash = upload["excelHash"]
         resp = client.post("/executor/v1/plans", json={
             "excelHash": excel_hash,
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         assert resp.status_code == 200
@@ -114,7 +114,7 @@ class TestStartExternalPlan:
 
     def test_missing_excel_hash(self, client):
         resp = client.post("/executor/v1/plans", json={
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
         })
         assert resp.status_code == 400
         data = resp.json()
@@ -124,7 +124,7 @@ class TestStartExternalPlan:
         _set_excel(client)
         resp = client.post("/executor/v1/plans", json={
             "excelHash": "a" * 64,
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
         })
         assert resp.status_code == 400
         data = resp.json()
@@ -136,7 +136,7 @@ class TestStartExternalPlan:
             _excel_store.clear()
         resp = client.post("/executor/v1/plans", json={
             "excelHash": "a" * 64,
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
         })
         assert resp.status_code == 400
         data = resp.json()
@@ -148,7 +148,7 @@ class TestStartExternalPlan:
         ids = set()
         for _ in range(3):
             resp = client.post("/executor/v1/plans", json={
-                "excelHash": h, "callback": {"itemStatusUrl": "http://local/debug"},
+                "excelHash": h, "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
                 "runner": "fake",
             })
             assert resp.status_code == 200
@@ -159,7 +159,7 @@ class TestStartExternalPlan:
         upload = _set_excel(client)
         resp = client.post("/executor/v1/plans", json={
             "excelHash": upload["excelHash"],
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         data = resp.json()
@@ -179,7 +179,7 @@ class TestQueryExternalPlan:
         upload = _set_excel(client)
         resp = client.post("/executor/v1/plans", json={
             "excelHash": upload["excelHash"],
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         return upload["excelHash"], resp.json()["planId"]
@@ -231,7 +231,7 @@ class TestQueryExternalPlan:
         assert "success" in s
         assert "failed" in s
         assert s["total"] >= 0
-        assert s["total"] == s["success"] + s["failed"] + s["running"] + s["pending"]
+        assert s["total"] == s["success"] + s["failed"] + s["in_progress"] + s["pending"]
 
 
 # ===========================================================================
@@ -245,7 +245,7 @@ class TestQueryExternalPlanItems:
         upload = _set_excel(client)
         resp = client.post("/executor/v1/plans", json={
             "excelHash": upload["excelHash"],
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         return upload["excelHash"], resp.json()["planId"]
@@ -332,7 +332,7 @@ class TestExternalPlanCallback:
 
         resp = c.post("/executor/v1/plans", json={
             "excelHash": excel_hash,
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         assert resp.status_code == 200
@@ -362,7 +362,7 @@ class TestExternalPlanCallback:
         upload = _set_excel(c)
         resp = c.post("/executor/v1/plans", json={
             "excelHash": upload["excelHash"],
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         assert resp.status_code == 200
@@ -395,7 +395,7 @@ class TestRegression:
     def test_old_plan_run_still_works(self, client):
         _set_excel(client)
         resp = client.post("/executor/v1/plans/1:run", json={
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         assert resp.status_code == 200

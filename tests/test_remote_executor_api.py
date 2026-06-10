@@ -141,7 +141,7 @@ class TestRemoteExcelUpload:
 
         # Plan run must use the uploaded config
         resp = client.post("/executor/v1/plans/1:run", json={
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         assert resp.status_code == 200
@@ -224,7 +224,7 @@ class TestRunItems:
 
         # Start run
         resp = c.post("/executor/v1/plans/1:run", json={
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         run_id = resp.json()["runId"]
@@ -270,7 +270,7 @@ class TestRunItems:
 
         c.post("/executor/v1/config/excel:path", json={"excelPath": EXCEL_FILE})
         resp = c.post("/executor/v1/plans/1:run", json={
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         run_id = resp.json()["runId"]
@@ -324,7 +324,7 @@ class TestPlanRunBodyHandling:
         assert resp.status_code == 200
 
         resp = client.post("/executor/v1/plans/1:run", json={
-            "callback": {"itemStatusUrl": "http://cb"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
         assert resp.status_code == 200
@@ -416,7 +416,7 @@ class TestOpticalModuleTask415:
 
         # Start run
         resp2 = resp.post("/executor/v1/plans/1:run", json={
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
         assert resp2.status_code == 200
@@ -550,7 +550,7 @@ class TestDebugCallbackStillWorks:
 
         c.post("/executor/v1/config/excel:path", json={"excelPath": EXCEL_FILE})
         resp = c.post("/executor/v1/plans/1:run", json={
-            "callback": {"itemStatusUrl": "http://debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://debug"},
             "runner": "fake",
         })
         assert resp.status_code == 200
@@ -585,7 +585,7 @@ class TestDebugCallbackStillWorks:
 
         c.post("/executor/v1/config/excel:path", json={"excelPath": EXCEL_FILE})
         resp = c.post("/executor/v1/plans/1:run", json={
-            "callback": {"itemStatusUrl": "http://cb"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
         assert resp.status_code == 200
@@ -613,14 +613,14 @@ class TestRunnerMode:
         excel = prs.set_latest_excel(EXCEL_FILE)
         assert excel["accepted"] is True
 
-        r = prs.start_plan_run(1, {"callback": {"itemStatusUrl": "http://cb"}})
+        r = prs.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         assert r["accepted"] is True
         assert r["status"] == "ACCEPTED"
 
     def test_runner_real_must_be_explicit(self, prs):
         """runner=real must be explicitly set."""
         excel = prs.set_latest_excel(EXCEL_FILE)
-        r = prs.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb"}})
+        r = prs.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         assert r["accepted"] is True
 
 
@@ -664,7 +664,7 @@ class TestOpticalModuleFakeRun:
         assert resp.status_code == 200
 
         resp = client.post("/executor/v1/plans/1:run", json={
-            "callback": {"itemStatusUrl": "http://cb"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
         assert resp.status_code == 200

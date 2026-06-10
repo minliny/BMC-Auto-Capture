@@ -208,7 +208,7 @@ class TestDebugCallbackWithPlanRun:
 
         # Start plan run — itemStatusUrl points to debug endpoint
         resp = c.post("/executor/v1/plans/1:run", json={
-            "callback": {"itemStatusUrl": "http://local/debug"},
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "updater": "test-plan-run",
             "runner": "fake",
         })
