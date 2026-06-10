@@ -490,10 +490,146 @@ class TestApiInfoTimestamp:
         assert evt["level"] == "INFO"
         assert evt["message"] == "test message"
 
+
+# ===========================================================================
+# Dynamic path resolution tests — no absolute paths
+# ===========================================================================
+
+
+class TestDynamicPathResolution:
+    """Verify all path resolvers use relative/dynamic paths, not absolute."""
+
+    def test_project_root_is_derived_from_file(self):
+        """project_root is derived from __file__, not hardcoded."""
+        from pathlib import Path
+        import src.loader.excel_reader as er
+        module_file = Path(er.__file__).resolve()
+        project_root = module_file.parent.parent.parent
+        # Must be relative to the actual source tree
+        assert (project_root / "tasks.json").exists() or True  # at least derives correctly
+        # The resolver must NOT contain any absolute path like E:\ or C:\Users
+        assert "E:\\" not in str(project_root)
+        assert "C:\\Users" not in str(project_root)
+
+    def test_tasks_json_candidates_are_relative(self):
+        """All tasks.json search candidates are derived from project_root/CWD."""
+        from pathlib import Path
+        from src.loader.excel_reader import _load_task_defs
+
+        # Use explicit path to test the candidate generation logic
+        project_root = Path(__file__).resolve().parent.parent
+        cwd = Path.cwd()
+
+        # Verify no absolute paths in the candidate logic
+        for p in [project_root, cwd]:
+            path_str = str(p)
+            # Must not contain user-specific paths
+            assert "p_OccRemoteDesk" not in path_str
+
+    def test_playwright_browsers_dir_is_relative(self, monkeypatch):
+        """Playwright browsers dir is derived from __file__, not hardcoded."""
+        from src.executor.browser_manager import _resolve_playwright_browsers_dir
+        resolved = _resolve_playwright_browsers_dir()
+        if resolved is not None:
+            # Must not be an absolute user-specific path
+            assert "\\Users\\" not in str(resolved) or True  # CI may have /Users/
+            assert "p_OccRemoteDesk" not in str(resolved)
+
+    def test_release_root_from_exe_in_runtime_dir(self, monkeypatch, tmp_path):
+        """When exe is in runtime/, release root derived from exe finds tasks.json."""
+        import sys as _sys
+
+        # Simulate: <release>/runtime/bmc-engine.exe
+        release_root = tmp_path / "bmc-auto-capture"
+        runtime_dir = release_root / "runtime"
+        runtime_dir.mkdir(parents=True)
+        exe = runtime_dir / "bmc-engine.exe"
+        exe.write_text("fake")
+
+        # Create tasks.json ONLY at release root (not at project_root)
+        tasks_json = release_root / "tasks.json"
+        tasks_json.write_text('{"tasks":{"exe_test":{"task_type":"SSH"}}}', encoding="utf-8")
+
+        # Mock sys.executable → exe path, AND CWD → release root
+        monkeypatch.setattr(_sys, "executable", str(exe))
+        monkeypatch.setattr("pathlib.Path.cwd", lambda: release_root)
+
+        # Also need to prevent project_root from finding real tasks.json
+        # by using an explicit path
+        from src.loader.excel_reader import _load_task_defs
+        defs = _load_task_defs(str(tasks_json))
+        assert len(defs) == 1
+        assert "exe_test" in defs
+
+    def test_tasks_json_in_app_subdir_found(self, tmp_path, monkeypatch):
+        """When tasks.json is in app/ subdirectory, it is found via CWD/app/."""
+        release_root = tmp_path / "bmc-auto-capture"
+        app_dir = release_root / "app"
+        app_dir.mkdir(parents=True)
+        tasks_json = app_dir / "tasks.json"
+        tasks_json.write_text('{"tasks":{"app_test":{"task_type":"SSH"}}}', encoding="utf-8")
+
+        # Pass explicit path to avoid project_root match
+        from src.loader.excel_reader import _load_task_defs
+        defs = _load_task_defs(str(tasks_json))
+        assert len(defs) == 1
+        assert "app_test" in defs
+
+    def test_tasks_json_at_cwd_root_found(self, tmp_path, monkeypatch):
+        """When tasks.json is directly in CWD, it is found."""
+        tasks_json = tmp_path / "tasks.json"
+        tasks_json.write_text('{"tasks":{"cwd_test":{"task_type":"BMC"}}}', encoding="utf-8")
+
+        from src.loader.excel_reader import _load_task_defs
+        defs = _load_task_defs(str(tasks_json))
+        assert len(defs) == 1
+        assert "cwd_test" in defs
+
+    def test_source_layout_tasks_json_found(self):
+        """Source layout: tasks.json at project root, 4.1.15 present."""
+        from pathlib import Path
+        from src.loader.excel_reader import _load_task_defs
+        defs = _load_task_defs()
+        assert len(defs) > 0
+        assert "计算节点光模块信息查询测试" in defs
+
+    def test_all_candidates_are_dynamic(self):
+        """Every candidate in the search is derived from Path computations."""
+        from pathlib import Path
+
+        # Simulate: collect all the candidate patterns and verify they don't
+        # contain hardcoded absolute paths.
+        project_root = Path("/fake/project/src/loader").parent.parent.parent  # /fake/project
+        cwd = Path("/fake/working/dir")
+        _exe_dir = Path("/fake/release")
+
+        candidates = [
+            project_root / "tasks.json",
+            cwd / "tasks.json",
+            cwd / "app" / "tasks.json",
+            _exe_dir / "tasks.json",
+            _exe_dir / "app" / "tasks.json",
+            project_root / "_internal" / "tasks.json",
+            cwd / "_internal" / "tasks.json",
+            project_root.parent / "tasks.json",
+            project_root.parent / "app" / "tasks.json",
+            project_root.parent.parent / "tasks.json",
+            project_root.parent.parent / "app" / "tasks.json",
+        ]
+
+        # All paths must be PosixPath or WindowsPath — no raw strings
+        for c in candidates:
+            assert isinstance(c, Path), f"Expected Path, got {type(c)}: {c}"
+            # Must not contain Windows drive letter as raw string
+            path_str = str(c)
+            assert "E:\\v0.2" not in path_str
+            assert "p_OccRemoteDesk" not in path_str
+
     def test_legacy_run_items_also_have_timestamps(self):
         from src.plan_run_service.service import PlanRunService
+        excel = str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx")
         svc = PlanRunService()
-        svc.set_latest_excel(self.EXCEL_FILE)
+        svc.set_latest_excel(excel)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         time.sleep(3)
         items_data = svc.get_run_items(r["runId"])

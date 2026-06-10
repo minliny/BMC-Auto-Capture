@@ -286,12 +286,38 @@ def _load_task_defs(tasks_json_path: str | Path | None = None) -> dict[str, dict
         candidates = [Path(tasks_json_path)]
     else:
         project_root = Path(__file__).resolve().parent.parent.parent
-        candidates = [
-            project_root / "tasks.json",
-            project_root / "_internal" / "tasks.json",
-            Path.cwd() / "tasks.json",
-            Path.cwd() / "_internal" / "tasks.json",
-        ]
+        cwd = Path.cwd()
+
+        # Derive release root from sys.executable for PyInstaller onefile exe.
+        # In onefile mode, sys.executable is the exe path (e.g. runtime/bmc-engine.exe),
+        # and the release root is the parent of runtime/.
+        _exe_dir = None
+        try:
+            import sys as _sys
+            _exe_path = Path(_sys.executable).resolve()
+            # If exe is in a 'runtime' dir, the release root is its parent
+            if _exe_path.parent.name in ("runtime",):
+                _exe_dir = _exe_path.parent.parent
+        except Exception:
+            pass
+
+        candidates = []
+        # Source layout: <project>/tasks.json
+        candidates.append(project_root / "tasks.json")
+        # Packaged exe: tasks.json at release root (alongside runtime/)
+        candidates.append(cwd / "tasks.json")
+        candidates.append(cwd / "app" / "tasks.json")
+        # Release root derived from exe location
+        if _exe_dir is not None:
+            candidates.append(_exe_dir / "tasks.json")
+            candidates.append(_exe_dir / "app" / "tasks.json")
+        # Legacy: inside _internal/
+        candidates.append(project_root / "_internal" / "tasks.json")
+        candidates.append(cwd / "_internal" / "tasks.json")
+        # Upward search: parent levels of project_root
+        for ancestor in [project_root.parent, project_root.parent.parent]:
+            candidates.append(ancestor / "tasks.json")
+            candidates.append(ancestor / "app" / "tasks.json")
 
     found_path = None
     for p in candidates:
