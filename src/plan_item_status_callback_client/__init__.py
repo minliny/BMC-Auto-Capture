@@ -59,9 +59,10 @@ class PlanItemStatusCallbackClient:
     def transport(self):
         return self._transport
 
-    def send(self, url: str, plan_id: int, device_name: str, task_name: str,
+    def send(self, url: str, plan_id: int | str, device_name: str, task_name: str,
              status: str, updater: str = "downstream-system",
-             error_message: str | None = None) -> bool:
+             error_message: str | None = None,
+             excel_hash: str | None = None) -> bool:
         payload = {
             "planId": plan_id,
             "deviceName": device_name,
@@ -70,6 +71,8 @@ class PlanItemStatusCallbackClient:
             "updater": updater,
             "errorMessage": error_message,
         }
+        if excel_hash:
+            payload["excelHash"] = excel_hash
         headers = {"Content-Type": "application/json; charset=utf-8"}
         try:
             code, _body = self._transport.post(url, payload, headers)

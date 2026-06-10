@@ -271,6 +271,7 @@ def _register_plan_run_routes(app: FastAPI, prs):
         return {
             **result,
             "filename": filename,
+            "excelHash": sha,
             "sha256": sha,
             "storedPath": str(latest_path),
             "message": "excel config uploaded and accepted as latest",
@@ -283,11 +284,13 @@ def _register_plan_run_routes(app: FastAPI, prs):
         info = _get_latest_excel()
         if info is None:
             return {"hasLatest": False}
+        sha256_val = info.get("sha256", "")
         return {
             "hasLatest": True,
+            "excelHash": sha256_val,
             "configVersion": info.get("configVersion", ""),
             "filename": os.path.basename(info.get("path", "")),
-            "sha256": info.get("sha256", ""),
+            "sha256": sha256_val,
             "deviceCount": info.get("deviceCount", 0),
             "enabledDeviceCount": info.get("enabledDeviceCount", 0),
             "taskCount": info.get("taskCount", 0),
@@ -331,6 +334,70 @@ def _register_plan_run_routes(app: FastAPI, prs):
         if r is None:
             raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND",
                                                          "message": f"Run not found: {run_id}"})
+        return r
+
+    # ==================================================================
+    # External Plan API (excelHash + string planId, hides runId from service)
+    # ==================================================================
+
+    @app.post("/executor/v1/plans")
+    async def start_external_plan(req: Request):
+        """Start external plan. Service only needs excelHash + callback URL."""
+        try:
+            body = await req.json()
+        except Exception:
+            raise HTTPException(status_code=400,
+                                detail={"code": "INVALID_JSON_BODY",
+                                        "message": "Request body must be valid JSON"})
+        result = prs.start_external_plan(body)
+        if not result.get("accepted"):
+            code = 400
+            em = result.get("errorMessage", "")
+            if em in ("NO_LATEST_EXCEL_CONFIG", "EXCEL_HASH_MISMATCH", "MISSING_EXCEL_HASH"):
+                code = 400
+            return JSONResponse(content=result, status_code=code)
+        return result
+
+    @app.get("/executor/v1/plans/{plan_id}")
+    async def get_external_plan(plan_id: str, request: Request):
+        """Get external plan summary. Requires excelHash query param."""
+        excel_hash = request.query_params.get("excelHash", "")
+        if not excel_hash:
+            raise HTTPException(status_code=400,
+                                detail={"code": "MISSING_EXCEL_HASH",
+                                        "message": "excelHash query parameter is required"})
+        r = prs.get_external_plan(plan_id, excel_hash)
+        if r is None:
+            # Check if plan exists at all to distinguish NOT_FOUND vs HASH_MISMATCH
+            from ..plan_run_service.service import PlanRun
+            run = prs._get_run_by_plan_id(plan_id)
+            if run is None:
+                raise HTTPException(status_code=404,
+                                    detail={"code": "PLAN_NOT_FOUND",
+                                            "message": f"Plan not found: {plan_id}"})
+            raise HTTPException(status_code=400,
+                                detail={"code": "PLAN_EXCEL_HASH_MISMATCH",
+                                        "message": "excelHash does not match this plan"})
+        return r
+
+    @app.get("/executor/v1/plans/{plan_id}/items")
+    async def get_external_plan_items(plan_id: str, request: Request):
+        """Get external plan items. Requires excelHash query param."""
+        excel_hash = request.query_params.get("excelHash", "")
+        if not excel_hash:
+            raise HTTPException(status_code=400,
+                                detail={"code": "MISSING_EXCEL_HASH",
+                                        "message": "excelHash query parameter is required"})
+        r = prs.get_external_plan_items(plan_id, excel_hash)
+        if r is None:
+            run = prs._get_run_by_plan_id(plan_id)
+            if run is None:
+                raise HTTPException(status_code=404,
+                                    detail={"code": "PLAN_NOT_FOUND",
+                                            "message": f"Plan not found: {plan_id}"})
+            raise HTTPException(status_code=400,
+                                detail={"code": "PLAN_EXCEL_HASH_MISMATCH",
+                                        "message": "excelHash does not match this plan"})
         return r
 
 
@@ -429,6 +496,9 @@ def _register_debug_callback_receiver(app: FastAPI):
             "updater": body.get("updater", ""),
             "errorMessage": body.get("errorMessage"),
         }
+        # Preserve excelHash if sent by external Plan API callback
+        if "excelHash" in body:
+            payload["excelHash"] = body["excelHash"]
         entry = {
             "receivedAt": time.time(),
             "payload": payload,

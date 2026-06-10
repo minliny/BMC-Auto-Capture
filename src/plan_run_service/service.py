@@ -29,7 +29,7 @@ logger = logging.getLogger("bmc_auto_capture.plan_run")
 
 @dataclass
 class PlanRunItem:
-    plan_id: int
+    plan_id: int | str
     device_name: str
     task_name: str
     device_group: str = ""
@@ -45,8 +45,9 @@ class PlanRunItem:
 
 @dataclass
 class PlanRun:
-    plan_id: int
+    plan_id: int | str
     run_id: str = ""
+    excel_hash: str = ""
     status: str = "ACCEPTED"
     config_version: str = ""
     runner_mode: str = "fake"
@@ -65,6 +66,10 @@ class PlanRun:
             "running": sum(1 for i in self.items if i.status == "RUNNING"),
             "pending": sum(1 for i in self.items if i.status == "PENDING"),
         }
+
+    @property
+    def is_external(self) -> bool:
+        return bool(self.excel_hash)
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +140,7 @@ class PlanRunService:
         filename = os.path.basename(path)
         return {
             "accepted": True, "configVersion": info["configVersion"],
+            "excelHash": info["sha256"],
             "filename": filename, "sha256": info["sha256"],
             "deviceCount": info["deviceCount"], "enabledDeviceCount": info["enabledDeviceCount"],
             "taskCount": info["taskCount"], "enabledTaskCount": info["enabledTaskCount"],
@@ -142,7 +148,143 @@ class PlanRunService:
         }
 
     # ------------------------------------------------------------------
-    # Start plan run
+    # External Plan API (excelHash + string planId)
+    # ------------------------------------------------------------------
+
+    _plan_seq: dict[str, int] = {}
+    _plan_seq_lock = threading.Lock()
+
+    def _next_plan_id(self, excel_hash: str) -> str:
+        prefix = excel_hash[:8]
+        with self._plan_seq_lock:
+            seq = self._plan_seq.get(excel_hash, 0) + 1
+            self._plan_seq[excel_hash] = seq
+        return f"plan-{prefix}-{seq:06d}"
+
+    def start_external_plan(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Start external plan via excelHash + planId. Hides runId from response."""
+        excel = _get_latest_excel()
+        if excel is None:
+            return {"accepted": False, "status": "FAILED",
+                    "errorMessage": "NO_LATEST_EXCEL_CONFIG"}
+
+        excel_hash = request.get("excelHash", "")
+        if not excel_hash:
+            return {"accepted": False, "status": "FAILED",
+                    "errorMessage": "MISSING_EXCEL_HASH"}
+
+        if excel_hash != excel.get("sha256", ""):
+            return {"accepted": False, "status": "FAILED",
+                    "errorMessage": "EXCEL_HASH_MISMATCH"}
+
+        callback = request.get("callback", {})
+        item_status_url = callback.get("itemStatusUrl", "")
+        updater = request.get("updater", "downstream-system")
+        runner_mode = request.get("runner", "fake")
+        if runner_mode not in ("fake", "real"):
+            return {"accepted": False, "reason": f"INVALID_RUNNER: {runner_mode}"}
+
+        plan_id = self._next_plan_id(excel_hash)
+        run_id = f"plan-{plan_id}-run-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+        devices = excel["devices"]
+        tasks = excel["tasks"]
+        enabled_devices = [d for d in devices if getattr(d, "enabled", True)]
+        enabled_tasks = [t for t in tasks if getattr(t, "enabled", True)]
+
+        items: list[PlanRunItem] = []
+        for device in enabled_devices:
+            for task in enabled_tasks:
+                match_group = getattr(task, "match_group", "") or ""
+                dg = getattr(device, "device_group", "") or ""
+                if match_group:
+                    allowed_groups = [g.strip().upper() for g in match_group.split("/") if g.strip()]
+                    if dg.upper() not in allowed_groups:
+                        continue
+                lock_uri = _derive_lock_uri(device, task)
+                items.append(PlanRunItem(
+                    plan_id=plan_id, device_name=getattr(device, "device_name", ""),
+                    task_name=getattr(task, "task_name", ""), device_group=dg,
+                    task_type=getattr(task, "task_type", ""),
+                    execution_mode=getattr(task, "execution_mode", ""),
+                    lock_uri=lock_uri, _device=device, _task=task,
+                ))
+
+        run = PlanRun(
+            plan_id=plan_id, run_id=run_id, excel_hash=excel_hash,
+            status="RUNNING", runner_mode=runner_mode,
+            config_version=excel["configVersion"], items=items,
+            updater=updater, item_status_url=item_status_url,
+            started_at=time.time(),
+        )
+
+        with self._runs_lock:
+            self._runs[run_id] = run
+
+        transport = self._cb_transport or (
+            HttpCallbackTransport() if self._use_http else FakeCallbackTransport())
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        t = threading.Thread(target=self._execute_run, args=(run, cb), daemon=True)
+        t.start()
+
+        filename = os.path.basename(excel.get("path", ""))
+        return {
+            "accepted": True, "excelHash": excel_hash,
+            "planId": plan_id, "filename": filename, "status": "ACCEPTED",
+        }
+
+    def get_external_plan(self, plan_id: str, excel_hash: str) -> dict[str, Any] | None:
+        """Get external plan summary. Validates excelHash. Returns None if not found."""
+        if not excel_hash:
+            return None
+        run = self._get_run_by_plan_id(plan_id)
+        if run is None:
+            return None
+        if run.excel_hash != excel_hash:
+            return None
+        excel = _get_latest_excel()
+        filename = os.path.basename(excel.get("path", "")) if excel else ""
+        return {
+            "excelHash": run.excel_hash, "planId": run.plan_id,
+            "filename": filename, "status": run.status,
+            "summary": run.summary,
+            "startedAt": datetime.fromtimestamp(run.started_at, tz=timezone.utc).isoformat() if run.started_at else "",
+            "finishedAt": datetime.fromtimestamp(run.finished_at, tz=timezone.utc).isoformat() if run.finished_at else "",
+            "errorMessage": None,
+        }
+
+    def get_external_plan_items(self, plan_id: str, excel_hash: str) -> dict[str, Any] | None:
+        """Get external plan items. Validates excelHash. Returns None if not found."""
+        if not excel_hash:
+            return None
+        run = self._get_run_by_plan_id(plan_id)
+        if run is None:
+            return None
+        if run.excel_hash != excel_hash:
+            return None
+        excel = _get_latest_excel()
+        filename = os.path.basename(excel.get("path", "")) if excel else ""
+        items = [
+            {"deviceName": i.device_name, "taskName": i.task_name,
+             "status": i.status, "errorMessage": i.error_message}
+            for i in run.items
+        ]
+        return {
+            "excelHash": run.excel_hash, "planId": run.plan_id,
+            "filename": filename, "status": run.status,
+            "summary": run.summary, "items": items,
+        }
+
+    def _get_run_by_plan_id(self, plan_id: str) -> PlanRun | None:
+        """Find run by external plan_id string (linear scan, small dataset)."""
+        with self._runs_lock:
+            for run in self._runs.values():
+                if str(run.plan_id) == plan_id:
+                    return run
+        return None
+
+    # ------------------------------------------------------------------
+    # Start plan run (legacy)
     # ------------------------------------------------------------------
 
     def start_plan_run(self, plan_id: int, request: dict[str, Any]) -> dict[str, Any]:
@@ -365,6 +507,7 @@ class PlanRunService:
             device_name=item.device_name, task_name=item.task_name,
             status=item.status, updater=run.updater,
             error_message=item.error_message,
+            excel_hash=run.excel_hash if run.is_external else None,
         )
 
     # ------------------------------------------------------------------
