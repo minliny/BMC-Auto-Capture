@@ -409,7 +409,7 @@ jobs:
             # 2. POST a test callback
             $body = @{planId=1; deviceName="D1"; taskName="T1"; status="SUCCESS"; updater="ci-test"; errorMessage=$null}
             $post = Invoke-RestMethod -Method Post -Uri "${BaseUrl}/debug/plan-item-statuses" -Body ($body | ConvertTo-Json) -ContentType "application/json" -TimeoutSec 5
-            if ($post.status -ne "ok") {
+            if (-not $post.ok) {
               Write-Host "[FAIL] POST debug callback: unexpected response $($post | ConvertTo-Json -Compress)"
               exit 1
             }
