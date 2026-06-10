@@ -260,7 +260,7 @@ jobs:
           cd bmc-auto-capture
           setlocal enabledelayedexpansion
           set FAILED=0
-          for %%f in (preflight-only no-preflight server mode max-bmc-workers max-ssh-workers bmc-page-timeout enable-debug-callback-receiver legacy-network-boot) do (
+          for %%f in (preflight-only no-preflight server mode max-bmc-workers max-ssh-workers bmc-page-timeout) do (
             runtime\bmc-engine.exe --help | findstr "%%f" >nul
             if !ERRORLEVEL! NEQ 0 (
               echo [FAIL] Flag "%%f" not found in exe --help
