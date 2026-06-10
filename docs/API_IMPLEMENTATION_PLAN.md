@@ -353,8 +353,8 @@ artifact_max_multipart_bytes: 10485760  # 10MB
 | ASSIGN_RUN 批量下发 | v0.1 服务端逐个展开 Job 即可 | v0.2 |
 | 大文件预签名上传 | v0.1 产物都是小文件（PNG/TXT/JSON < 10MB） | v0.2 |
 | PAUSE_RUN / RESUME_RUN | 先做 CANCEL，暂停/恢复复杂度高 | v0.2 |
-| 分片上传 | v0.1 不需要 | v0.3 |
-| mTLS 双向证书 | v0.1 用 Bearer Token + HTTPS 即可 | v0.3 |
+| 分片上传 | v0.1 不需要 | v0.3 (plan) |
+| mTLS 双向证书 | v0.1 用 Bearer Token + HTTPS 即可 | v0.3 (plan) |
 | HMAC 请求签名 | v0.1 用 TLS + Token 足够 | v0.2 |
 | secret_ref 真实解析 | v0.1 密码在 Device 缓存中明文，API 传输时替换为 ref 占位 | v0.2 |
 | Redis 资源锁 | v0.1 服务端用内存锁 + DB 持久化 | v0.2 |

@@ -40,7 +40,7 @@ def create_app(
     debug_callback_receiver: bool = False,  # Enable built-in debug callback receiver
     managed_config_dir: str | None = None,  # Dir for uploaded Excel files
 ) -> FastAPI:
-    app = FastAPI(title="BMC Auto-Capture Executor API v0.3", version="0.3.0")
+    app = FastAPI(title="BMC Auto-Capture Executor API v0.2", version="0.2.4")
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                        allow_methods=["*"], allow_headers=["*"])
 
@@ -118,7 +118,7 @@ def _register_legacy_routes(app: FastAPI):
         info = {
             "name": "bmc-auto-capture",
             "mode": "executor-api",
-            "version": "0.3.0",
+            "version": "0.2.4",
             "status": "ok",
             "legacyCompatible": True,
         }
