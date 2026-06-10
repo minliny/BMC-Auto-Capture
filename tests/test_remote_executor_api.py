@@ -234,13 +234,14 @@ class TestRunItems:
         resp = c.get(f"/executor/v1/plans/1/runs/{run_id}/items")
         assert resp.status_code == 200
         data = resp.json()
+        assert data["status"] in ("ACCEPTED", "RUNNING", "COMPLETED", "FAILED"), f"Unexpected run status: {data['status']}"
         assert data["status"] == "COMPLETED"
         assert len(data["items"]) == data["summary"]["total"]
 
         for item in data["items"]:
             assert "deviceName" in item
             assert "taskName" in item
-            assert "status" in item
+            assert item["status"] in ("SUCCESS", "FAILED", "RUNNING", "PENDING"), f"Unexpected item status: {item['status']}"
             assert "errorMessage" in item
             assert "password" not in str(item).lower()
             assert "token" not in str(item).lower()

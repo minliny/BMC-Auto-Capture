@@ -67,6 +67,20 @@ curl http://127.0.0.1:18000/executor/v1/runs/run-001/tasks/{task_id}
 }
 ```
 
+## 状态枚举分层
+
+| 上下文 | 字段 | 允许值 |
+|--------|------|--------|
+| Plan Run 级别 | `status` | `ACCEPTED` / `RUNNING` / `COMPLETED` / `FAILED` |
+| Run Item 查询 | `items[].status` | `PENDING` / `RUNNING` / `SUCCESS` / `FAILED` |
+| Item 状态回调 | `status` | `SUCCESS` / `FAILED` |
+| Debug Callback | `payload.status` | `SUCCESS` / `FAILED` |
+
+说明：
+- `COMPLETED` 不代表全部成功，是否全成功需检查 `summary.failed`
+- `items[].status` 包含中间态（PENDING/RUNNING），查询时可处于任意阶段
+- Item 回调（callback）和 debug callback 仅上报终态 SUCCESS / FAILED
+
 ## NETWORK_TEST
 
 validation.json 中定义的 network_tests 被 Planner 自动展开为 task_type=NETWORK_TEST 的 PlannedTask，与其他任务一起进入 TaskCatalog。借助 run 全量下发后可执行（FakeRunner 模拟，或 RealRunnerAdapter 以 SSH_CMD 方式执行）。

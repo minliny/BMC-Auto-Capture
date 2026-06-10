@@ -92,6 +92,15 @@ runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --legacy-network-boo
 > **注意：** `--legacy-network-boot` 参数可启动旧版 API（仅 health/ping/version/routes），
 > 默认不传时启动的是完整 Executor API（含 plan run、callback 等能力）。
 
+**状态枚举分层：**
+
+| 上下文 | 字段 | 允许值 |
+|--------|------|--------|
+| Plan Run 级别 | `status` | `ACCEPTED` / `RUNNING` / `COMPLETED` / `FAILED` |
+| Run Item 查询 | `items[].status` | `PENDING` / `RUNNING` / `SUCCESS` / `FAILED` |
+| Item 状态回调 | `status` | `SUCCESS` / `FAILED` |
+| Debug Callback | `payload.status` | `SUCCESS` / `FAILED` |
+
 开箱即用验证：
 
 ```powershell

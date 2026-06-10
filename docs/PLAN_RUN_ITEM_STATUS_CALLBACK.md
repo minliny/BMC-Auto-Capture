@@ -97,6 +97,20 @@ curl -X POST http://127.0.0.1:18000/executor/v1/plans/1:run \
 
 严格 6 字段，不包含 job_id/external_task_id/executor_id/duration_ms/artifacts。
 
+## 状态枚举分层
+
+| 上下文 | 字段 | 允许值 |
+|--------|------|--------|
+| Plan Run 级别 | `status` | `ACCEPTED` / `RUNNING` / `COMPLETED` / `FAILED` |
+| Run Item 查询 | `items[].status` | `PENDING` / `RUNNING` / `SUCCESS` / `FAILED` |
+| Item 状态回调（callback payload） | `status` | `SUCCESS` / `FAILED` |
+| Debug Callback | `payload.status` | `SUCCESS` / `FAILED` |
+
+说明：
+- `COMPLETED` 不代表全部成功，是否全成功需检查 `summary.failed`
+- Item 查询可处于任意阶段（PENDING/RUNNING/SUCCESS/FAILED），查询时可能仍在执行中
+- Item 回调（callback）和 debug callback 仅上报终态 SUCCESS / FAILED
+
 ## fake E2E 验收命令
 
 ### 使用内置 debug callback receiver（推荐）
