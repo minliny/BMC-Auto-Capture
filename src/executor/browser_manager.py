@@ -13,6 +13,57 @@ import time
 logger = logging.getLogger("bmc_auto_capture.browser")
 
 
+# ---------------------------------------------------------------------------
+# Unified Playwright browser path resolver
+# ---------------------------------------------------------------------------
+
+def _resolve_playwright_browsers_dir() -> str | None:
+    """Find the Playwright browsers directory.
+
+    Searches:
+      1. <project_root>/runtime/playwright_browsers    (CI artifact layout)
+      2. <project_root>/_internal/playwright            (legacy packaged layout)
+
+    Returns the first existing path, or None.
+    """
+    import os
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    candidates = [
+        project_root / "runtime" / "playwright_browsers",
+        project_root / "_internal" / "playwright",
+    ]
+    for p in candidates:
+        if p.exists() and p.is_dir():
+            logger.info("Playwright browsers dir resolved: %s", p)
+            return str(p)
+    return None
+
+
+def _ensure_playwright_browsers_path():
+    """Set PLAYWRIGHT_BROWSERS_PATH env var to the unified browser directory.
+
+    Must be called before async_playwright().start() / chromium.launch().
+    Idempotent — only sets once per process.
+    """
+    import os
+
+    if os.environ.get("_BMC_PLAYWRIGHT_PATH_SET"):
+        return
+
+    resolved = _resolve_playwright_browsers_dir()
+    if resolved:
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = resolved
+        os.environ["_BMC_PLAYWRIGHT_PATH_SET"] = "1"
+        logger.info("PLAYWRIGHT_BROWSERS_PATH set to %s", resolved)
+    else:
+        logger.warning(
+            "Playwright browsers dir not found at runtime/playwright_browsers "
+            "or _internal/playwright — Playwright will use default cache"
+        )
+
+
 class BrowserManager:
     """Thread-local browser pool — each worker thread owns its own browser.
 
@@ -164,6 +215,14 @@ class _ThreadLocalBrowser:
 
     async def get_context(self):
         from playwright.async_api import async_playwright
+
+        # --- P0: resolve Playwright browsers path ---
+        # All entry points (concurrent, single, preflight, launcher, packaged exe)
+        # must use the same browser binaries at runtime/playwright_browsers.
+        # Playwright's built-in discovery only looks at PLAYWRIGHT_BROWSERS_PATH
+        # env var or the default cache (~/.cache/ms-playwright).
+        # We set the env var here so every BrowserManager instance picks it up.
+        _ensure_playwright_browsers_path()
 
         current_loop = id(asyncio.get_event_loop())
 

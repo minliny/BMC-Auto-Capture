@@ -49,6 +49,43 @@ def _expected_evidence(task_type: str) -> str:
     return "unknown"
 
 
+def _ssh_has_command_output(content: str) -> bool:
+    """Check if SSH output contains actual command execution evidence.
+
+    Returns False if the content looks like ONLY a login banner with no
+    command echo or command output (prompt-only sessions).
+    """
+    if not content or len(content.strip()) < 100:
+        return False
+
+    # Common patterns that indicate ONLY login (not command execution):
+    # - "login:" / "Password:" prompts
+    # - SSH banner lines ("The max number of VTY users...")
+    # - Device prompt with no trailing command output
+
+    # Check for command-execution indicators:
+    # - Lines longer than typical prompts (command output is usually wide)
+    # - Common command-output patterns (tables, headers like "---", interface stats)
+    # - Error messages from commands
+    lines = [l.strip() for l in content.split("\n") if l.strip()]
+    non_banner_lines = 0
+    for line in lines:
+        # Skip typical login/banner lines
+        lower = line.lower()
+        if any(kw in lower for kw in (
+            "login:", "password:", "the max number of vty",
+            "the current login time", "the last login time",
+            "copyright", "all rights reserved", "warning:",
+        )):
+            continue
+        # Skip short prompt-only lines (e.g. "<DeviceName>")
+        if len(line) < 15 and (line.startswith("<") or line.startswith("[") or line.startswith("~")):
+            continue
+        non_banner_lines += 1
+
+    return non_banner_lines >= 3
+
+
 def _read_page_health_debug(output_dir: str) -> dict | None:
     if not output_dir:
         return None
@@ -167,6 +204,7 @@ def audit_plan_evidence(result: ExecutionResult) -> dict:
     elif task_type in ("SSH", "TELNET"):
         txt_ok = bool(result.txt_file and os.path.exists(result.txt_file))
         log_ok = bool(result.log_file and os.path.exists(result.log_file))
+
         if not txt_ok and not log_ok:
             audit["evidence_status"] = "TXT_LOG_MISSING"
             audit["evidence_reason"] = "No TXT or log file for SSH/TELNET task"
@@ -174,14 +212,53 @@ def audit_plan_evidence(result: ExecutionResult) -> dict:
             audit["evidence_status"] = "TXT_MISSING"
             audit["evidence_reason"] = "No TXT file for SSH/TELNET task"
         else:
-            audit["evidence_status"] = "OK"
-            audit["evidence_reason"] = "TXT present"
+            # P0: check TXT content, not just existence
+            try:
+                txt_size = os.path.getsize(result.txt_file)
+                audit["txt_size"] = str(txt_size)
+            except OSError:
+                txt_size = 0
 
-        # Png if rendered
+            if txt_size < 50:
+                audit["evidence_status"] = "TXT_EMPTY"
+                audit["evidence_reason"] = f"TXT file is empty or too small ({txt_size} bytes)"
+            else:
+                # Read content and check for actual command output
+                try:
+                    with open(result.txt_file, "r", encoding="utf-8", errors="replace") as fh:
+                        txt_content = fh.read()
+                except Exception:
+                    txt_content = ""
+
+                # Check for login-only patterns (no command execution evidence)
+                has_cmd_output = _ssh_has_command_output(txt_content)
+                if not has_cmd_output:
+                    audit["evidence_status"] = "ONLY_LOGIN_BANNER"
+                    audit["evidence_reason"] = (
+                        "SSH TXT contains only login banner/prompt, "
+                        "no command echo or output detected"
+                    )
+                else:
+                    audit["evidence_status"] = "OK"
+                    audit["evidence_reason"] = f"TXT present ({txt_size} bytes, commands detected)"
+
+        # Screenshot check for SSH
         if audit["screenshot_path"]:
             for sp in result.screenshots:
                 if os.path.exists(sp):
-                    audit["screenshot_size"] = str(os.path.getsize(sp))
+                    try:
+                        ss_size = os.path.getsize(sp)
+                        audit["screenshot_size"] = str(ss_size)
+                        if ss_size < 200:
+                            audit["evidence_status"] = (
+                                "IMAGE_BLANK" if audit["evidence_status"] == "OK"
+                                else audit["evidence_status"] + ";IMAGE_BLANK"
+                            )
+                            audit["evidence_reason"] = (
+                                str(audit["evidence_reason"]) + f"; Screenshot too small ({ss_size} bytes)"
+                            )
+                    except OSError:
+                        pass
 
     if not audit["evidence_status"]:
         audit["evidence_status"] = "OK"

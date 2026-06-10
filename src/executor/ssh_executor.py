@@ -28,6 +28,47 @@ from ..utils.template import resolve_template, check_unreplaced_vars
 
 MAX_MORE_PAGES = 200
 
+
+# ---------------------------------------------------------------------------
+# Unified command resolution
+# ---------------------------------------------------------------------------
+
+def resolve_task_command(task, device_group: str = "") -> str:
+    """Resolve the effective command for a task on a specific device group.
+
+    Priority:
+      1. per_group_commands[device_group]  — group-specific override
+      2. task.command_or_url                — default for all groups
+
+    Returns the resolved command string (may be empty).
+    Logs which source was used.
+    """
+    pgc = getattr(task, '_per_group_commands', None) or {}
+    dg = (device_group or "").strip().upper()
+
+    if pgc and dg and dg in pgc:
+        cmd = pgc[dg]
+        logger.info(
+            "resolve_task_command: task=%s group=%s → per_group_commands[%s] (%d chars)",
+            getattr(task, 'task_name', '?'), dg, dg, len(str(cmd)),
+        )
+        return str(cmd)
+
+    cmd = getattr(task, 'command_or_url', '') or ''
+    if pgc:
+        # per_group_commands exists but no match for this group — log warning
+        logger.warning(
+            "resolve_task_command: task=%s group=%s → per_group_commands has keys=%s, "
+            "no match for '%s', falling back to command_or_url (%d chars)",
+            getattr(task, 'task_name', '?'), dg, sorted(pgc.keys()), dg, len(str(cmd)),
+        )
+    else:
+        logger.info(
+            "resolve_task_command: task=%s group=%s → command_or_url (%d chars)",
+            getattr(task, 'task_name', '?'), dg, len(str(cmd)),
+        )
+    return str(cmd)
+
 MORE_LINE_RE = re.compile(r'^\s*[-–—]*(?:More|more|MORE)[-–—\s]*$', re.IGNORECASE)
 MORE_INLINE_RE = re.compile(
     r'[-–—]{2,}\s*(?:More|more|MORE)\s*[-–—]*', re.IGNORECASE
@@ -188,6 +229,21 @@ class SSHExecutor(AbstractExecutor):
         cmd_outputs: dict[str, str] = {}
         variables: dict[str, str] = {}
 
+        # --- P0-2: empty commands → EXEC_FAILED ---
+        if not commands:
+            dg = getattr(device, 'device_group', '') or ''
+            resolved_cmd = resolve_task_command(task, dg)
+            result.execution_status = "EXEC_FAILED"
+            result.execution_failure_reason = (
+                f"COMMAND_MISSING: task '{task.task_name}' has no resolved commands "
+                f"(command_or_url={getattr(task, 'command_or_url', '')!r}, "
+                f"device_group={dg}, per_group_commands={sorted(getattr(task, '_per_group_commands', {}).keys()) if getattr(task, '_per_group_commands', None) else 'N/A'})"
+            )
+            result.ended_at = time.time()
+            result.duration_seconds = result.ended_at - result.started_at
+            logger.error("[%s] %s", device.device_name, result.execution_failure_reason)
+            return result
+
         client = None
         transcript_meta: dict | None = None
         all_output: list[str] = []
@@ -227,6 +283,45 @@ class SSHExecutor(AbstractExecutor):
 
             result.step_results = step_results
 
+            # --- P0-4: detect ONLY_LOGIN_BANNER / COMMAND_OUTPUT_MISSING ---
+            # Check if output contains actual command execution evidence,
+            # not just login banner + device prompt.
+            if not has_failure and not has_timeout:
+                joined_output = "".join(all_output)
+                joined_len = len(joined_output.strip())
+                cmd_count = len(commands)
+
+                if cmd_count > 0 and joined_len < 100:
+                    # Output is suspiciously short — likely only login banner
+                    result.execution_status = "EXEC_FAILED"
+                    result.execution_failure_reason = (
+                        f"COMMAND_OUTPUT_MISSING: {cmd_count} command(s) resolved but "
+                        f"total output only {joined_len} chars — likely only login banner, "
+                        f"no command echo or output captured"
+                    )
+                    logger.error("[%s] %s (output preview: %s)",
+                                 device.device_name,
+                                 result.execution_failure_reason,
+                                 joined_output[:200])
+                elif cmd_count > 0:
+                    # Check if commands actually appear in output (for exec_command, output is raw)
+                    cmds_in_output = 0
+                    for _name, cmd in commands:
+                        if cmd and len(cmd) > 3 and cmd[:30] in joined_output:
+                            cmds_in_output += 1
+                    if cmds_in_output == 0 and strategy == "exec_command":
+                        # exec_command doesn't echo — check if output is non-trivial
+                        # Just having non-banner output is fine
+                        pass
+                    elif cmds_in_output == 0 and strategy == "interactive_shell" and joined_len < 500:
+                        # Interactive shell should echo commands — if none found + short, suspect
+                        result.execution_status = "EXEC_FAILED"
+                        result.execution_failure_reason = (
+                            f"ONLY_LOGIN_BANNER: {cmd_count} command(s) but no command echo "
+                            f"found in {joined_len} chars of output"
+                        )
+                        logger.error("[%s] %s", device.device_name, result.execution_failure_reason)
+
             # Determine final status
             if has_timeout:
                 result.execution_status = "EXEC_PARTIAL"
@@ -234,11 +329,16 @@ class SSHExecutor(AbstractExecutor):
             elif has_failure:
                 result.execution_status = "EXEC_PARTIAL"
                 result.execution_failure_reason = "; ".join(failure_reasons[:3])
-            else:
-                result.execution_status = "EXEC_SUCCESS"
+            elif result.execution_status == "EXEC_SUCCESS":
+                # Only set SUCCESS if none of the above checks flagged a failure
+                pass
 
             # Write evidence
             file_base = resolve_template(task.image_name_template, device, task)
+
+            # --- Inject COMMAND / OUTPUT section markers for traceability ---
+            resolved_cmd = resolve_task_command(task, device.device_group)
+            cmd_header = f"=== COMMAND (device_group={device.device_group}, strategy={strategy}) ===\n{resolved_cmd}\n=== OUTPUT ===\n"
             # exec_command: separate commands with double newline (each is an independent program)
             # interactive_shell: raw stream concat — no separator, prompt+echo must stay together
             join_mode = "\n\n" if strategy == "exec_command" else ""
@@ -248,9 +348,9 @@ class SSHExecutor(AbstractExecutor):
             # interactive_shell: minimal sanitization, no strip, no extra newlines
             # exec_command: full sanitization including strip
             if strategy == "interactive_shell":
-                full_transcript = _sanitize_raw_stream(join_mode.join(all_output))
+                full_transcript = _sanitize_raw_stream(cmd_header + join_mode.join(all_output))
             else:
-                full_transcript = _strip_pagination_markers(join_mode.join(all_output))
+                full_transcript = _strip_pagination_markers(cmd_header + join_mode.join(all_output))
             transcript_lines = full_transcript.split("\n")
             total_lines = len(transcript_lines)
 
@@ -464,7 +564,8 @@ class SSHExecutor(AbstractExecutor):
         all_output.append(banner)
 
         # Run screen-length 0 temporary in the same channel
-        self._send_and_read(channel, "screen-length 0 temporary", device, timeout=3.0)
+        paging_out = self._send_and_read(channel, "screen-length 0 temporary", device, timeout=3.0)
+        all_output.append(paging_out)
 
         # Run each task command in the same channel
         task_deadline = time.time() + max(self.command_timeout * len(commands), self.command_timeout) * 2
@@ -582,8 +683,11 @@ class SSHExecutor(AbstractExecutor):
                 except Exception:
                     pass
 
-            # Idle detection
-            if time.time() - last_data > self.idle_timeout:
+            # Idle detection: use the larger of base idle_timeout and a fraction
+            # of the command timeout, so long-running commands (e.g. optical module
+            # queries on large switches) are not prematurely truncated.
+            effective_idle = max(self.idle_timeout, min(timeout * 0.3, 30.0))
+            if time.time() - last_data > effective_idle:
                 break
 
             if not got_data:

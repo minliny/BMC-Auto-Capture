@@ -41,9 +41,19 @@ class PlanRunItem:
     lock_uri: str = ""
     status: str = "PENDING"
     error_message: str | None = None
+    started_at: float = 0.0
+    finished_at: float = 0.0
+    info_events: list[dict[str, Any]] = field(default_factory=list)
     # Device/task raw refs for real runner conversion
     _device: Any = None
     _task: Any = None
+
+    def add_info_event(self, level: str, message: str):
+        self.info_events.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": level,
+            "message": message,
+        })
 
 
 @dataclass
@@ -263,6 +273,12 @@ class PlanRunService:
             "startedAt": datetime.fromtimestamp(run.started_at, tz=timezone.utc).isoformat() if run.started_at else "",
             "finishedAt": datetime.fromtimestamp(run.finished_at, tz=timezone.utc).isoformat() if run.finished_at else "",
             "errorMessage": None,
+            "infoEvents": [
+                {"timestamp": datetime.fromtimestamp(run.started_at, tz=timezone.utc).isoformat(), "level": "INFO",
+                 "message": f"Plan started: planId={run.plan_id}"} if run.started_at else None,
+                {"timestamp": datetime.fromtimestamp(run.finished_at, tz=timezone.utc).isoformat(), "level": "INFO",
+                 "message": f"Plan finished: status={run.status}"} if run.finished_at else None,
+            ] if run.started_at or run.finished_at else [],
         }
 
     def get_external_plan_items(self, plan_id: str, excel_hash: str) -> dict[str, Any] | None:
@@ -277,14 +293,21 @@ class PlanRunService:
         excel = _get_latest_excel()
         filename = os.path.basename(excel.get("path", "")) if excel else ""
         items = [
-            {"deviceName": i.device_name, "taskName": i.task_name,
-             "status": i.status, "errorMessage": i.error_message}
+            {
+                "deviceName": i.device_name, "taskName": i.task_name,
+                "status": i.status, "errorMessage": i.error_message,
+                "startedAt": datetime.fromtimestamp(i.started_at, tz=timezone.utc).isoformat() if i.started_at else None,
+                "finishedAt": datetime.fromtimestamp(i.finished_at, tz=timezone.utc).isoformat() if i.finished_at else None,
+                "infoEvents": i.info_events,
+            }
             for i in run.items
         ]
         return {
             "excelHash": run.excel_hash, "planId": run.plan_id,
             "filename": filename, "status": run.status,
             "summary": run.summary, "items": items,
+            "startedAt": datetime.fromtimestamp(run.started_at, tz=timezone.utc).isoformat() if run.started_at else "",
+            "finishedAt": datetime.fromtimestamp(run.finished_at, tz=timezone.utc).isoformat() if run.finished_at else "",
         }
 
     def _get_run_by_plan_id(self, plan_id: str) -> PlanRun | None:
@@ -426,12 +449,16 @@ class PlanRunService:
         # Execute each item (serial, same as before)
         for item in run.items:
             item.status = "IN_PROGRESS"
+            item.started_at = time.time()
+            item.add_info_event("INFO", f"PlanItem started: device={item.device_name} task={item.task_name}")
 
             # Lock
             if item.lock_uri:
                 if not self._lock_mgr.acquire(item.lock_uri, f"{run.run_id}:{item.device_name}:{item.task_name}"):
                     item.status = "FAILED"
                     item.error_message = f"LOCK_CONFLICT: {item.lock_uri}"
+                    item.finished_at = time.time()
+                    item.add_info_event("ERROR", f"Lock conflict: {item.lock_uri}")
                     continue
 
             try:
@@ -442,6 +469,12 @@ class PlanRunService:
             finally:
                 if item.lock_uri:
                     self._lock_mgr.release(item.lock_uri, f"{run.run_id}:{item.device_name}:{item.task_name}")
+
+            item.finished_at = time.time()
+            if item.status == "SUCCESS":
+                item.add_info_event("INFO", f"PlanItem completed: status={item.status}")
+            else:
+                item.add_info_event("ERROR", f"PlanItem failed: status={item.status} error={item.error_message}")
 
         run.finished_at = time.time()
         run.status = "COMPLETED"
@@ -518,6 +551,7 @@ class PlanRunService:
         time.sleep(0.001)
         item.status = "SUCCESS"
         item.error_message = None
+        item.add_info_event("INFO", f"Fake execution completed: device={item.device_name} task={item.task_name}")
 
     def _execute_real(self, item: PlanRunItem, runner: Any):
         task_type = item.task_type.upper()
@@ -526,6 +560,7 @@ class PlanRunService:
         if task_type not in ("BMC", "SSH") and exec_mode not in ("BMC_URL", "BMC_ACTIONS", "SSH_CMD"):
             item.status = "FAILED"
             item.error_message = f"UNSUPPORTED_TASK_TYPE: {task_type}/{exec_mode}"
+            item.add_info_event("ERROR", item.error_message)
             return
 
         try:
@@ -533,6 +568,7 @@ class PlanRunService:
         except Exception as e:
             item.status = "FAILED"
             item.error_message = f"PAYLOAD_BUILD_FAILED: {e}"
+            item.add_info_event("ERROR", item.error_message)
             return
 
         try:
@@ -540,17 +576,21 @@ class PlanRunService:
         except Exception as e:
             item.status = "FAILED"
             item.error_message = f"RUNNER_CRASH: {e}"
+            item.add_info_event("ERROR", item.error_message)
             return
 
         if result.status == "SUCCEEDED":
             item.status = "SUCCESS"
             item.error_message = None
+            item.add_info_event("INFO", f"Real execution succeeded")
         elif result.status == "TIMEOUT":
             item.status = "FAILED"
             item.error_message = f"TIMEOUT: {result.error.get('message', '') if result.error else 'timeout'}"
+            item.add_info_event("ERROR", item.error_message)
         else:
             item.status = "FAILED"
             item.error_message = result.error.get("message", "FAILED") if result.error else "FAILED"
+            item.add_info_event("ERROR", item.error_message)
 
     def _build_job_payload(self, item: PlanRunItem) -> dict[str, Any]:
         device = item._device
@@ -651,6 +691,9 @@ class PlanRunService:
                 "taskName": item.task_name,
                 "status": item.status,
                 "errorMessage": item.error_message,
+                "startedAt": datetime.fromtimestamp(item.started_at, tz=timezone.utc).isoformat() if item.started_at else None,
+                "finishedAt": datetime.fromtimestamp(item.finished_at, tz=timezone.utc).isoformat() if item.finished_at else None,
+                "infoEvents": item.info_events,
             }
             for item in run.items
         ]

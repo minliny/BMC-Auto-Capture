@@ -126,12 +126,17 @@ def check_prerequisites() -> bool:
         return False
 
     # 检查 Playwright 浏览器
-    if is_release_package():
-        playwright_path = base_dir / "_internal" / "playwright"
-        if playwright_path.exists():
-            log("Playwright 浏览器资源存在", "SUCCESS")
-        else:
-            log("Playwright 浏览器资源未找到", "WARN")
+    # P0: unified path — runtime/playwright_browsers is the canonical location
+    # for both source and packaged exe environments.
+    playwright_paths = [
+        base_dir / "runtime" / "playwright_browsers",
+        base_dir / "_internal" / "playwright",
+    ]
+    playwright_found = any(p.exists() for p in playwright_paths)
+    if playwright_found:
+        log("Playwright 浏览器资源存在", "SUCCESS")
+    elif is_release_package():
+        log("Playwright 浏览器资源未找到 (checked runtime/playwright_browsers, _internal/playwright)", "WARN")
     else:
         # 源码包检查系统 playwright
         python_exe = sys.executable

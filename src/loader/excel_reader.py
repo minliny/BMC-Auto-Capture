@@ -274,18 +274,44 @@ def load_devices(filepath: str | Path, sheet_name: str = "设备信息") -> list
 
 
 def _load_task_defs(tasks_json_path: str | Path | None = None) -> dict[str, dict]:
-    """Load task execution definitions from tasks.json."""
-    if tasks_json_path is None:
-        tasks_json_path = Path(__file__).resolve().parent.parent.parent / "tasks.json"
-    if not os.path.exists(str(tasks_json_path)):
-        logger.warning("tasks.json not found at %s, using Excel fallback", tasks_json_path)
+    """Load task execution definitions from tasks.json.
+
+    Searches multiple paths:
+      1. Explicit tasks_json_path parameter
+      2. Source root: <project>/tasks.json
+      3. Packaged exe: <project>/_internal/tasks.json
+      4. CWD-relative: ./tasks.json
+    """
+    if tasks_json_path is not None:
+        candidates = [Path(tasks_json_path)]
+    else:
+        project_root = Path(__file__).resolve().parent.parent.parent
+        candidates = [
+            project_root / "tasks.json",
+            project_root / "_internal" / "tasks.json",
+            Path.cwd() / "tasks.json",
+            Path.cwd() / "_internal" / "tasks.json",
+        ]
+
+    found_path = None
+    for p in candidates:
+        if os.path.exists(str(p)):
+            found_path = p
+            break
+
+    if found_path is None:
+        logger.warning(
+            "tasks.json not found in any of: %s, using Excel fallback — "
+            "SSH tasks may have empty commands",
+            [str(p) for p in candidates],
+        )
         return {}
 
-    with open(str(tasks_json_path), "r", encoding="utf-8") as f:
+    with open(str(found_path), "r", encoding="utf-8") as f:
         data = json.load(f)
 
     tasks_def = data.get("tasks", {})
-    logger.info("Loaded %d task definitions from tasks.json", len(tasks_def))
+    logger.info("Loaded %d task definitions from %s", len(tasks_def), found_path)
     return tasks_def
 
 
@@ -376,8 +402,26 @@ def load_tasks(
             if tdef.get("enabled") is False:
                 enabled = False
             if not tdef:
-                execution_mode = vals[1]
-                logger.warning("No tasks.json definition for '%s', task may not execute", task_name)
+                # P0-3: no tasks.json definition → simplified format has no command column
+                # execution_mode from vals[1] is WRONG (it's the task name, not exec mode)
+                # For SSH/SSH_CMD tasks without commands, this produces empty-command tasks
+                # that SSH executor would connect but execute nothing → EXEC_SUCCESS (bug).
+                execution_mode = task_type  # Use task_type as fallback (SSH→SSH_CMD, BMC→BMC_URL)
+                if task_type in ("SSH", "TELNET") and not command_or_url:
+                    enabled = False
+                    logger.error(
+                        "P0-3: tasks.json missing for SSH task '%s' — no command available, "
+                        "disabling task to prevent false EXEC_SUCCESS", task_name,
+                    )
+                elif task_type in ("BMC",) and not command_or_url:
+                    logger.warning(
+                        "No tasks.json definition for BMC task '%s', "
+                        "and no command_or_url — task may fail", task_name,
+                    )
+                else:
+                    logger.warning(
+                        "No tasks.json definition for '%s', task may not execute correctly", task_name,
+                    )
         else:
             # Legacy full-column format — Excel provides everything as before
             match_group = vals[3] if len(vals) > 3 else ""

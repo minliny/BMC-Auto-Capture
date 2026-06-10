@@ -1,0 +1,503 @@
+"""
+Tests for P0 SSH command resolution fixes:
+  - resolve_task_command with per_group_commands
+  - Empty commands → EXEC_FAILED (COMMAND_MISSING)
+  - ONLY_LOGIN_BANNER detection
+  - tasks.json path resolution
+"""
+from __future__ import annotations
+import os, sys, json, tempfile, time
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import pytest
+
+
+# ===========================================================================
+# resolve_task_command tests
+# ===========================================================================
+
+
+class TestResolveTaskCommand:
+    """P0-1: per_group_commands consumed by SSH executor."""
+
+    def test_per_group_commands_match_returns_group_command(self):
+        from src.executor.ssh_executor import resolve_task_command
+
+        class FakeTask:
+            task_name = "光模块测试"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_commands', {
+            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical -g; done",
+        })
+
+        cmd = resolve_task_command(task, "A3")
+        assert "hccn_tool" in cmd
+        assert "display interface transceiver" not in cmd
+
+    def test_per_group_commands_no_match_fallback_to_default(self):
+        from src.executor.ssh_executor import resolve_task_command
+
+        class FakeTask:
+            task_name = "光模块测试"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_commands', {
+            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical -g; done",
+        })
+
+        cmd = resolve_task_command(task, "L1")
+        assert cmd == "display interface transceiver"
+
+    def test_no_per_group_commands_returns_command_or_url(self):
+        from src.executor.ssh_executor import resolve_task_command
+
+        class FakeTask:
+            task_name = "温度测试"
+            command_or_url = "display device temperature"
+
+        task = FakeTask()
+        cmd = resolve_task_command(task, "L1")
+        assert cmd == "display device temperature"
+
+    def test_empty_command_or_url_returns_empty(self):
+        from src.executor.ssh_executor import resolve_task_command
+
+        class FakeTask:
+            task_name = "空命令测试"
+            command_or_url = ""
+
+        task = FakeTask()
+        cmd = resolve_task_command(task, "")
+        assert cmd == ""
+
+    def test_group_case_insensitive(self):
+        from src.executor.ssh_executor import resolve_task_command
+
+        class FakeTask:
+            task_name = "test"
+            command_or_url = "default_cmd"
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_commands', {"A3": "a3_cmd"})
+
+        assert resolve_task_command(task, "a3") == "a3_cmd"
+        assert resolve_task_command(task, "A3") == "a3_cmd"
+        assert resolve_task_command(task, " a3 ") == "a3_cmd"
+
+    def test_4_1_15_a3_gets_hccn_tool(self):
+        """4.1.15 A3 must get hccn_tool, not display interface transceiver."""
+        from src.executor.ssh_executor import resolve_task_command
+
+        class FakeTask:
+            task_name = "计算节点光模块信息查询测试"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_commands', {
+            "A3": "for i in $(seq 0 15); do echo \"==============> $i\"; hccn_tool -i $i -optical-g;done",
+        })
+
+        cmd = resolve_task_command(task, "A3")
+        assert "hccn_tool" in cmd
+        assert "==============>" in cmd
+        assert "display interface transceiver" not in cmd
+
+    def test_4_1_15_l1_gets_display_interface_transceiver(self):
+        """4.1.15 L1 gets default command — display interface transceiver."""
+        from src.executor.ssh_executor import resolve_task_command
+
+        class FakeTask:
+            task_name = "计算节点光模块信息查询测试"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_commands', {
+            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical-g;done",
+        })
+
+        cmd = resolve_task_command(task, "L1")
+        assert cmd == "display interface transceiver"
+
+
+# ===========================================================================
+# Empty commands → EXEC_FAILED tests
+# ===========================================================================
+
+
+class TestEmptyCommandsDetection:
+    """P0-2: commands=[] must EXEC_FAILED, not EXEC_SUCCESS."""
+
+    def test_empty_commands_returns_exec_failed(self):
+        from src.executor.ssh_executor import SSHExecutor
+        from src.models.device import Device
+        from src.models.task import Task
+        from src.models.task_plan import TaskPlan
+
+        executor = SSHExecutor()
+        device = Device(
+            row_index=1, device_name="test-dev", device_group="A3",
+            bmc_ip="", bmc_username="", bmc_password="",
+            inband_ip="127.0.0.1",
+            inband_username="test", inband_password="test",
+        )
+        task = Task(
+            row_index=1, sequence=1, task_name="空命令测试",
+            task_type="SSH", execution_mode="SSH_CMD",
+            command_or_url="",  # Empty!
+            match_group="A3",
+        )
+        plan = TaskPlan(
+            plan_id="test-001", device=device, task=task,
+            task_id="t1",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = executor.execute(plan, tmpdir)
+            # Should fail before even trying SSH (no connection needed)
+            assert result.execution_status == "EXEC_FAILED"
+            assert "COMMAND_MISSING" in result.execution_failure_reason
+
+    def test_empty_commands_ssh_not_attempted(self):
+        """When commands are empty, SSH connection should NOT be attempted."""
+        from src.executor.ssh_executor import SSHExecutor
+        from src.models.device import Device
+        from src.models.task import Task
+        from src.models.task_plan import TaskPlan
+
+        executor = SSHExecutor()
+        device = Device(
+            row_index=1, device_name="test-dev", device_group="L1",
+            bmc_ip="", bmc_username="", bmc_password="",
+            inband_ip="192.0.2.1",  # Non-routable — would timeout if attempted
+            inband_username="test", inband_password="test",
+        )
+        task = Task(
+            row_index=1, sequence=1, task_name="no-command",
+            task_type="SSH", execution_mode="SSH_CMD",
+            command_or_url="", match_group="L1",
+        )
+        plan = TaskPlan(plan_id="p1", device=device, task=task, task_id="t1")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = executor.execute(plan, tmpdir)
+            # Must fail quickly (no SSH connection timeout)
+            assert result.execution_status == "EXEC_FAILED"
+            assert result.duration_seconds < 3.0, f"Should fail fast, took {result.duration_seconds}s"
+
+    def test_valid_commands_still_works(self):
+        """Non-empty commands should still work as before (regression check)."""
+        from src.executor.ssh_executor import SSHExecutor
+        from src.models.device import Device
+        from src.models.task import Task
+        from src.models.task_plan import TaskPlan
+
+        executor = SSHExecutor()
+        device = Device(
+            row_index=1, device_name="test-dev", device_group="A3",
+            bmc_ip="", bmc_username="", bmc_password="",
+            inband_ip="127.0.0.1",
+            inband_username="test", inband_password="test",
+        )
+        task = Task(
+            row_index=1, sequence=1, task_name="正常命令",
+            task_type="SSH", execution_mode="SSH_CMD",
+            command_or_url="echo hello",
+            match_group="A3",
+        )
+        plan = TaskPlan(plan_id="p1", device=device, task=task, task_id="t1")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = executor.execute(plan, tmpdir)
+            # Will fail due to connection refused (no SSH server on 127.0.0.1),
+            # but should NOT be COMMAND_MISSING
+            assert "COMMAND_MISSING" not in result.execution_failure_reason
+
+
+# ===========================================================================
+# tasks.json path resolution tests
+# ===========================================================================
+
+
+class TestTasksJsonPathResolution:
+    """P0-3: tasks.json found in source/_internal paths."""
+
+    def test_source_root_tasks_json_found(self, tmp_path):
+        """tasks.json at project root is found."""
+        tasks_json = tmp_path / "tasks.json"
+        tasks_json.write_text(json.dumps({"tasks": {"测试": {"task_type": "SSH"}}}),
+                              encoding="utf-8")
+
+        from src.loader.excel_reader import _load_task_defs
+        defs = _load_task_defs(str(tasks_json))
+        assert len(defs) == 1
+        assert "测试" in defs
+
+    def test_internal_tasks_json_found(self, tmp_path):
+        """tasks.json in _internal/ is found."""
+        internal_dir = tmp_path / "_internal"
+        internal_dir.mkdir()
+        tasks_json = internal_dir / "tasks.json"
+        tasks_json.write_text(json.dumps({"tasks": {"测试": {"task_type": "SSH"}}}),
+                              encoding="utf-8")
+
+        # Should find it via the internal path
+        from src.loader.excel_reader import _load_task_defs
+        # Explicit path
+        defs = _load_task_defs(str(tasks_json))
+        assert len(defs) == 1
+
+    def test_tasks_json_not_found_returns_empty(self, tmp_path):
+        """Missing tasks.json returns empty dict with warning."""
+        from src.loader.excel_reader import _load_task_defs
+        defs = _load_task_defs(str(tmp_path / "nonexistent.json"))
+        assert defs == {}
+
+
+# ===========================================================================
+# Excel fallback safety net tests
+# ===========================================================================
+
+
+class TestExcelFallbackSafety:
+    """P0-3: Simplified format without tasks.json disables SSH tasks."""
+
+    def test_simplified_no_tdef_ssh_disabled(self, tmp_path):
+        """Simplified Excel without tasks.json: SSH tasks with no command disabled."""
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "任务列表"
+        ws.append(["序号", "任务名称", "任务类型", "分组", "输出目录", "图片名", "是否启用"])
+        ws.append([1, "光模块测试", "SSH", "A3/L1/L2", "out", "img", "是"])
+        excel_path = tmp_path / "test.xlsx"
+        wb.save(str(excel_path))
+        wb.close()
+
+        from src.loader.excel_reader import load_tasks
+        tasks = load_tasks(str(excel_path), tasks_json_path=str(tmp_path / "nonexistent.json"))
+        assert len(tasks) == 1
+        # Should be disabled — no command available
+        assert tasks[0].enabled is False
+
+    def test_simplified_with_tdef_ssh_enabled(self, tmp_path):
+        """Simplified Excel with tasks.json: SSH tasks with command enabled."""
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "任务列表"
+        ws.append(["序号", "任务名称", "任务类型", "分组", "输出目录", "图片名", "是否启用"])
+        ws.append([1, "光模块测试", "SSH", "A3/L1/L2", "out", "img", "是"])
+        excel_path = tmp_path / "test.xlsx"
+        wb.save(str(excel_path))
+        wb.close()
+
+        tasks_json = tmp_path / "tasks.json"
+        tasks_json.write_text(json.dumps({
+            "tasks": {
+                "光模块测试": {
+                    "task_type": "SSH",
+                    "execution_mode": "SSH_CMD",
+                    "command_or_url": "display interface transceiver",
+                    "per_group_commands": {
+                        "A3": "hccn_tool -i 0 -optical -g"
+                    }
+                }
+            }
+        }), encoding="utf-8")
+
+        from src.loader.excel_reader import load_tasks
+        tasks = load_tasks(str(excel_path), tasks_json_path=str(tasks_json))
+        assert len(tasks) == 1
+        assert tasks[0].enabled is True
+        assert tasks[0].command_or_url == "display interface transceiver"
+        # per_group_commands should be stored
+        pgc = getattr(tasks[0], '_per_group_commands', None)
+        assert pgc is not None
+        assert "A3" in pgc
+
+    def test_legacy_format_no_tdef_still_enabled(self, tmp_path):
+        """Legacy (14-col) Excel without tasks.json: still enabled (has command column)."""
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "任务列表"
+        # 14-column legacy format
+        ws.append(["序号", "任务名称", "类型", "分组", "模式", "命令", "动作",
+                    "输出目录", "图片名", "超时", "重试", "是否启用", "规则", "备注"])
+        ws.append([1, "光模块测试", "SSH", "A3", "SSH_CMD", "display interface transceiver", "",
+                    "out", "img", 60, 0, "是", "", ""])
+        excel_path = tmp_path / "test_legacy.xlsx"
+        wb.save(str(excel_path))
+        wb.close()
+
+        from src.loader.excel_reader import load_tasks
+        tasks = load_tasks(str(excel_path), tasks_json_path=str(tmp_path / "nonexistent.json"))
+        assert len(tasks) == 1
+        assert tasks[0].enabled is True
+        assert tasks[0].command_or_url == "display interface transceiver"
+
+
+# ===========================================================================
+# PlanRunService per_group_commands resolution (existing path verification)
+# ===========================================================================
+
+
+class TestPlanRunServicePerGroupCommands:
+    """Verify PlanRunService already reads _per_group_commands."""
+
+    def test_build_job_payload_resolves_per_group(self):
+        """PlanRunService._build_job_payload uses _per_group_commands."""
+        from src.plan_run_service.service import PlanRunService, PlanRunItem
+        from src.models.device import Device
+        from src.models.task import Task
+
+        svc = PlanRunService()
+        device = Device(
+            row_index=1, device_name="test-A3", device_group="A3",
+            bmc_ip="10.0.0.1", bmc_username="", bmc_password="",
+            inband_ip="10.0.0.1",
+            inband_username="u", inband_password="p",
+        )
+        task = Task(
+            row_index=1, sequence=1, task_name="光模块",
+            task_type="SSH", execution_mode="SSH_CMD",
+            command_or_url="default_cmd",
+            match_group="A3",
+        )
+        object.__setattr__(task, '_per_group_commands', {"A3": "a3_special_cmd"})
+
+        item = PlanRunItem(
+            plan_id=1, device_name="test-A3", task_name="光模块",
+            device_group="A3", task_type="SSH", execution_mode="SSH_CMD",
+            _device=device, _task=task,
+        )
+        payload = svc._build_job_payload(item)
+        # The command in task_snapshot should be the resolved one
+        assert payload["task_snapshot"]["command_or_url"] == "a3_special_cmd"
+
+
+# ===========================================================================
+# API infoEvents / timestamp tests
+# ===========================================================================
+
+
+class TestApiInfoTimestamp:
+    """API plan query / item query must include timestamps and infoEvents."""
+
+    EXCEL_FILE = str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx")
+
+    def test_plan_query_has_started_at_finished_at(self):
+        from src.plan_run_service.service import PlanRunService, _excel_store, _store_lock
+        svc = PlanRunService()
+        svc.set_latest_excel(self.EXCEL_FILE)
+        excel_hash = svc.set_latest_excel(self.EXCEL_FILE)["excelHash"]
+        r = svc.start_external_plan({
+            "excelHash": excel_hash,
+            "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
+            "runner": "fake",
+        })
+        time.sleep(3)
+        plan = svc.get_external_plan(r["planId"], excel_hash)
+        assert plan is not None
+        assert "startedAt" in plan
+        assert "finishedAt" in plan
+        assert plan["startedAt"] != ""
+
+    def test_plan_query_has_info_events(self):
+        from src.plan_run_service.service import PlanRunService
+        svc = PlanRunService()
+        svc.set_latest_excel(self.EXCEL_FILE)
+        excel_hash = svc.set_latest_excel(self.EXCEL_FILE)["excelHash"]
+        r = svc.start_external_plan({
+            "excelHash": excel_hash,
+            "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
+            "runner": "fake",
+        })
+        time.sleep(3)
+        plan = svc.get_external_plan(r["planId"], excel_hash)
+        assert "infoEvents" in plan
+        assert isinstance(plan["infoEvents"], list)
+
+    def test_item_query_has_timestamps(self):
+        from src.plan_run_service.service import PlanRunService
+        svc = PlanRunService()
+        svc.set_latest_excel(self.EXCEL_FILE)
+        excel_hash = svc.set_latest_excel(self.EXCEL_FILE)["excelHash"]
+        r = svc.start_external_plan({
+            "excelHash": excel_hash,
+            "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
+            "runner": "fake",
+        })
+        time.sleep(3)
+        items_data = svc.get_external_plan_items(r["planId"], excel_hash)
+        for item in items_data["items"]:
+            assert "startedAt" in item, f"Item missing startedAt: {item}"
+            assert "finishedAt" in item, f"Item missing finishedAt: {item}"
+            assert item["startedAt"] is not None
+            assert item["finishedAt"] is not None
+
+    def test_item_query_has_info_events(self):
+        from src.plan_run_service.service import PlanRunService
+        svc = PlanRunService()
+        svc.set_latest_excel(self.EXCEL_FILE)
+        excel_hash = svc.set_latest_excel(self.EXCEL_FILE)["excelHash"]
+        r = svc.start_external_plan({
+            "excelHash": excel_hash,
+            "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
+            "runner": "fake",
+        })
+        time.sleep(3)
+        items_data = svc.get_external_plan_items(r["planId"], excel_hash)
+        for item in items_data["items"]:
+            assert "infoEvents" in item
+            assert isinstance(item["infoEvents"], list)
+            assert len(item["infoEvents"]) >= 1, f"Item should have at least 1 infoEvent: {item}"
+
+    def test_info_event_has_timestamp_level_message(self):
+        from src.plan_run_service.service import PlanRunService
+        svc = PlanRunService()
+        svc.set_latest_excel(self.EXCEL_FILE)
+        excel_hash = svc.set_latest_excel(self.EXCEL_FILE)["excelHash"]
+        r = svc.start_external_plan({
+            "excelHash": excel_hash,
+            "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
+            "runner": "fake",
+        })
+        time.sleep(3)
+        items_data = svc.get_external_plan_items(r["planId"], excel_hash)
+        for item in items_data["items"]:
+            for evt in item["infoEvents"]:
+                assert "timestamp" in evt, f"Event missing timestamp: {evt}"
+                assert "level" in evt, f"Event missing level: {evt}"
+                assert "message" in evt, f"Event missing message: {evt}"
+                # timestamp should be ISO format
+                assert "T" in evt["timestamp"], f"Timestamp not ISO: {evt['timestamp']}"
+                assert evt["level"] in ("INFO", "WARN", "ERROR")
+
+    def test_plan_run_item_has_info_events_field(self):
+        from src.plan_run_service.service import PlanRunItem
+        item = PlanRunItem(plan_id="p1", device_name="D1", task_name="T1")
+        item.add_info_event("INFO", "test message")
+        assert len(item.info_events) == 1
+        evt = item.info_events[0]
+        assert "timestamp" in evt
+        assert evt["level"] == "INFO"
+        assert evt["message"] == "test message"
+
+    def test_legacy_run_items_also_have_timestamps(self):
+        from src.plan_run_service.service import PlanRunService
+        svc = PlanRunService()
+        svc.set_latest_excel(self.EXCEL_FILE)
+        r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
+        time.sleep(3)
+        items_data = svc.get_run_items(r["runId"])
+        for item in items_data["items"]:
+            assert "startedAt" in item
+            assert "finishedAt" in item
+            assert "infoEvents" in item
