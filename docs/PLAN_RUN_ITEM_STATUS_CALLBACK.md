@@ -1,6 +1,16 @@
 # Plan Run Item Status Callback
 
-## 调用流程
+## 外部 Plan API 调用流程（推荐）
+
+```
+1. POST /executor/v1/config/excel          → 上传 Excel，得到 excelHash
+2. POST /executor/v1/plans with excelHash  → 启动任务批次，得到 planId
+3. 每 pair 完成 → POST itemStatusUrl       → 状态回调（含 excelHash + planId）
+4. GET /executor/v1/plans/{planId}?excelHash=...  → 查询批次汇总
+5. GET /executor/v1/plans/{planId}/items?excelHash=...  → 查询任务明细
+```
+
+## 旧兼容调用流程
 
 ```
 1. POST /executor/v1/config/excel:path → 设置最新 Excel
@@ -97,6 +107,25 @@ curl -X POST http://127.0.0.1:18000/executor/v1/plans/1:run \
 
 严格 6 字段，不包含 job_id/external_task_id/executor_id/duration_ms/artifacts。
 
+### 外部 Plan API callback payload（7 字段）
+
+外部 Plan API（`POST /executor/v1/plans`）触发的 callback 带 `excelHash`：
+
+```json
+{
+  "excelHash": "d62eaec1deb688f6066e8a4814cbe7a24f57f794b389c1490af6019732399717",
+  "planId": "plan-d62eaec1-000001",
+  "deviceName": "Switch-A",
+  "taskName": "BMC 登录检查",
+  "status": "SUCCESS",
+  "updater": "downstream-system",
+  "errorMessage": null
+}
+```
+
+旧接口（`POST /executor/v1/plans/{planId}:run`）触发的 callback 仍为 6 字段（不含 excelHash）。
+debug callback receiver 会保存收到的所有字段，包括 excelHash。
+
 ## 状态枚举分层
 
 | 上下文 | 字段 | 允许值 |
@@ -170,11 +199,14 @@ curl http://127.0.0.1:18080/plan-item-statuses
 该脚本使用 `runtime\bmc-engine.exe`，不调用 `python`。验证流程：
 1. 启动 Executor API（带 debug callback receiver）
 2. 检查 `/executor/v1/status`
-3. 检查 openapi routes
+3. 检查 openapi routes（含新旧 Plan API 路由）
 4. 设置 latest Excel
-5. 下发 PlanId=1 fake run
+5. 下发旧 PlanId=1 fake run
 6. 查询 run status 和 callback received
 7. 验证 total/success/failed/callback count
+8. 上传 Excel 并测试外部 Plan API（excelHash + planId）
+9. 验证外部 Plan 响应不暴露 runId
+10. 验证外部 Plan callback 包含 excelHash
 
 ## 当前不做的能力
 

@@ -75,6 +75,27 @@ runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --legacy-network-boo
 ```
 
 提供端点（默认 Executor API 模式）：
+
+### 外部 Plan API（推荐服务端使用，基于 excelHash + planId）
+
+服务端只需 `excelHash + planId`，无需理解 `runId/jobId` 等内部概念。
+
+```text
+1. POST /executor/v1/config/excel          → 上传 Excel，得到 excelHash
+2. POST /executor/v1/plans with excelHash  → 启动任务批次，得到 planId
+3. GET  /executor/v1/plans/{planId}?excelHash=...  → 查询批次汇总
+4. GET  /executor/v1/plans/{planId}/items?excelHash=...  → 查询任务明细
+```
+
+### 旧接口（保留兼容，新服务端不推荐使用）
+
+```text
+- POST /executor/v1/plans/{planId}:run
+- GET  /executor/v1/plans/{planId}/runs/{runId}
+- GET  /executor/v1/plans/{planId}/runs/{runId}/items
+```
+
+### 所有端点列表
 - `GET /executor/v1/status` — Executor 状态
 - `POST /executor/v1/config/excel:path` — 设置最新 Excel
 - `POST /executor/v1/plans/{planId}:run` — 启动 plan 执行

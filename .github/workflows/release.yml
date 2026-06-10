@@ -382,7 +382,10 @@ jobs:
             $required = @(
               "/executor/v1/status",
               "/executor/v1/config/excel:path",
+              "/executor/v1/plans",
               "/executor/v1/plans/{plan_id}:run",
+              "/executor/v1/plans/{plan_id}",
+              "/executor/v1/plans/{plan_id}/items",
               "/executor/v1/plans/{plan_id}/runs/{run_id}",
               "/debug/plan-item-statuses"
             )

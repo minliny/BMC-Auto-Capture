@@ -150,7 +150,10 @@ try {
         $required = @(
             "/executor/v1/status",
             "/executor/v1/config/excel:path",
+            "/executor/v1/plans",
             "/executor/v1/plans/{plan_id}:run",
+            "/executor/v1/plans/{plan_id}",
+            "/executor/v1/plans/{plan_id}/items",
             "/executor/v1/plans/{plan_id}/runs/{run_id}",
             "/health", "/version", "/network/ping",
             "/debug/plan-item-statuses"
@@ -286,9 +289,79 @@ try {
     }
 
     # ======================================================================
-    # 11. Verify build_info.json exists
+    # 11. External Plan API smoke (excelHash + planId)
     # ======================================================================
-    Write-Step "11. Checking build_info.json"
+    Write-Step "11. Testing external Plan API (excelHash + planId)"
+
+    # Get excelHash from latest config
+    $latestResp = Invoke-Api -Method GET -Path "/executor/v1/config/latest"
+    if ($null -eq $latestResp -or -not $latestResp.hasLatest) {
+        Write-Fail "No latest config found for external plan test"
+    } else {
+        $excelHash = $latestResp.excelHash
+        if (-not $excelHash) {
+            Write-Fail "latest config missing excelHash"
+        } else {
+            Write-Pass "excelHash=$excelHash"
+
+            # Start external plan
+            $extResp = Invoke-Api -Method POST -Path "/executor/v1/plans" -Body @{
+                excelHash = $excelHash
+                callback = @{ itemStatusUrl = "${BaseUrl}/debug/plan-item-statuses" }
+                runner = "fake"
+                updater = "ext-smoke"
+            }
+            if ($null -eq $extResp -or -not $extResp.accepted) {
+                Write-Fail "External plan NOT accepted: $($extResp | ConvertTo-Json -Compress)"
+            } else {
+                $planId = $extResp.planId
+                if ($extResp.PSObject.Properties.Name -contains "runId") {
+                    Write-Fail "External plan response must NOT contain runId"
+                } else {
+                    Write-Pass "External plan accepted: planId=$planId (no runId exposed)"
+                }
+
+                # Wait and query plan summary
+                Start-Sleep -Seconds 3
+                $planResp = Invoke-Api -Method GET -Path "/executor/v1/plans/${planId}?excelHash=${excelHash}"
+                if ($null -eq $planResp) {
+                    Write-Fail "Could not get external plan status"
+                } else {
+                    Write-Pass "External plan status: $($planResp.status) total=$($planResp.summary.total)"
+                }
+
+                # Query plan items
+                $itemsResp = Invoke-Api -Method GET -Path "/executor/v1/plans/${planId}/items?excelHash=${excelHash}"
+                if ($null -eq $itemsResp) {
+                    Write-Fail "Could not get external plan items"
+                } else {
+                    $itemCount = $itemsResp.items.Count
+                    if ($itemCount -ne $itemsResp.summary.total) {
+                        Write-Fail "Items count ($itemCount) != summary.total ($($itemsResp.summary.total))"
+                    } else {
+                        Write-Pass "External plan items: $itemCount items, matches summary.total"
+                    }
+                }
+
+                # Verify debug callbacks for external plan include excelHash
+                $cbResp2 = Invoke-Api -Method GET -Path "/debug/plan-item-statuses"
+                $extCallbacks = @($cbResp2.items | Where-Object {
+                    $_.payload.PSObject.Properties.Name -contains "excelHash" -and
+                    $_.payload.excelHash -eq $excelHash
+                })
+                if ($extCallbacks.Count -gt 0) {
+                    Write-Pass "External plan callbacks include excelHash ($($extCallbacks.Count) callbacks)"
+                } else {
+                    Write-Fail "No external plan callbacks found with excelHash"
+                }
+            }
+        }
+    }
+
+    # ======================================================================
+    # 12. Verify build_info.json exists
+    # ======================================================================
+    Write-Step "12. Checking build_info.json"
     $buildInfoPath = ".\runtime\build_info.json"
     if (Test-Path $buildInfoPath) {
         $bi = Get-Content $buildInfoPath -Raw | ConvertFrom-Json
@@ -316,7 +389,10 @@ try {
         Write-Host "Key endpoints verified:"
         Write-Host "  /executor/v1/status"
         Write-Host "  /executor/v1/config/excel:path"
+        Write-Host "  /executor/v1/plans (external API)"
         Write-Host "  /executor/v1/plans/{plan_id}:run"
+        Write-Host "  /executor/v1/plans/{plan_id}"
+        Write-Host "  /executor/v1/plans/{plan_id}/items"
         Write-Host "  /executor/v1/plans/{plan_id}/runs/{run_id}"
         Write-Host "  /debug/plan-item-statuses (built-in callback receiver)"
         exit 0

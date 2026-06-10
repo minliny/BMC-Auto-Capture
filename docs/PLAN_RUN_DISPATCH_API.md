@@ -4,6 +4,19 @@ FINAL_OUTPUT_BEGIN
 
 ## 工作流
 
+### 推荐服务端协议（基于 excelHash + planId）
+
+```
+1. POST /executor/v1/config/excel          → 上传 Excel，得到 excelHash
+2. POST /executor/v1/plans with excelHash  → 启动任务批次，得到 planId
+3. GET  /executor/v1/plans/{planId}?excelHash=...  → 查询批次汇总
+4. GET  /executor/v1/plans/{planId}/items?excelHash=...  → 查询任务明细
+```
+
+服务端只需 `excelHash + planId`，无需理解 `runId/jobId` 等内部概念。
+
+### 旧兼容协议（保留，新接入不推荐）
+
 ```
 服务端 + 执行端：共享同一份 Excel + validation.json
                     ↓
@@ -18,6 +31,79 @@ FINAL_OUTPUT_BEGIN
                     ↓
 执行端 → POST callback.task_status_url    (每 task 状态变更)
 ```
+
+## 外部 Plan API（excelHash + planId）
+
+### POST /executor/v1/plans — 启动外部 Plan
+
+请求：
+```json
+{
+  "excelHash": "d62eaec1deb688f6066e8a4814cbe7a24f57f794b389c1490af6019732399717",
+  "callback": {"itemStatusUrl": "http://server/item-status-callback"},
+  "runner": "fake",
+  "updater": "downstream-system"
+}
+```
+
+成功响应：
+```json
+{
+  "accepted": true,
+  "excelHash": "d62eaec1deb688f6066e8a4814cbe7a24f57f794b389c1490af6019732399717",
+  "planId": "plan-d62eaec1-000001",
+  "filename": "_test_one_per_group.xlsx",
+  "status": "ACCEPTED"
+}
+```
+
+错误响应：
+- `MISSING_EXCEL_HASH` (400)
+- `EXCEL_HASH_MISMATCH` (400) — 请求的 excelHash 与 latest Excel 不一致
+- `NO_LATEST_EXCEL_CONFIG` (400)
+
+### GET /executor/v1/plans/{planId} — 查询 Plan 汇总
+
+请求需带 query param `excelHash`。
+
+成功：
+```json
+{
+  "excelHash": "d62eaec1deb688f6066e8a4814cbe7a24f57f794b389c1490af6019732399717",
+  "planId": "plan-d62eaec1-000001",
+  "filename": "_test_one_per_group.xlsx",
+  "status": "COMPLETED",
+  "summary": {"total": 28, "success": 28, "failed": 0, "running": 0, "pending": 0},
+  "startedAt": "2026-06-10T10:00:00",
+  "finishedAt": "2026-06-10T10:00:03",
+  "errorMessage": null
+}
+```
+
+错误：
+- `MISSING_EXCEL_HASH` (400)
+- `PLAN_NOT_FOUND` (404)
+- `PLAN_EXCEL_HASH_MISMATCH` (400)
+
+### GET /executor/v1/plans/{planId}/items — 查询 Plan 明细
+
+请求需带 query param `excelHash`。
+
+成功：
+```json
+{
+  "excelHash": "d62eaec1deb688f6066e8a4814cbe7a24f57f794b389c1490af6019732399717",
+  "planId": "plan-d62eaec1-000001",
+  "filename": "_test_one_per_group.xlsx",
+  "status": "COMPLETED",
+  "summary": {"total": 28, "success": 28, "failed": 0, "running": 0, "pending": 0},
+  "items": [
+    {"deviceName": "A3-01", "taskName": "4.1.15 计算节点光模块信息查询测试", "status": "SUCCESS", "errorMessage": null}
+  ]
+}
+```
+
+## 旧兼容接口
 
 ## /plans:import
 
