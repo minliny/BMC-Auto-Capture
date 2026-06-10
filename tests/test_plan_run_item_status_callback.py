@@ -254,7 +254,7 @@ class TestRealRunner:
         transport = FakeCallbackTransport()
         svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
-        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb"}})
+        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_all_sync(r["runId"])
         for call in transport.calls:
             assert call["payload"]["status"] == "SUCCESS"
@@ -271,7 +271,7 @@ class TestRealRunner:
         transport = FakeCallbackTransport()
         svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
-        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb"}})
+        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_all_sync(r["runId"])
         has_failed = False
         for call in transport.calls:
@@ -290,7 +290,7 @@ class TestRealRunner:
         transport = FakeCallbackTransport()
         svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
-        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb"}})
+        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_all_sync(r["runId"])
         has_failed = False
         for call in transport.calls:
@@ -309,7 +309,7 @@ class TestRealRunner:
         transport = FakeCallbackTransport()
         svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
-        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb"}})
+        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_all_sync(r["runId"])
         required = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage"}
         forbidden = {"job_id", "external_task_id", "executor_id", "duration_ms", "artifacts"}
@@ -328,7 +328,7 @@ class TestRealRunner:
         transport = FakeCallbackTransport()
         svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
-        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb"}})
+        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_all_sync(r["runId"])
         for call in transport.calls:
             assert call["payload"]["deviceName"] != ""
@@ -344,7 +344,7 @@ class TestRealRunner:
         transport = FakeCallbackTransport()
         svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
-        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb"}})
+        r = svc.start_plan_run(1, {"runner": "real", "callback": {"itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_all_sync(r["runId"])
         for call in transport.calls:
             assert call["payload"]["taskName"] != ""
@@ -515,3 +515,405 @@ class TestRegression:
         from src.executor_api_server.service import DirectDispatchService
         svc = DirectDispatchService(executor_id="exec-test")
         assert svc is not None
+
+
+# ===========================================================================
+# Server PlanItem Status API Compat — New tests
+# ===========================================================================
+
+
+class TestStatusMapping:
+    """Status mapping: internal → server."""
+
+    def test_pending_maps_to_pending(self):
+        from src.plan_item_status_callback_client import map_status_to_server
+        assert map_status_to_server("PENDING") == "PENDING"
+
+    def test_running_maps_to_in_progress(self):
+        from src.plan_item_status_callback_client import map_status_to_server
+        assert map_status_to_server("RUNNING") == "IN_PROGRESS"
+
+    def test_success_maps_to_success(self):
+        from src.plan_item_status_callback_client import map_status_to_server
+        assert map_status_to_server("SUCCESS") == "SUCCESS"
+
+    def test_failed_maps_to_failed(self):
+        from src.plan_item_status_callback_client import map_status_to_server
+        assert map_status_to_server("FAILED") == "FAILED"
+
+    def test_lowercase_status_maps_correctly(self):
+        from src.plan_item_status_callback_client import map_status_to_server
+        assert map_status_to_server("pending") == "PENDING"
+        assert map_status_to_server("running") == "IN_PROGRESS"
+
+    def test_unknown_status_raises(self):
+        from src.plan_item_status_callback_client import map_status_to_server
+        import pytest as pt
+        with pt.raises(ValueError, match="CALLBACK_STATUS_MAPPING_ERROR"):
+            map_status_to_server("UNKNOWN")
+
+    def test_empty_status_raises(self):
+        from src.plan_item_status_callback_client import map_status_to_server
+        import pytest as pt
+        with pt.raises(ValueError, match="CALLBACK_STATUS_MAPPING_ERROR"):
+            map_status_to_server("")
+
+
+class TestBuildCallbackItem:
+    """build_callback_item produces correct 6-field dict."""
+
+    def test_item_has_exactly_6_fields(self):
+        from src.plan_item_status_callback_client import build_callback_item
+        item = build_callback_item("plan-abc-001", "D1", "T1", "SUCCESS")
+        assert set(item.keys()) == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage"}
+
+    def test_plan_id_is_string(self):
+        from src.plan_item_status_callback_client import build_callback_item
+        item = build_callback_item("plan-abc-001", "D1", "T1", "SUCCESS")
+        assert isinstance(item["planId"], str)
+        assert item["planId"] == "plan-abc-001"
+
+    def test_no_forbidden_fields(self):
+        from src.plan_item_status_callback_client import build_callback_item
+        item = build_callback_item("plan-abc-001", "D1", "T1", "SUCCESS", error_message="err")
+        forbidden = {"excelHash", "executorPlanId", "serverPlanId", "runId", "jobId",
+                      "password", "token", "secret"}
+        assert not (set(item.keys()) & forbidden)
+
+    def test_status_is_mapped(self):
+        from src.plan_item_status_callback_client import build_callback_item
+        item = build_callback_item("p1", "D1", "T1", "RUNNING")
+        assert item["status"] == "IN_PROGRESS"
+
+    def test_plan_id_int_converted_to_str(self):
+        from src.plan_item_status_callback_client import build_callback_item
+        item = build_callback_item(42, "D1", "T1", "SUCCESS")
+        assert item["planId"] == "42"
+        assert isinstance(item["planId"], str)
+
+
+class TestBatchCallbackClient:
+    """send_batch / send_single unit tests with FakeCallbackTransport."""
+
+    def test_send_batch_empty_items_returns_zero_result(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient
+        cb = PlanItemStatusCallbackClient()
+        result = cb.send_batch("http://cb", [])
+        assert result.total == 0
+        assert result.batches == 0
+        assert result.ok
+
+    def test_send_batch_payload_is_items_wrapped(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        items = [build_callback_item("p1", f"D{i}", f"T{i}", "SUCCESS") for i in range(3)]
+        cb.send_batch("http://cb", items)
+        assert len(transport.calls) == 1
+        assert "items" in transport.calls[0]["payload"]
+        assert len(transport.calls[0]["payload"]["items"]) == 3
+
+    def test_send_batch_all_plan_ids_same(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        items = [build_callback_item("plan-abc", f"D{i}", f"T{i}", "SUCCESS") for i in range(5)]
+        cb.send_batch("http://cb", items)
+        batch_items = transport.calls[0]["payload"]["items"]
+        plan_ids = {it["planId"] for it in batch_items}
+        assert plan_ids == {"plan-abc"}
+
+    def test_send_batch_chunks_at_1000(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        items = [build_callback_item("p1", f"D{i}", f"T{i}", "SUCCESS") for i in range(2500)]
+        result = cb.send_batch("http://cb", items, max_batch_size=1000)
+        assert result.batches == 3
+        assert len(transport.calls) == 3
+        assert len(transport.calls[0]["payload"]["items"]) == 1000
+        assert len(transport.calls[1]["payload"]["items"]) == 1000
+        assert len(transport.calls[2]["payload"]["items"]) == 500
+
+    def test_send_single_no_items_field(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        item = build_callback_item("p1", "D1", "T1", "SUCCESS")
+        cb.send_single("http://cb", item)
+        assert len(transport.calls) == 1
+        payload = transport.calls[0]["payload"]
+        assert "planId" in payload
+        assert "deviceName" in payload
+        assert "items" not in payload
+
+    def test_send_batch_content_type_is_utf8(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        items = [build_callback_item("p1", "D1", "T1", "SUCCESS")]
+        cb.send_batch("http://cb", items)
+        ct = transport.calls[0]["headers"].get("Content-Type", "")
+        assert "application/json" in ct
+        assert "charset=utf-8" in ct
+
+    def test_send_single_content_type_is_utf8(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        item = build_callback_item("p1", "D1", "T1", "SUCCESS")
+        cb.send_single("http://cb", item)
+        ct = transport.calls[0]["headers"].get("Content-Type", "")
+        assert "application/json" in ct
+        assert "charset=utf-8" in ct
+
+    def test_batch_no_excel_hash_in_payload(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        items = [build_callback_item("p1", "D1", "T1", "SUCCESS")]
+        cb.send_batch("http://cb", items)
+        payload_str = str(transport.calls[0]["payload"])
+        assert "excelHash" not in payload_str
+
+    def test_single_no_excel_hash_in_payload(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        item = build_callback_item("p1", "D1", "T1", "SUCCESS")
+        cb.send_single("http://cb", item)
+        payload_str = str(transport.calls[0]["payload"])
+        assert "excelHash" not in payload_str
+
+
+class TestCallbackResponseParsing:
+    """Server response parsing and error classification."""
+
+    def test_success_response_code0_failed0(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        transport.configure_response(200, '{"code":0,"message":"success","data":{"total":10,"success":10,"failed":0,"errors":[]}}')
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        result = cb.send_batch("http://cb", [build_callback_item("p1", f"D{i}", f"T{i}", "SUCCESS") for i in range(10)])
+        assert result.ok
+        assert result.success == 10
+        assert result.failed == 0
+
+    def test_partial_failure_code0_failed_gt0(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        transport.configure_response(200, '{"code":0,"message":"success","data":{"total":3,"success":2,"failed":1,"errors":[{"planId":"p1","reason":"not found"}]}}')
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        result = cb.send_batch("http://cb", [build_callback_item("p1", f"D{i}", f"T{i}", "SUCCESS") for i in range(3)])
+        assert not result.ok
+        assert result.last_error == "CALLBACK_PARTIAL_FAILURE"
+        assert result.success == 2
+        assert result.failed == 1
+        assert len(result.errors) == 1
+
+    def test_http_500_classified_as_http_error(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        transport.configure_response(500, "Internal Server Error")
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        result = cb.send_batch("http://cb", [build_callback_item("p1", "D1", "T1", "SUCCESS")])
+        assert "CALLBACK_HTTP_ERROR: HTTP 500" in (result.last_error or "")
+
+    def test_non_json_response_classified_as_parse_error(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        transport.configure_response(200, "not json at all!!!")
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        result = cb.send_batch("http://cb", [build_callback_item("p1", "D1", "T1", "SUCCESS")])
+        assert "CALLBACK_PARSE_ERROR" in (result.last_error or "")
+
+    def test_400_batch_too_large(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        transport.configure_response(400, '{"code":400,"message":"Batch size exceeds maximum of 1000"}')
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        result = cb.send_batch("http://cb", [build_callback_item("p1", "D1", "T1", "SUCCESS")])
+        assert "CALLBACK_BATCH_TOO_LARGE" in (result.last_error or "")
+
+    def test_400_plan_id_mismatch(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        transport.configure_response(400, '{"code":400,"message":"All items must belong to the same plan"}')
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        result = cb.send_batch("http://cb", [build_callback_item("p1", "D1", "T1", "SUCCESS")])
+        assert "CALLBACK_PLAN_ID_MISMATCH" in (result.last_error or "")
+
+    def test_400_empty_items(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        transport.configure_response(400, '{"code":400,"message":"Items list cannot be empty"}')
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        result = cb.send_batch("http://cb", [build_callback_item("p1", "D1", "T1", "SUCCESS")])
+        assert "CALLBACK_EMPTY_ITEMS" in (result.last_error or "")
+
+
+class TestBatchModeIntegration:
+    """Integration tests: batch mode through PlanRunService."""
+
+    def test_default_mode_is_batch(self):
+        svc = PlanRunService()
+        svc.set_latest_excel(EXCEL_FILE)
+        transport = FakeCallbackTransport()
+        svc._cb_transport = transport
+        r = svc.start_plan_run(1, {"callback": {"itemStatusUrl": "http://cb"}})
+        # Wait for background thread to complete; run_all_sync may re-execute
+        time.sleep(3)
+        run = svc.get_run(r["runId"])
+        # With batch mode, transport receives the batch (at least once)
+        assert len(transport.calls) >= 1
+        first_call = transport.calls[0]
+        assert "items" in first_call["payload"]
+        batch_count = len(first_call["payload"]["items"])
+        assert batch_count == run["summary"]["total"]
+
+    def test_single_mode_sends_per_item(self):
+        svc = PlanRunService()
+        svc.set_latest_excel(EXCEL_FILE)
+        transport = FakeCallbackTransport()
+        svc._cb_transport = transport
+        r = svc.start_plan_run(1, {"callback": {"itemStatusUrl": "http://cb", "mode": "single"}})
+        time.sleep(3)
+        run = svc.get_run(r["runId"])
+        # Single mode: each item gets its own POST
+        assert len(transport.calls) >= run["summary"]["total"]
+        for call in transport.calls[:run["summary"]["total"]]:
+            assert "planId" in call["payload"]
+            assert "items" not in call["payload"]
+
+    def test_batch_mode_items_use_mapped_status(self):
+        svc = PlanRunService()
+        svc.set_latest_excel(EXCEL_FILE)
+        transport = FakeCallbackTransport()
+        svc._cb_transport = transport
+        r = svc.start_plan_run(1, {"callback": {"itemStatusUrl": "http://cb"}})
+        time.sleep(3)
+        batch_items = transport.calls[0]["payload"]["items"]
+        for item in batch_items:
+            assert item["status"] in ("PENDING", "IN_PROGRESS", "SUCCESS", "FAILED")
+
+    def test_callback_failure_does_not_change_plan_status(self):
+        svc = PlanRunService()
+        svc.set_latest_excel(EXCEL_FILE)
+        transport = FakeCallbackTransport()
+        transport.set_failure()
+        svc._cb_transport = transport
+        r = svc.start_plan_run(1, {"callback": {"itemStatusUrl": "http://cb"}})
+        time.sleep(3)
+        run = svc.get_run(r["runId"])
+        # Plan status is still COMPLETED even though callback failed
+        assert run["status"] == "COMPLETED"
+        assert run["summary"]["success"] == run["summary"]["total"]
+
+    def test_external_plan_default_batch_mode(self):
+        svc = PlanRunService()
+        svc.set_latest_excel(EXCEL_FILE)
+        excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
+        transport = FakeCallbackTransport()
+        svc._cb_transport = transport
+        r = svc.start_external_plan({
+            "excelHash": excel_hash,
+            "callback": {"itemStatusUrl": "http://cb"},
+            "runner": "fake",
+        })
+        time.sleep(3)
+        assert len(transport.calls) >= 1
+        assert "items" in transport.calls[0]["payload"]
+
+    def test_external_plan_single_mode(self):
+        svc = PlanRunService()
+        svc.set_latest_excel(EXCEL_FILE)
+        excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
+        transport = FakeCallbackTransport()
+        svc._cb_transport = transport
+        r = svc.start_external_plan({
+            "excelHash": excel_hash,
+            "callback": {"itemStatusUrl": "http://cb", "mode": "single"},
+            "runner": "fake",
+        })
+        time.sleep(3)
+        assert len(transport.calls) > 0
+        for call in transport.calls:
+            assert "planId" in call["payload"]
+            assert "items" not in call["payload"]
+
+    def test_invalid_callback_mode_rejected(self):
+        svc = PlanRunService()
+        svc.set_latest_excel(EXCEL_FILE)
+        r = svc.start_plan_run(1, {"callback": {"itemStatusUrl": "http://cb", "mode": "invalid"}})
+        assert r["accepted"] is False
+        assert "INVALID_CALLBACK_MODE" in (r.get("reason", "") or r.get("errorMessage", ""))
+
+
+class TestCallbackEncoding:
+    """UTF-8 encoding tests."""
+
+    def test_utf8_chinese_device_name_in_callback(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        transport = FakeCallbackTransport()
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        items = [build_callback_item("p1", "设备A", "任务X", "SUCCESS")]
+        cb.send_batch("http://cb", items)
+        payload = transport.calls[0]["payload"]
+        batch_item = payload["items"][0]
+        assert batch_item["deviceName"] == "设备A"
+        assert batch_item["taskName"] == "任务X"
+
+    def test_utf8_payload_json_encodable(self):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, build_callback_item
+        import json
+        transport = FakeCallbackTransport()
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        items = [build_callback_item("p1", "设备A", "任务X", "SUCCESS")]
+        cb.send_batch("http://cb", items)
+        # Verify the payload is JSON-serializable without errors
+        payload = transport.calls[0]["payload"]
+        encoded = json.dumps(payload, ensure_ascii=False)
+        assert "设备A" in encoded
+        assert "任务X" in encoded
+        # Re-parse to verify round-trip
+        decoded = json.loads(encoded)
+        assert decoded["items"][0]["deviceName"] == "设备A"
+
+
+class TestPlanItemCountEdgeCases:
+    """Edge cases for item counts."""
+
+    def test_items_count_equals_summary_total(self):
+        svc = PlanRunService()
+        svc.set_latest_excel(EXCEL_FILE)
+        transport = FakeCallbackTransport()
+        svc._cb_transport = transport
+        r = svc.start_plan_run(1, {"callback": {"itemStatusUrl": "http://cb"}})
+        time.sleep(3)
+        run = svc.get_run(r["runId"])
+        batch_items = transport.calls[0]["payload"]["items"]
+        assert len(batch_items) == run["summary"]["total"]
+
+    def test_external_plan_id_is_string(self):
+        svc = PlanRunService()
+        svc.set_latest_excel(EXCEL_FILE)
+        excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
+        r = svc.start_external_plan({
+            "excelHash": excel_hash,
+            "callback": {"itemStatusUrl": "http://cb"},
+            "runner": "fake",
+        })
+        assert isinstance(r["planId"], str)
+        assert r["planId"].startswith("plan-")
+
+    def test_external_plan_response_no_run_id(self):
+        svc = PlanRunService()
+        svc.set_latest_excel(EXCEL_FILE)
+        excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
+        r = svc.start_external_plan({
+            "excelHash": excel_hash,
+            "callback": {"itemStatusUrl": "http://cb"},
+            "runner": "fake",
+        })
+        assert "runId" not in r
+        assert "jobId" not in r

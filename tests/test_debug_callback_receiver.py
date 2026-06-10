@@ -183,9 +183,16 @@ class TestDebugCallbackWithPlanRun:
 
             def post(self, url, payload, headers):
                 self.calls.append({"url": url, "payload": dict(payload)})
-                entry = {"receivedAt": time.time(), "payload": dict(payload)}
-                with _debug_callback_lock:
-                    _debug_callback_store.append(entry)
+                # Handle batch payload: expand items into individual entries
+                if "items" in payload:
+                    for item in payload["items"]:
+                        entry = {"receivedAt": time.time(), "payload": dict(item)}
+                        with _debug_callback_lock:
+                            _debug_callback_store.append(entry)
+                else:
+                    entry = {"receivedAt": time.time(), "payload": dict(payload)}
+                    with _debug_callback_lock:
+                        _debug_callback_store.append(entry)
                 return 200, '{"ok":true}'
 
         svc = DirectDispatchService(executor_id="test-plan-run-debug")
