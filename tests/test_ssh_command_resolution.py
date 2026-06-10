@@ -762,6 +762,136 @@ class TestParseCommandSpecWithOverride:
         excel = str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx")
         svc = PlanRunService()
         svc.set_latest_excel(excel)
+
+
+# ===========================================================================
+# no_split tests
+# ===========================================================================
+
+
+class TestNoSplit:
+    """Verify no_split prevents ; splitting for shell compound commands."""
+
+    def test_resolve_task_no_split_a3_true(self):
+        from src.executor.ssh_executor import resolve_task_no_split
+
+        class FakeTask:
+            pass
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_no_split', {"A3": True})
+
+        assert resolve_task_no_split(task, "A3") is True
+        assert resolve_task_no_split(task, "L1") is False
+
+    def test_resolve_task_no_split_global(self):
+        from src.executor.ssh_executor import resolve_task_no_split
+
+        class FakeTask:
+            pass
+
+        task = FakeTask()
+        object.__setattr__(task, '_no_split', True)
+
+        assert resolve_task_no_split(task, "A3") is True
+        assert resolve_task_no_split(task, "L1") is True
+
+    def test_resolve_task_no_split_not_configured(self):
+        from src.executor.ssh_executor import resolve_task_no_split
+
+        class FakeTask:
+            pass
+
+        task = FakeTask()
+        assert resolve_task_no_split(task, "A3") is False
+
+    def test_parse_commands_no_split_keeps_for_loop_intact(self):
+        from src.executor.ssh_executor import SSHExecutor
+        e = SSHExecutor()
+        cmd = 'for i in $(seq 0 15); do echo "==============> $i"; hccn_tool -i $i -optical-g;done'
+        result = e._parse_commands(cmd, no_split=True)
+        assert len(result) == 1, f"Expected 1 command, got {len(result)}: {result}"
+        assert result[0] == cmd
+
+    def test_parse_commands_normal_split_by_semicolon(self):
+        from src.executor.ssh_executor import SSHExecutor
+        e = SSHExecutor()
+        cmd = 'for i in $(seq 0 15); do echo "> $i"; hccn_tool -i $i -optical-g;done'
+        result = e._parse_commands(cmd, no_split=False)
+        # Without no_split, ; causes splitting
+        assert len(result) > 1
+
+    def test_parse_commands_normal_uname_not_split(self):
+        from src.executor.ssh_executor import SSHExecutor
+        e = SSHExecutor()
+        # uname -a has no ; → stays as 1
+        result = e._parse_commands("uname -a", no_split=False)
+        assert len(result) == 1
+        assert result[0] == "uname -a"
+
+    def test_parse_commands_multiline_not_split_without_no_split(self):
+        from src.executor.ssh_executor import SSHExecutor
+        e = SSHExecutor()
+        cmd = "npu-smi info\n/usr/local/bin/tool --version"
+        result = e._parse_commands(cmd, no_split=False)
+        assert len(result) == 2
+
+    def test_full_4_1_15_a3_no_split_chain(self):
+        from src.executor.ssh_executor import SSHExecutor, resolve_task_command, resolve_task_no_split
+
+        e = SSHExecutor()
+
+        class FakeTask:
+            task_name = "计算节点光模块信息查询测试"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_commands', {
+            "A3": 'for i in $(seq 0 15); do echo "==============> $i"; hccn_tool -i $i -optical-g;done',
+        })
+        object.__setattr__(task, '_per_group_no_split', {"A3": True})
+
+        # Full chain: resolve → no_split check → parse
+        resolved = resolve_task_command(task, "A3")
+        assert "hccn_tool" in resolved
+        assert resolve_task_no_split(task, "A3") is True
+
+        spec = e._parse_command_spec(task, override_command=resolved, no_split=True)
+        commands = spec["commands"]
+        assert len(commands) == 1, f"Expected 1 command with no_split, got {len(commands)}"
+        assert "hccn_tool" in commands[0][1]
+        assert "-optical-g" in commands[0][1]
+        assert "display interface transceiver" not in commands[0][1]
+
+    def test_4_1_15_l1_no_no_split_fallback(self):
+        from src.executor.ssh_executor import SSHExecutor, resolve_task_command, resolve_task_no_split
+
+        e = SSHExecutor()
+
+        class FakeTask:
+            task_name = "计算节点光模块信息查询测试"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_commands', {
+            "A3": 'for i in $(seq 0 15); do hccn_tool -i $i -optical-g;done',
+        })
+        object.__setattr__(task, '_per_group_no_split', {"A3": True})
+
+        # L1: no per_group_commands match → fallback, no no_split
+        resolved = resolve_task_command(task, "L1")
+        assert resolved == "display interface transceiver"
+        assert resolve_task_no_split(task, "L1") is False
+
+        spec = e._parse_command_spec(task, override_command=resolved, no_split=False)
+        assert len(spec["commands"]) == 1
+        assert spec["commands"][0][1] == "display interface transceiver"
+
+    def test_legacy_run_items_also_have_timestamps(self):
+        from src.plan_run_service.service import PlanRunService
+        excel = str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx")
+        svc = PlanRunService()
+        svc.set_latest_excel(excel)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         time.sleep(3)
         items_data = svc.get_run_items(r["runId"])

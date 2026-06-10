@@ -33,6 +33,22 @@ MAX_MORE_PAGES = 200
 # Unified command resolution
 # ---------------------------------------------------------------------------
 
+def resolve_task_no_split(task, device_group: str = "") -> bool:
+    """Check whether the resolved command for this device group should NOT be split.
+
+    Priority:
+      1. per_group_no_split[device_group] — group-specific override
+      2. task._no_split — global no_split flag
+
+    Returns True if the command should be kept as a single raw command.
+    """
+    pg_ns = getattr(task, '_per_group_no_split', None) or {}
+    dg = (device_group or "").strip().upper()
+    if pg_ns and dg and dg in pg_ns:
+        return bool(pg_ns[dg])
+    return bool(getattr(task, '_no_split', False))
+
+
 def resolve_task_command(task, device_group: str = "") -> str:
     """Resolve the effective command for a task on a specific device group.
 
@@ -229,8 +245,9 @@ class SSHExecutor(AbstractExecutor):
         # _parse_command_spec must receive the resolved command, NOT raw command_or_url.
         dg = getattr(device, 'device_group', '') or ''
         resolved_cmd = resolve_task_command(task, dg)
+        no_split = resolve_task_no_split(task, dg)
 
-        cmd_spec = self._parse_command_spec(task, override_command=resolved_cmd)
+        cmd_spec = self._parse_command_spec(task, override_command=resolved_cmd, no_split=no_split)
         commands = cmd_spec["commands"]
         cmd_outputs: dict[str, str] = {}
         variables: dict[str, str] = {}
@@ -782,11 +799,15 @@ class SSHExecutor(AbstractExecutor):
     # ------------------------------------------------------------------
     # Command spec parsing
     # ------------------------------------------------------------------
-    def _parse_command_spec(self, task, override_command: str | None = None) -> dict:
+    def _parse_command_spec(self, task, override_command: str | None = None,
+                            no_split: bool = False) -> dict:
         """Parse task commands. If override_command is given, use it instead of task.command_or_url.
 
         This is the SINGLE point where commands enter the execution pipeline.
         All callers MUST pass the output of resolve_task_command() as override_command.
+
+        If no_split is True, the entire command string is kept as a single raw command
+        (no ; or \\n splitting).  This preserves shell compound commands like for/do/done.
         """
         raw = (override_command if override_command is not None else task.command_or_url).strip()
         if not raw:
@@ -808,16 +829,23 @@ class SSHExecutor(AbstractExecutor):
             except json.JSONDecodeError:
                 pass
 
-        cmd_list = self._parse_commands(raw)
+        cmd_list = self._parse_commands(raw, no_split=no_split)
         return {
             "commands": [(f"cmd_{i}", c) for i, c in enumerate(cmd_list)],
             "extractors": [],
             "checkpoints": [],
         }
 
-    def _parse_commands(self, raw: str) -> list[str]:
+    def _parse_commands(self, raw: str, no_split: bool = False) -> list[str]:
+        """Parse raw command string into a list of individual commands.
+
+        If no_split is True, returns the raw string as a single command entry,
+        preserving shell compound structures (for/do/done, if/fi, etc.).
+        """
         if not raw.strip():
             return []
+        if no_split:
+            return [raw.strip()]
         if "\n" in raw:
             return [c.strip() for c in raw.split("\n") if c.strip()]
         return [c.strip() for c in raw.split(";") if c.strip()]

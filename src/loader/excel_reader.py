@@ -498,6 +498,13 @@ def load_tasks(
         # Attach per_group_commands
         if per_group_commands_json:
             object.__setattr__(task, '_per_group_commands', per_group_commands)
+        # Attach per_group_no_split
+        per_group_no_split = tdef.get("per_group_no_split") or {}
+        if per_group_no_split:
+            object.__setattr__(task, '_per_group_no_split', per_group_no_split)
+        # Attach global no_split
+        if tdef.get("no_split"):
+            object.__setattr__(task, '_no_split', True)
         tasks.append(task)
 
     return tasks
