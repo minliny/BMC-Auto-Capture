@@ -304,138 +304,187 @@ jobs:
           echo [OK] build_info.json present
 
       - name: Smoke test — API server scripts present
-        shell: cmd
+        shell: pwsh
         run: |
-          set ERR=0
-          if not exist bmc-auto-capture\scripts\start_executor_api_server.py (
-            echo [FAIL] start_executor_api_server.py missing
-            set ERR=1
-          )
-          if not exist bmc-auto-capture\scripts\submit_plan_run.py (
-            echo [FAIL] submit_plan_run.py missing
-            set ERR=1
-          )
-          if not exist bmc-auto-capture\app\src\executor_api_server (
-            echo [FAIL] src\executor_api_server missing
-            set ERR=1
-          )
-          if not exist bmc-auto-capture\app\src\plan_run_service (
-            echo [FAIL] src\plan_run_service missing
-            set ERR=1
-          )
-          if not exist bmc-auto-capture\app\src\plan_item_status_callback_client (
-            echo [FAIL] src\plan_item_status_callback_client missing
-            set ERR=1
-          )
-          if not exist bmc-auto-capture\scripts\smoke_executor_runtime.ps1 (
-            echo [FAIL] smoke_executor_runtime.ps1 missing
-            set ERR=1
-          )
-          if %ERR% EQU 1 exit /b 1
-          echo [OK] All API server files present
+          $base = "bmc-auto-capture"
+          $missing = @()
+          @(
+            "$base\scripts\start_executor_api_server.py",
+            "$base\scripts\submit_plan_run.py",
+            "$base\scripts\submit_direct_job.py",
+            "$base\scripts\smoke_executor_runtime.ps1",
+            "$base\app\src\executor_api_server",
+            "$base\app\src\plan_run_service",
+            "$base\app\src\plan_item_status_callback_client"
+          ) | ForEach-Object {
+            if (-not (Test-Path $_)) {
+              Write-Host "[FAIL] $_ missing"
+              $missing += $_
+            }
+          }
+          if ($missing.Count -gt 0) { exit 1 }
+          Write-Host "[OK] All API server files present"
 
-      - name: Smoke test — API server starts and has routes (via exe)
-        shell: cmd
+      - name: Smoke test — Executor API server (exe-based)
+        shell: pwsh
         run: |
-          cd bmc-auto-capture
-          set EXECUTOR_PORT=18000
-          REM Start API server in background using exe directly (no Python)
-          start "executor-api" /B runtime\bmc-engine.exe --server --host 127.0.0.1 --port %EXECUTOR_PORT% --runner fake --callback-transport fake --executor-id ci-smoke --enable-debug-callback-receiver
-          REM Wait for startup
-          timeout /t 8 /nobreak >nul
-          REM Check /executor/v1/status
-          curl -s http://127.0.0.1:%EXECUTOR_PORT%/executor/v1/status | findstr "executor_id"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] /executor/v1/status not reachable
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
-          REM Check openapi routes
-          curl -s http://127.0.0.1:%EXECUTOR_PORT%/openapi.json | findstr "executor/v1/status"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] executor/v1/status not in openapi routes
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
-          curl -s http://127.0.0.1:%EXECUTOR_PORT%/openapi.json | findstr "executor/v1/config/excel:path"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] config/excel:path not in openapi routes
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
-          curl -s http://127.0.0.1:%EXECUTOR_PORT%/openapi.json | findstr "executor/v1/plans"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] executor/v1/plans not in openapi routes
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
+          $Exe = "bmc-auto-capture\runtime\bmc-engine.exe"
+          $Port = 18000
+          $BaseUrl = "http://127.0.0.1:${Port}"
+          $Out = "exe_stdout.log"
+          $Err = "exe_stderr.log"
+          if (Test-Path $Out) { Remove-Item $Out -Force }
+          if (Test-Path $Err) { Remove-Item $Err -Force }
 
-      - name: Smoke test — debug callback receiver routes
-        shell: cmd
-        run: |
-          cd bmc-auto-capture
-          set EXECUTOR_PORT=18000
-          REM Verify debug callback receiver routes
-          curl -s http://127.0.0.1:%EXECUTOR_PORT%/openapi.json | findstr "debug/plan-item-statuses"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] debug/plan-item-statuses not in openapi routes
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
-          REM POST a test callback
-          curl -s -X POST http://127.0.0.1:%EXECUTOR_PORT%/debug/plan-item-statuses -H "Content-Type: application/json" -d "{\"planId\":1,\"deviceName\":\"D1\",\"taskName\":\"T1\",\"status\":\"SUCCESS\",\"updater\":\"ci-test\",\"errorMessage\":null}" | findstr "ok"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] Debug POST failed
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
-          REM GET stored callbacks
-          curl -s http://127.0.0.1:%EXECUTOR_PORT%/debug/plan-item-statuses | findstr "planId"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] Debug GET failed to show received callbacks
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
-          REM DELETE and verify cleared
-          curl -s -X DELETE http://127.0.0.1:%EXECUTOR_PORT%/debug/plan-item-statuses | findstr "cleared"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] Debug DELETE failed
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
-          REM Verify cleared
-          curl -s http://127.0.0.1:%EXECUTOR_PORT%/debug/plan-item-statuses | findstr "\"total\": 0"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] Debug store not empty after DELETE
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
-          echo [OK] Debug callback receiver smoke test passed
+          try {
+            # ── Start exe with isolated stdout/stderr ──────────────
+            Write-Host "[INFO] Starting $Exe --server on port $Port"
+            $P = Start-Process `
+              -FilePath $Exe `
+              -ArgumentList @("--server","--host","127.0.0.1","--port","$Port","--runner","fake","--callback-transport","fake","--executor-id","ci-smoke","--enable-debug-callback-receiver") `
+              -PassThru `
+              -RedirectStandardOutput $Out `
+              -RedirectStandardError $Err `
+              -WindowStyle Hidden
+
+            # ── Readiness loop (up to 30s) ─────────────────────────
+            $ok = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              if ($P.HasExited) {
+                Write-Host "[FAIL] EXE exited early (ExitCode=$($P.ExitCode))"
+                break
+              }
+              try {
+                $resp = Invoke-RestMethod -Method Get -Uri "${BaseUrl}/executor/v1/status" -TimeoutSec 2
+                if ($resp.status -eq "ONLINE" -and ($resp.executor_id -or $resp.executorId)) {
+                  $ok = $true
+                  Write-Host "[OK] Executor API ONLINE (executor_id=$($resp.executor_id))"
+                  break
+                }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+
+            if (-not $ok) {
+              Write-Host "[FAIL] Executor API not ready within 30s"
+              if ($P.HasExited) { Write-Host "[INFO] Process exited early with code $($P.ExitCode)" }
+              Write-Host "===== STDOUT ====="
+              Get-Content $Out -Raw -ErrorAction SilentlyContinue
+              Write-Host "===== STDERR ====="
+              Get-Content $Err -Raw -ErrorAction SilentlyContinue
+              exit 1
+            }
+
+            # ── Check openapi routes ───────────────────────────────
+            $openapi = Invoke-RestMethod -Method Get -Uri "${BaseUrl}/openapi.json" -TimeoutSec 5
+            $paths = $openapi.paths.PSObject.Properties.Name
+            Write-Host "[INFO] OpenAPI paths: $($paths -join ', ')"
+
+            $required = @(
+              "/executor/v1/status",
+              "/executor/v1/config/excel:path",
+              "/executor/v1/plans/{plan_id}:run",
+              "/executor/v1/plans/{plan_id}/runs/{run_id}",
+              "/debug/plan-item-statuses"
+            )
+            $missing = @()
+            foreach ($r in $required) {
+              if ($paths -notcontains $r) {
+                $missing += $r
+              }
+            }
+            if ($missing.Count -gt 0) {
+              Write-Host "[FAIL] Missing OpenAPI routes: $($missing -join ', ')"
+              exit 1
+            }
+            Write-Host "[OK] All required OpenAPI routes present"
+
+            # ── Debug callback receiver smoke ──────────────────────
+            # 1. DELETE existing
+            $del = Invoke-RestMethod -Method Delete -Uri "${BaseUrl}/debug/plan-item-statuses" -TimeoutSec 5
+            Write-Host "[OK] DELETE /debug/plan-item-statuses: $($del | ConvertTo-Json -Compress)"
+
+            # 2. POST a test callback
+            $body = @{planId=1; deviceName="D1"; taskName="T1"; status="SUCCESS"; updater="ci-test"; errorMessage=$null}
+            $post = Invoke-RestMethod -Method Post -Uri "${BaseUrl}/debug/plan-item-statuses" -Body ($body | ConvertTo-Json) -ContentType "application/json" -TimeoutSec 5
+            if ($post.status -ne "ok") {
+              Write-Host "[FAIL] POST debug callback: unexpected response $($post | ConvertTo-Json -Compress)"
+              exit 1
+            }
+            Write-Host "[OK] POST /debug/plan-item-statuses: ok"
+
+            # 3. GET stored callbacks
+            $get = Invoke-RestMethod -Method Get -Uri "${BaseUrl}/debug/plan-item-statuses" -TimeoutSec 5
+            if ($get.total -lt 1 -or $get.items.Count -lt 1) {
+              Write-Host "[FAIL] GET debug callbacks: expected at least 1 item, got total=$($get.total)"
+              exit 1
+            }
+            Write-Host "[OK] GET /debug/plan-item-statuses: $($get.total) items"
+
+            # 4. DELETE and verify cleared
+            $del2 = Invoke-RestMethod -Method Delete -Uri "${BaseUrl}/debug/plan-item-statuses" -TimeoutSec 5
+            $get2 = Invoke-RestMethod -Method Get -Uri "${BaseUrl}/debug/plan-item-statuses" -TimeoutSec 5
+            if ($get2.total -ne 0) {
+              Write-Host "[FAIL] Debug store not empty after DELETE: total=$($get2.total)"
+              exit 1
+            }
+            Write-Host "[OK] Debug callback receiver smoke test passed"
+          }
+          finally {
+            if ($P -and -not $P.HasExited) {
+              Stop-Process -Id $P.Id -Force -ErrorAction SilentlyContinue
+              Write-Host "[INFO] Executor API server stopped"
+            }
+          }
 
       - name: Smoke test — legacy Network Boot is NOT the default
-        shell: cmd
+        shell: pwsh
         run: |
-          cd bmc-auto-capture
-          set EXECUTOR_PORT=18001
-          REM Start server WITHOUT --legacy-network-boot — must start Executor API
-          start "executor-api" /B runtime\bmc-engine.exe --server --host 127.0.0.1 --port %EXECUTOR_PORT% --runner fake --callback-transport fake
-          timeout /t 5 /nobreak >nul
-          REM Check Executor API route, NOT just legacy /network/ping
-          curl -s http://127.0.0.1:%EXECUTOR_PORT%/executor/v1/status | findstr "executor_id"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] Default server mode does NOT start Executor API
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
-          REM Verify it has plan run routes (not just legacy ping)
-          curl -s http://127.0.0.1:%EXECUTOR_PORT%/openapi.json | findstr "executor/v1/config/excel:path"
-          if %ERRORLEVEL% NEQ 0 (
-            echo [FAIL] Plan run routes not present in default server mode
-            taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-            exit /b 1
-          )
-          taskkill /f /fi "WINDOWTITLE eq executor-api*" >nul 2>&1
-          echo [OK] Default server mode correctly starts Executor API (not legacy Network Boot)
+          $Exe = "bmc-auto-capture\runtime\bmc-engine.exe"
+          $Port = 18001
+          $BaseUrl = "http://127.0.0.1:${Port}"
+          $Out = "exe_legacy_stdout.log"
+          $Err = "exe_legacy_stderr.log"
+
+          try {
+            $P = Start-Process `
+              -FilePath $Exe `
+              -ArgumentList @("--server","--host","127.0.0.1","--port","$Port","--runner","fake","--callback-transport","fake") `
+              -PassThru `
+              -RedirectStandardOutput $Out `
+              -RedirectStandardError $Err `
+              -WindowStyle Hidden
+
+            $ok = $false
+            for ($i = 0; $i -lt 20; $i++) {
+              if ($P.HasExited) { break }
+              try {
+                $resp = Invoke-RestMethod -Method Get -Uri "${BaseUrl}/executor/v1/status" -TimeoutSec 2
+                if ($resp.status -eq "ONLINE") { $ok = $true; break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+
+            if (-not $ok) {
+              Write-Host "[FAIL] Default server mode does NOT start Executor API"
+              if ($P.HasExited) { Write-Host "[INFO] Exited early ExitCode=$($P.ExitCode)" }
+              Write-Host "===== STDERR ====="
+              Get-Content $Err -Raw -ErrorAction SilentlyContinue
+              exit 1
+            }
+
+            $openapi = Invoke-RestMethod -Method Get -Uri "${BaseUrl}/openapi.json" -TimeoutSec 5
+            $paths = $openapi.paths.PSObject.Properties.Name
+            if ($paths -notcontains "/executor/v1/config/excel:path") {
+              Write-Host "[FAIL] Plan run routes not present in default server mode"
+              Write-Host "Paths: $($paths -join ', ')"
+              exit 1
+            }
+            Write-Host "[OK] Default server mode correctly starts Executor API (not legacy Network Boot)"
+          }
+          finally {
+            if ($P -and -not $P.HasExited) {
+              Stop-Process -Id $P.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
 
       - name: Package full release
         run: |
