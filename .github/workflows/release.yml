@@ -417,7 +417,7 @@ jobs:
 
             # 3. GET stored callbacks
             $get = Invoke-RestMethod -Method Get -Uri "${BaseUrl}/debug/plan-item-statuses" -TimeoutSec 5
-            if ($get.total -lt 1 -or $get.items.Count -lt 1) {
+            if ($get.summary.total -lt 1 -or $get.items.Count -lt 1) {
               Write-Host "[FAIL] GET debug callbacks: expected at least 1 item, got total=$($get.total)"
               exit 1
             }
@@ -426,7 +426,7 @@ jobs:
             # 4. DELETE and verify cleared
             $del2 = Invoke-RestMethod -Method Delete -Uri "${BaseUrl}/debug/plan-item-statuses" -TimeoutSec 5
             $get2 = Invoke-RestMethod -Method Get -Uri "${BaseUrl}/debug/plan-item-statuses" -TimeoutSec 5
-            if ($get2.total -ne 0) {
+            if ($get2.summary.total -ne 0) {
               Write-Host "[FAIL] Debug store not empty after DELETE: total=$($get2.total)"
               exit 1
             }
