@@ -625,6 +625,138 @@ class TestDynamicPathResolution:
             assert "E:\\v0.2" not in path_str
             assert "p_OccRemoteDesk" not in path_str
 
+# ===========================================================================
+# End-to-end: _parse_command_spec MUST use resolved command
+# ===========================================================================
+
+
+class TestParseCommandSpecWithOverride:
+    """Verify _parse_command_spec uses override_command, not raw command_or_url."""
+
+    def test_a3_override_parses_hccn_tool_not_display(self):
+        """A3: override_command=hccn_tool → ALL commands contain hccn_tool, not display."""
+        from src.executor.ssh_executor import SSHExecutor
+
+        executor = SSHExecutor()
+
+        class FakeTask:
+            task_name = "光模块"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+
+        # A3 override (semicolons split into multiple commands)
+        a3_cmd = "for i in $(seq 0 15); do echo \"> $i\"; hccn_tool -i $i -optical-g;done"
+        spec = executor._parse_command_spec(task, override_command=a3_cmd)
+        commands = spec["commands"]
+        assert len(commands) >= 3  # split by ;
+        all_cmds = " ".join(c[1] for c in commands)
+        assert "hccn_tool" in all_cmds, f"hccn_tool not found in: {all_cmds}"
+        assert "display interface transceiver" not in all_cmds
+
+    def test_l1_no_override_uses_command_or_url(self):
+        """L1: no override → uses task.command_or_url."""
+        from src.executor.ssh_executor import SSHExecutor
+
+        executor = SSHExecutor()
+
+        class FakeTask:
+            task_name = "光模块"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+        spec = executor._parse_command_spec(task)
+        commands = spec["commands"]
+        assert len(commands) == 1
+        assert commands[0][1] == "display interface transceiver"
+
+    def test_override_empty_returns_empty_commands(self):
+        """Empty override → empty commands."""
+        from src.executor.ssh_executor import SSHExecutor
+
+        executor = SSHExecutor()
+
+        class FakeTask:
+            task_name = "test"
+            command_or_url = "some_cmd"
+
+        task = FakeTask()
+        spec = executor._parse_command_spec(task, override_command="")
+        assert spec["commands"] == []
+
+    def test_full_4_1_15_a3_resolution_chain(self):
+        """Full chain: resolve_task_command → _parse_command_spec → correct commands."""
+        from src.executor.ssh_executor import SSHExecutor, resolve_task_command
+
+        executor = SSHExecutor()
+
+        class FakeTask:
+            task_name = "计算节点光模块信息查询测试"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_commands', {
+            "A3": "for i in $(seq 0 15); do echo \"==============> $i\"; hccn_tool -i $i -optical-g;done",
+        })
+
+        # Step 1: resolve
+        resolved = resolve_task_command(task, "A3")
+        assert "hccn_tool" in resolved
+        assert "display interface transceiver" not in resolved
+
+        # Step 2: parse with resolved command
+        spec = executor._parse_command_spec(task, override_command=resolved)
+        commands = spec["commands"]
+        assert len(commands) >= 1
+
+        # Step 3: verify the actual commands that will execute
+        all_cmds = " ".join(c[1] for c in commands)
+        assert "hccn_tool" in all_cmds, f"Expected hccn_tool in commands, got: {all_cmds[:120]}"
+        assert "-optical-g" in all_cmds, f"Expected -optical-g flag in commands, got: {all_cmds[:120]}"
+        assert "display interface transceiver" not in all_cmds
+
+    def test_full_4_1_15_l1_resolution_chain(self):
+        """Full chain: L1 → resolve → display interface transceiver."""
+        from src.executor.ssh_executor import SSHExecutor, resolve_task_command
+
+        executor = SSHExecutor()
+
+        class FakeTask:
+            task_name = "计算节点光模块信息查询测试"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_commands', {
+            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical-g;done",
+        })
+
+        resolved = resolve_task_command(task, "L1")
+        assert resolved == "display interface transceiver"
+
+        spec = executor._parse_command_spec(task, override_command=resolved)
+        assert spec["commands"][0][1] == "display interface transceiver"
+
+    def test_full_4_1_15_l2_resolution_chain(self):
+        """Full chain: L2 → resolve → display interface transceiver."""
+        from src.executor.ssh_executor import SSHExecutor, resolve_task_command
+
+        executor = SSHExecutor()
+
+        class FakeTask:
+            task_name = "计算节点光模块信息查询测试"
+            command_or_url = "display interface transceiver"
+
+        task = FakeTask()
+        object.__setattr__(task, '_per_group_commands', {
+            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical-g;done",
+        })
+
+        resolved = resolve_task_command(task, "L2")
+        assert resolved == "display interface transceiver"
+
+        spec = executor._parse_command_spec(task, override_command=resolved)
+        assert spec["commands"][0][1] == "display interface transceiver"
+
     def test_legacy_run_items_also_have_timestamps(self):
         from src.plan_run_service.service import PlanRunService
         excel = str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx")

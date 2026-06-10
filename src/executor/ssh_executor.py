@@ -224,20 +224,25 @@ class SSHExecutor(AbstractExecutor):
         output_dir = self._build_output_dir(output_root, device, task)
         os.makedirs(output_dir, exist_ok=True)
 
-        cmd_spec = self._parse_command_spec(task)
+        # --- Resolve per-group command BEFORE parsing ---
+        # This is the SINGLE source of truth for what command executes.
+        # _parse_command_spec must receive the resolved command, NOT raw command_or_url.
+        dg = getattr(device, 'device_group', '') or ''
+        resolved_cmd = resolve_task_command(task, dg)
+
+        cmd_spec = self._parse_command_spec(task, override_command=resolved_cmd)
         commands = cmd_spec["commands"]
         cmd_outputs: dict[str, str] = {}
         variables: dict[str, str] = {}
 
         # --- P0-2: empty commands → EXEC_FAILED ---
         if not commands:
-            dg = getattr(device, 'device_group', '') or ''
-            resolved_cmd = resolve_task_command(task, dg)
             result.execution_status = "EXEC_FAILED"
             result.execution_failure_reason = (
                 f"COMMAND_MISSING: task '{task.task_name}' has no resolved commands "
                 f"(command_or_url={getattr(task, 'command_or_url', '')!r}, "
-                f"device_group={dg}, per_group_commands={sorted(getattr(task, '_per_group_commands', {}).keys()) if getattr(task, '_per_group_commands', None) else 'N/A'})"
+                f"resolved_cmd={resolved_cmd!r}, device_group={dg}, "
+                f"per_group_commands={sorted(getattr(task, '_per_group_commands', {}).keys()) if getattr(task, '_per_group_commands', None) else 'N/A'})"
             )
             result.ended_at = time.time()
             result.duration_seconds = result.ended_at - result.started_at
@@ -337,7 +342,6 @@ class SSHExecutor(AbstractExecutor):
             file_base = resolve_template(task.image_name_template, device, task)
 
             # --- Inject COMMAND / OUTPUT section markers for traceability ---
-            resolved_cmd = resolve_task_command(task, device.device_group)
             cmd_header = f"=== COMMAND (device_group={device.device_group}, strategy={strategy}) ===\n{resolved_cmd}\n=== OUTPUT ===\n"
             # exec_command: separate commands with double newline (each is an independent program)
             # interactive_shell: raw stream concat — no separator, prompt+echo must stay together
@@ -778,8 +782,13 @@ class SSHExecutor(AbstractExecutor):
     # ------------------------------------------------------------------
     # Command spec parsing
     # ------------------------------------------------------------------
-    def _parse_command_spec(self, task) -> dict:
-        raw = task.command_or_url.strip()
+    def _parse_command_spec(self, task, override_command: str | None = None) -> dict:
+        """Parse task commands. If override_command is given, use it instead of task.command_or_url.
+
+        This is the SINGLE point where commands enter the execution pipeline.
+        All callers MUST pass the output of resolve_task_command() as override_command.
+        """
+        raw = (override_command if override_command is not None else task.command_or_url).strip()
         if not raw:
             return {"commands": [], "extractors": [], "checkpoints": []}
 
