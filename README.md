@@ -36,6 +36,17 @@ C:\bmc-auto-capture\
 └── output\                   ← 结果输出（自动创建）
 ```
 
+RC 版本采用 runtime/app 分层构件：
+
+```text
+bmc-runtime-${tag}-win-x64.7z
+bmc-app-${tag}.zip
+```
+
+首次使用需同时解压两个包，并保持 `runtime/`、`app/`、`run.py`、`启动.bat`
+位于同一根目录。后续是否可只更新 app 包，以 Release Notes 中的
+“依赖包可复用的最早版本 / Minimum reusable runtime package version”为准。
+
 ### 配置设备
 
 打开 `app/examples/task_template.xlsx` → 「设备信息」sheet：
@@ -223,13 +234,19 @@ tests/
 Runtime 层（Python + Chromium + 依赖）很少更新，App 层（脚本+配置）频繁更新：
 
 ```
-首次: 下载 bmc-auto-capture-vX.X.X-win-x64.zip → 解压
-更新: 下载最新包 → 仅覆盖 app/ run.py 启动.bat
+正式版: 下载 bmc-auto-capture-${tag}-win-x64.zip → 解压后直接运行
+RC 首次: 解压 bmc-runtime-${tag}-win-x64.7z + bmc-app-${tag}.zip
+RC 更新: runtime 满足最早可复用版本时，仅覆盖 app/ run.py 启动.bat
 ```
 
 ## CI/CD
 
-推送 `v*` tag 触发 GitHub Actions 自动构建 Windows x64 完整包。
+推送 `v*` tag 触发 GitHub Actions Windows x64 构建：
+
+- 正式版发布 `bmc-auto-capture-${tag}-win-x64.zip`
+- RC 发布 `bmc-runtime-${tag}-win-x64.7z` 和 `bmc-app-${tag}.zip`
+- 每个构件附带同名 `.sha256`
+- RC manifest 和 Release Notes 记录最早可复用 runtime 版本
 
 ## 安全
 

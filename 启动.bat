@@ -22,6 +22,55 @@ if not exist "%APP_DIR%\src" (
 )
 
 :: ============================================================
+::  Windows 发布包完整性检查(runtime + app 分层)
+:: ============================================================
+set "PACKAGE_LAYOUT=0"
+if exist "%ROOT%\app\src" set "PACKAGE_LAYOUT=1"
+if exist "%ROOT%\runtime\bmc-engine.exe" set "PACKAGE_LAYOUT=1"
+
+if "%PACKAGE_LAYOUT%"=="1" (
+    if not exist "%ROOT%\runtime\bmc-engine.exe" (
+        echo( [错误] 未找到 runtime\bmc-engine.exe。
+        echo( 请先解压 Windows runtime 依赖包:
+        echo(   bmc-runtime-^<版本^>-win-x64.7z
+        echo( 并保持 runtime\ 与 app\ 位于同一根目录。
+        echo.
+        pause
+        exit /b 1
+    )
+    if not exist "%ROOT%\runtime\playwright_browsers" (
+        echo( [错误] 未找到 runtime\playwright_browsers。
+        echo( runtime 依赖包不完整,请重新解压:
+        echo(   bmc-runtime-^<版本^>-win-x64.7z
+        echo.
+        pause
+        exit /b 1
+    )
+    if not exist "%ROOT%\app\src" (
+        echo( [错误] 未找到 app\src。
+        echo( app 脚本包不完整,请重新解压:
+        echo(   bmc-app-^<版本^>.zip
+        echo.
+        pause
+        exit /b 1
+    )
+    if not exist "%ROOT%\app\config" (
+        echo( [错误] 未找到 app\config。
+        echo( app 脚本包不完整,请重新解压 bmc-app-^<版本^>.zip。
+        echo.
+        pause
+        exit /b 1
+    )
+    if not exist "%ROOT%\run.py" (
+        echo( [错误] 未找到 run.py。
+        echo( app 脚本包不完整,请重新解压 bmc-app-^<版本^>.zip。
+        echo.
+        pause
+        exit /b 1
+    )
+)
+
+:: ============================================================
 ::  引擎检测(编译版 bmc-engine.exe > 离线 Python)
 :: ============================================================
 set "ENGINE_EXE="

@@ -20,7 +20,8 @@ bmc-auto-capture/
 ├── runtime/
 │   ├── bmc-engine.exe        ← 执行引擎（PyInstaller 编译）
 │   ├── _internal/            ← Python 运行时 + 依赖库
-│   └── playwright_browsers/  ← Chromium 浏览器
+│   ├── playwright_browsers/  ← Chromium 浏览器
+│   └── build_info.json       ← runtime 构建及兼容版本信息
 ├── app/
 │   ├── src/                  ← 业务源码
 │   ├── config/               ← YAML 配置
@@ -249,8 +250,101 @@ A: 设备 SSH 端口（22）不通或 IP 不可达。先用 `[3]` 预检确认�
 
 ## 八、更新升级
 
-App 层更新（不涉及 runtime）：
+### 正式版
 
-1. 下载最新 `bmc-auto-capture-vX.X.X-win-x64.zip`
-2. 解压后仅复制 `app/`、`run.py`、`启动.bat` 覆盖旧文件
-3. `runtime/` 目录无需更新（除非版本号大版本跳跃）
+正式版发布一个 Windows x64 开箱即用完整包：
+
+```text
+bmc-auto-capture-${tag}-win-x64.zip
+```
+
+解压后直接双击 `启动.bat`，或运行 `runtime\bmc-engine.exe`。
+
+### RC 版
+
+RC 发布两个 Windows x64 构件：
+
+```text
+bmc-runtime-${tag}-win-x64.7z
+bmc-app-${tag}.zip
+```
+
+首次使用 RC：
+
+1. 解压 runtime 依赖包
+2. 解压 app 脚本包
+3. 保持 `runtime/`、`app/`、`run.py`、`启动.bat` 位于同一根目录
+4. 运行 `启动.bat`
+
+更新 RC 时，如果 release notes 或 `release_manifest.json` 声明现有 runtime
+仍可复用，只需覆盖 `app/`、`run.py`、`启动.bat`。
+
+```text
+依赖包可复用的最早版本：v0.2.4-RC18
+Minimum reusable runtime package version: v0.2.4-RC18
+```
+
+以下任一内容变化时，应更新 runtime 包并调整最早可复用版本：
+
+1. `requirements.txt`
+2. Python 版本
+3. PyInstaller / frozen engine 构建配置
+4. Playwright / Chromium 版本
+5. `runtime/_internal`
+6. `runtime/playwright_browsers`
+7. `bmc-engine.exe` 构建输入
+
+以下变化通常只需要更新 app 包：
+
+1. `app/src`
+2. `app/config`
+3. `app/examples`
+4. `app/api`
+5. `app/assets`
+6. `app/tasks.json`
+7. `run.py`
+8. `启动.bat`
+9. `README_RELEASE.md`
+
+所有发布构件均附带同名 `.sha256` 文件：
+
+```text
+<sha256>  <filename>
+```
+
+---
+
+## 当前 RC 预留问题
+
+本 RC tag：v0.2.4-RC18
+
+### Security / 代码冻结前阻断项
+
+1. **FZ-AUDIT-001：MHTML 结构化敏感字段值可在解码后落盘**
+   - 状态：预留
+   - 说明：opaque secret 场景下，敏感 key 对应的随机 value 仍可能在 MHTML 解码后出现。
+   - 后续动作：实现 HTML/MHTML 结构化上下文脱敏，并补充 opaque secret 回归测试。
+
+2. **FZ-AUDIT-002：callback response / outbox JSON 敏感 key 对应 value 泄漏**
+   - 状态：预留
+   - 说明：opaque secret 场景下，敏感 key 对应 value 可能进入 log / outbox jsonl。
+   - 后续动作：JSON parse 后递归脱敏 value，parse 失败再走文本 fallback，并补充 caplog/outbox opaque secret 测试。
+
+### Release / 发布项
+
+3. **Frozen 安全实现一致性**
+   - 状态：预留
+   - 说明：当前 frozen engine / runtime 包需要在安全修复完成后重新构建并验证。
+   - 后续动作：重建 Windows frozen engine，执行 safety parity。
+
+4. **Windows 实际打包与 CMD 启动验证**
+   - 状态：预留
+   - 说明：当前构建脚本已通过静态检查和 dry-run，仍需 GitHub Actions Windows runner 实际产包验证。
+   - 后续动作：运行 Windows release workflow，验证 full zip、runtime 7z、app zip、sha256、启动.bat。
+
+### Field / 现场项
+
+5. **A3/L1/L2 最小真实复测**
+   - 状态：预留
+   - 说明：代码侧 A3/L1/L2 命令路由通过，仍需真实硬件确认。
+   - 后续动作：A3×1、L1×1、L2×1 最小复测。

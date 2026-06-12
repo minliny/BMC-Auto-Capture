@@ -58,8 +58,8 @@ def _setup_browser_path():
     Priority:
     1. runtime/playwright_browsers/ (full zip layout)
     2. runtime-layer/playwright_browsers/ (RC split layout)
-    3. ../runtime/playwright_browsers/ (app/run.py layout)
-    4. ../runtime-layer/playwright_browsers/ (RC split, app/run.py layout)
+    3. ../runtime/playwright_browsers/ (fallback: parent dir)
+    4. ../runtime-layer/playwright_browsers/ (RC split, fallback: parent dir)
     5. playwright_browsers/ next to exe (flat frozen layout)
     6. ../playwright_browsers/ (old frozen layout)
     7. PLAYWRIGHT_BROWSERS_PATH env var (if already set AND valid)
@@ -72,8 +72,8 @@ def _setup_browser_path():
     search_dirs = [
         _exe_dir() / "runtime" / "playwright_browsers",            # project_root/runtime/playwright_browsers/
         _exe_dir() / "runtime-layer" / "playwright_browsers",     # RC split: runtime-layer/playwright_browsers/
-        _exe_dir().parent / "runtime" / "playwright_browsers",    # app/run.py → ../runtime/playwright_browsers/
-        _exe_dir().parent / "runtime-layer" / "playwright_browsers",  # app/run.py → ../runtime-layer/playwright_browsers/
+        _exe_dir().parent / "runtime" / "playwright_browsers",    # fallback: parent/runtime/playwright_browsers/
+        _exe_dir().parent / "runtime-layer" / "playwright_browsers",  # fallback: parent/runtime-layer/playwright_browsers/
         _exe_dir() / "playwright_browsers",                       # frozen: next to exe
         _exe_dir().parent / "playwright_browsers",                # frozen: one level up
     ]

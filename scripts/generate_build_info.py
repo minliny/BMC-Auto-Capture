@@ -7,6 +7,8 @@ Output is placed at the given output directory as build_info.json.
 
 Usage:
     python scripts/generate_build_info.py <output_dir> [--workflow <name>] [--run-id <id>]
+    python scripts/generate_build_info.py <output_dir> --manifest-only \
+        --manifest-output <path> --channel rc --version <tag>
 """
 
 from __future__ import annotations
@@ -74,7 +76,15 @@ def _pyinstaller_version() -> str:
 def generate_build_info(output_dir: str | Path, *,
                         workflow_name: str = "",
                         workflow_run_id: str = "",
-                        entrypoint: str = "") -> dict:
+                        entrypoint: str = "",
+                        release_version: str = "",
+                        target: str = "",
+                        package_role: str = "",
+                        channel: str = "",
+                        runtime_package: str = "",
+                        app_package: str = "",
+                        full_package: str = "",
+                        minimum_reusable_runtime_version: str = "") -> dict:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -87,12 +97,16 @@ def generate_build_info(output_dir: str | Path, *,
         if m:
             version = m.group(1)
 
+    git_head = _git_commit()
+    created_at = datetime.now(timezone.utc).isoformat()
     info = {
-        "version": version,
-        "git_commit": _git_commit(),
+        "version": release_version or version,
+        "git_commit": git_head,
+        "gitHead": git_head,
         "git_branch": _git_branch(),
         "git_tag": _git_tag(),
-        "build_time": datetime.now(timezone.utc).isoformat(),
+        "build_time": created_at,
+        "createdAt": created_at,
         "build_machine": platform.node(),
         "python_version": platform.python_version(),
         "pyinstaller_version": _pyinstaller_version(),
@@ -101,6 +115,20 @@ def generate_build_info(output_dir: str | Path, *,
         "workflow_name": workflow_name,
         "workflow_run_id": workflow_run_id,
     }
+    if target:
+        info["target"] = target
+    if package_role:
+        info["packageRole"] = package_role
+    if channel:
+        info["channel"] = channel
+    if runtime_package:
+        info["runtimePackage"] = runtime_package
+    if app_package:
+        info["appPackage"] = app_package
+    if full_package:
+        info["fullPackage"] = full_package
+    if minimum_reusable_runtime_version:
+        info["minimumReusableRuntimeVersion"] = minimum_reusable_runtime_version
 
     # runtime/bmc-engine.exe sha256 if exists
     exe_candidates = [
@@ -125,20 +153,98 @@ def generate_build_info(output_dir: str | Path, *,
     return info
 
 
+def generate_release_manifest(output_path: str | Path, *,
+                              target: str,
+                              channel: str,
+                              version: str,
+                              runtime_package: str = "",
+                              app_package: str = "",
+                              full_package: str = "",
+                              minimum_reusable_runtime_version: str = "",
+                              update_mode: str = "") -> dict:
+    manifest = {
+        "target": target,
+        "channel": channel,
+        "version": version,
+        "gitHead": _git_commit(),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "updateMode": update_mode or (
+            "runtime-plus-app" if channel == "rc" else "full"
+        ),
+    }
+    if channel == "rc":
+        if runtime_package:
+            manifest["runtimePackage"] = runtime_package
+        if app_package:
+            manifest["appPackage"] = app_package
+        if minimum_reusable_runtime_version:
+            manifest["minimumReusableRuntimeVersion"] = (
+                minimum_reusable_runtime_version
+            )
+    elif full_package:
+        manifest["fullPackage"] = full_package
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    print(f"[release_manifest] Written: {output_path}")
+    return manifest
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate build_info.json")
     parser.add_argument("output_dir", help="Output directory (usually runtime/)")
     parser.add_argument("--workflow", default="", help="CI workflow name")
     parser.add_argument("--run-id", default="", help="CI workflow run ID")
     parser.add_argument("--entrypoint", default="run.py", help="Build entrypoint")
+    parser.add_argument("--target", default="", help="Build target, e.g. win-x64")
+    parser.add_argument("--package-role", default="", help="Package role")
+    parser.add_argument("--channel", choices=("rc", "stable"), default="stable")
+    parser.add_argument("--version", default="", help="Release tag/version")
+    parser.add_argument("--runtime-package", default="")
+    parser.add_argument("--app-package", default="")
+    parser.add_argument("--full-package", default="")
+    parser.add_argument("--min-reusable-runtime-version", default="")
+    parser.add_argument("--manifest-output", default="")
+    parser.add_argument("--manifest-only", action="store_true")
+    parser.add_argument("--update-mode", default="")
     args = parser.parse_args()
 
-    generate_build_info(
-        args.output_dir,
-        workflow_name=args.workflow,
-        workflow_run_id=args.run_id,
-        entrypoint=args.entrypoint,
-    )
+    version = args.version or _git_tag()
+    if not args.manifest_only:
+        generate_build_info(
+            args.output_dir,
+            workflow_name=args.workflow,
+            workflow_run_id=args.run_id,
+            entrypoint=args.entrypoint,
+            release_version=version,
+            target=args.target,
+            package_role=args.package_role,
+            channel=args.channel,
+            runtime_package=args.runtime_package,
+            app_package=args.app_package,
+            full_package=args.full_package,
+            minimum_reusable_runtime_version=(
+                args.min_reusable_runtime_version
+            ),
+        )
+    if args.manifest_output:
+        generate_release_manifest(
+            args.manifest_output,
+            target=args.target,
+            channel=args.channel,
+            version=version,
+            runtime_package=args.runtime_package,
+            app_package=args.app_package,
+            full_package=args.full_package,
+            minimum_reusable_runtime_version=(
+                args.min_reusable_runtime_version
+            ),
+            update_mode=args.update_mode,
+        )
 
 
 if __name__ == "__main__":

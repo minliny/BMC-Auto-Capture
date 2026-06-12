@@ -10,6 +10,10 @@ on:
         description: "Reason for manual build"
         required: false
         default: "Manual rebuild"
+      min_reusable_runtime_version:
+        description: "Minimum reusable runtime package version for RC releases"
+        required: false
+        default: ""
 
 jobs:
   # ── Windows Build + Package ─────────────────────────────
@@ -87,11 +91,30 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          if ($tag -match "RC") {
-            echo "IS_RC=true" >> $env:GITHUB_OUTPUT
-          } else {
-            echo "IS_RC=false" >> $env:GITHUB_OUTPUT
+          $isRc = $tag -match "(?i)-rc"
+          $channel = if ($isRc) { "rc" } else { "stable" }
+          $minimumRuntime = "${{ github.event.inputs.min_reusable_runtime_version }}"
+          if ([string]::IsNullOrWhiteSpace($minimumRuntime)) {
+            $minimumRuntime = $tag
           }
+
+          "IS_RC=$($isRc.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "CHANNEL=$channel" >> $env:GITHUB_OUTPUT
+          "MIN_RUNTIME=$minimumRuntime" >> $env:GITHUB_OUTPUT
+
+          "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+          "RELEASE_CHANNEL=$channel" >> $env:GITHUB_ENV
+          "MIN_REUSABLE_RUNTIME_VERSION=$minimumRuntime" >> $env:GITHUB_ENV
+          "RUNTIME_PACKAGE=bmc-runtime-$tag-win-x64.7z" >> $env:GITHUB_ENV
+          "APP_PACKAGE=bmc-app-$tag.zip" >> $env:GITHUB_ENV
+          "FULL_PACKAGE=bmc-auto-capture-$tag-win-x64.zip" >> $env:GITHUB_ENV
+
+          if ($isRc) {
+            Write-Host "[release] RC: runtime + app assets"
+          } else {
+            Write-Host "[release] stable: full Windows package"
+          }
+          Write-Host "[release] minimum reusable runtime: $minimumRuntime"
 
       # ── Build runtime (dependency) layer ─────────────────
       # Directory layout:
@@ -116,19 +139,35 @@ jobs:
           python scripts\generate_build_info.py runtime ^
             --workflow "${{ github.workflow }}" ^
             --run-id "${{ github.run_id }}" ^
-            --entrypoint run.py
+            --entrypoint run.py ^
+            --target win-x64 ^
+            --package-role runtime ^
+            --channel "%RELEASE_CHANNEL%" ^
+            --version "%RELEASE_TAG%" ^
+            --runtime-package "%RUNTIME_PACKAGE%" ^
+            --app-package "%APP_PACKAGE%" ^
+            --full-package "%FULL_PACKAGE%" ^
+            --min-reusable-runtime-version "%MIN_REUSABLE_RUNTIME_VERSION%"
           if %ERRORLEVEL% NEQ 0 exit /b 1
           echo [OK] build_info.json generated for runtime
 
       - name: Package runtime (dependency) layer
         run: |
-          7z a bmc-runtime-${{ github.ref_name }}-win-x64.7z runtime
+          7z a $env:RUNTIME_PACKAGE runtime
+
+      - name: Generate runtime SHA256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 $env:RUNTIME_PACKAGE).Hash.ToLowerInvariant()
+          "$hash  $env:RUNTIME_PACKAGE" | Set-Content -Path "$env:RUNTIME_PACKAGE.sha256" -Encoding ascii
 
       - name: Upload runtime artifact
         uses: actions/upload-artifact@v4
         with:
           name: runtime-win-x64
-          path: bmc-runtime-${{ github.ref_name }}-win-x64.7z
+          path: |
+            ${{ env.RUNTIME_PACKAGE }}
+            ${{ env.RUNTIME_PACKAGE }}.sha256
           if-no-files-found: error
 
       # ── Build app (script) layer ──────────────────────────
@@ -158,26 +197,83 @@ jobs:
           REM Root-level launcher files
           copy run.py app-layer\ >nul
           for %%f in (*.bat) do copy "%%f" app-layer\ >nul
+          if exist README_RELEASE.md copy README_RELEASE.md app-layer\ >nul
 
           REM Clean up __pycache__ to keep package small
           for /d /r app-layer %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
 
           echo [OK] app layer assembled: app-layer/
 
+      - name: Generate app release manifest and release notes
+        shell: pwsh
+        run: |
+          python scripts/generate_build_info.py app-layer `
+            --manifest-only `
+            --manifest-output app-layer/release_manifest.json `
+            --target win-x64 `
+            --channel $env:RELEASE_CHANNEL `
+            --version $env:RELEASE_TAG `
+            --runtime-package $env:RUNTIME_PACKAGE `
+            --app-package $env:APP_PACKAGE `
+            --full-package $env:FULL_PACKAGE `
+            --min-reusable-runtime-version $env:MIN_REUSABLE_RUNTIME_VERSION
+
+          if ($env:RELEASE_CHANNEL -eq "rc") {
+            @"
+          BMC Auto-Capture RC package
+
+          Runtime package: $env:RUNTIME_PACKAGE
+          App package: $env:APP_PACKAGE
+
+          依赖包可复用的最早版本：$env:MIN_REUSABLE_RUNTIME_VERSION
+          Minimum reusable runtime package version: $env:MIN_REUSABLE_RUNTIME_VERSION
+
+          首次使用：
+          1. 解压 runtime 依赖包。
+          2. 解压 app 脚本包。
+          3. 保持 runtime/、app/、run.py、启动.bat 位于同一根目录。
+          4. 运行 启动.bat。
+
+          如果现有 runtime 版本不早于上述版本，可以只覆盖 app/、run.py、启动.bat。
+          如果现有 runtime 版本更早，请同时更新 runtime/。
+
+          以下任一内容变化时必须更新 runtime：
+          requirements.txt、Python 版本、PyInstaller/frozen 配置、
+          Playwright/Chromium 版本、runtime/_internal、
+          runtime/playwright_browsers 或 bmc-engine.exe 构建输入。
+          "@ | Set-Content -Path app-layer/RC_RELEASE_NOTES.txt -Encoding utf8
+            Copy-Item app-layer/RC_RELEASE_NOTES.txt RC_RELEASE_NOTES.txt
+          } else {
+            @"
+          BMC Auto-Capture stable Windows package
+
+          Full package: $env:FULL_PACKAGE
+          Extract the zip and run 启动.bat, or run runtime\bmc-engine.exe directly.
+          "@ | Set-Content -Path STABLE_RELEASE_NOTES.txt -Encoding utf8
+          }
+
       - name: Package app (script) layer
         run: |
-          7z a bmc-app-${{ github.ref_name }}.zip app-layer
+          7z a $env:APP_PACKAGE app-layer
+
+      - name: Generate app SHA256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 $env:APP_PACKAGE).Hash.ToLowerInvariant()
+          "$hash  $env:APP_PACKAGE" | Set-Content -Path "$env:APP_PACKAGE.sha256" -Encoding ascii
 
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
         with:
           name: app
-          path: bmc-app-${{ github.ref_name }}.zip
+          path: |
+            ${{ env.APP_PACKAGE }}
+            ${{ env.APP_PACKAGE }}.sha256
           if-no-files-found: error
 
       # ── Build full release (all-in-one, extract-and-run) ──
-      # Only this zip is attached to every release (RC or official).
-      # The runtime.7z and app.zip are internal build artifacts only.
+      # Stable releases publish this full zip. RC releases publish runtime + app.
+      # All three packages are built so the same Windows build is reusable.
       # Final layout after extraction:
       #   bmc-auto-capture/
       #     runtime/
@@ -211,6 +307,7 @@ jobs:
           copy tasks.json bmc-auto-capture\ >nul
           copy run.py bmc-auto-capture\ >nul
           for %%f in (*.bat) do copy "%%f" bmc-auto-capture\ >nul
+          if not exist bmc-auto-capture\output mkdir bmc-auto-capture\output
 
           REM Scripts (CLI + API server)
           mkdir bmc-auto-capture\scripts
@@ -239,7 +336,17 @@ jobs:
           python scripts\generate_build_info.py bmc-auto-capture\runtime ^
             --workflow "Build & Release" ^
             --run-id "%GITHUB_RUN_ID%" ^
-            --entrypoint run.py
+            --entrypoint run.py ^
+            --target win-x64 ^
+            --package-role runtime ^
+            --channel "%RELEASE_CHANNEL%" ^
+            --version "%RELEASE_TAG%" ^
+            --runtime-package "%RUNTIME_PACKAGE%" ^
+            --app-package "%APP_PACKAGE%" ^
+            --full-package "%FULL_PACKAGE%" ^
+            --min-reusable-runtime-version "%MIN_REUSABLE_RUNTIME_VERSION%" ^
+            --manifest-output bmc-auto-capture\release_manifest.json ^
+            --update-mode full
           if %ERRORLEVEL% NEQ 0 exit /b 1
           echo [OK] build_info.json generated
 
@@ -492,13 +599,31 @@ jobs:
 
       - name: Package full release
         run: |
-          7z a bmc-auto-capture-${{ github.ref_name }}-win-x64.zip bmc-auto-capture
+          7z a $env:FULL_PACKAGE bmc-auto-capture
+
+      - name: Generate SHA256 files
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 $env:FULL_PACKAGE).Hash.ToLowerInvariant()
+          "$hash  $env:FULL_PACKAGE" | Set-Content -Path "$env:FULL_PACKAGE.sha256" -Encoding ascii
+          Write-Host "[sha256] $env:FULL_PACKAGE"
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: |
+            RC_RELEASE_NOTES.txt
+            STABLE_RELEASE_NOTES.txt
+          if-no-files-found: ignore
 
       - name: Upload full release artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-win-x64
-          path: bmc-auto-capture-${{ github.ref_name }}-win-x64.zip
+          path: |
+            ${{ env.FULL_PACKAGE }}
+            ${{ env.FULL_PACKAGE }}.sha256
           if-no-files-found: error
 
   # ── Release ───────────────────────────────────────────────
@@ -514,22 +639,24 @@ jobs:
         run: find . -type f \( -name "*.7z" -o -name "*.zip" \) | sort
 
       - name: Publish RC release
-        if: contains(github.ref_name, 'RC')
+        if: contains(github.ref_name, '-RC')
         uses: softprops/action-gh-release@v2
         with:
           name: "${{ github.ref_name }}"
           generate_release_notes: true
           prerelease: true
+          body_path: release-metadata/RC_RELEASE_NOTES.txt
           files: |
             runtime-win-x64/*
             app/*
 
       - name: Publish standard release
-        if: ${{ !contains(github.ref_name, 'RC') }}
+        if: ${{ !contains(github.ref_name, '-RC') }}
         uses: softprops/action-gh-release@v2
         with:
           name: "${{ github.ref_name }}"
           generate_release_notes: true
           prerelease: false
+          body_path: release-metadata/STABLE_RELEASE_NOTES.txt
           files: |
             release-win-x64/*
