@@ -20,6 +20,23 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..utils.sensitive import (
+    redact_nested_payload,
+    redact_sensitive_text,
+    redact_url_for_log,
+)
+
+
+# ---------------------------------------------------------------------------
+# Allowed callback body fields (whitelist)
+# ---------------------------------------------------------------------------
+
+_ALLOWED_CALLBACK_FIELDS = frozenset({
+    "planId", "deviceName", "taskName",
+    "status", "updater", "errorMessage",
+    "startedAt", "finishedAt",
+})
+
 logger = logging.getLogger("bmc_auto_capture.plan_item_cb")
 
 
@@ -112,7 +129,7 @@ class HttpCallbackTransport:
             body = e.read().decode("utf-8", errors="replace") if e.fp else ""
             return e.code, body
         except Exception as e:
-            return 0, str(e)
+            return 0, redact_sensitive_text(str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -144,26 +161,39 @@ class PlanItemStatusCallbackClient:
              status: str, updater: str = "downstream-system",
              error_message: str | None = None,
              excel_hash: str | None = None) -> bool:
-        """Legacy single-item send.  Prefer send_batch() or send_single()."""
-        payload: dict[str, Any] = {
+        """Legacy single-item send.  Prefer send_batch() or send_single().
+
+        NOTE: excel_hash parameter is accepted for backward compatibility only
+        but is NEVER serialized to the server callback body.  The callback body
+        always contains exactly 6 fields: {planId, deviceName, taskName, status,
+        updater, errorMessage}.  See build_callback_item() for the canonical form.
+        """
+        # P0-5: excel_hash is deprecated compatibility only; never sent to server.
+        _ = excel_hash  # explicitly ignored
+        payload = _sanitize_callback_item({
             "planId": plan_id,
             "deviceName": device_name,
             "taskName": task_name,
             "status": status,
             "updater": updater,
             "errorMessage": error_message,
-        }
-        if excel_hash:
-            payload["excelHash"] = excel_hash
+        })
         headers = {"Content-Type": "application/json; charset=utf-8"}
         try:
             code, _body = self._transport.post(url, payload, headers)
             ok = 200 <= code < 300
             if not ok:
-                logger.warning("Plan item callback failed: status=%d url=%s", code, url)
+                logger.warning(
+                    "Plan item callback failed: status=%d url=%s",
+                    code,
+                    redact_url_for_log(url),
+                )
             return ok
         except Exception as e:
-            logger.error("Plan item callback exception: %s", e)
+            logger.error(
+                "Plan item callback exception: %s",
+                redact_sensitive_text(str(e)),
+            )
             return False
 
     # ------------------------------------------------------------------
@@ -171,8 +201,9 @@ class PlanItemStatusCallbackClient:
     # ------------------------------------------------------------------
 
     def send_batch(self, url: str, items: list[dict[str, Any]],
-                   max_batch_size: int | None = None) -> CallbackResult:
-        """Send items as batch {items: [...]}.
+                   max_batch_size: int | None = None,
+                   run_id: str = "", summary: dict[str, Any] | None = None) -> CallbackResult:
+        """Send items as batch {planId, runId, items, summary}.
 
         - If items is empty: returns empty CallbackResult (no POST).
         - Chunks at max_batch_size (default 1000) if needed.
@@ -196,7 +227,9 @@ class PlanItemStatusCallbackClient:
                     ci + 1, len(chunks), sorted(plan_ids),
                 )
 
-            result = self._post_batch(url, chunk)
+            # Only include summary in the last chunk (or single chunk)
+            chunk_summary = summary if ci == len(chunks) - 1 else None
+            result = self._post_batch(url, chunk, run_id=run_id, summary=chunk_summary)
             agg.success += result.success
             agg.failed += result.failed
             if result.errors:
@@ -206,17 +239,31 @@ class PlanItemStatusCallbackClient:
 
         return agg
 
-    def _post_batch(self, url: str, items: list[dict[str, Any]]) -> CallbackResult:
-        """POST a single batch and parse the server response."""
-        payload = {"items": items}
+    def _post_batch(self, url: str, items: list[dict[str, Any]],
+                    run_id: str = "", summary: dict[str, Any] | None = None) -> CallbackResult:
+        """POST a single batch and parse the server response.
+
+        All items are sanitized to the allowed callback fields.
+        The payload includes planId, runId, items, and summary at the top level.
+        """
+        sanitized_items = [_sanitize_callback_item(it) for it in items]
+        payload: dict[str, Any] = {"items": sanitized_items}
+        # Add planId at top level from first item (all items share the same planId)
+        if sanitized_items and "planId" in sanitized_items[0]:
+            payload["planId"] = sanitized_items[0]["planId"]
+        if run_id:
+            payload["runId"] = run_id
+        if summary is not None:
+            payload["summary"] = summary
         headers = {"Content-Type": "application/json; charset=utf-8"}
         try:
             code, body = self._transport.post(url, payload, headers)
         except Exception as e:
-            logger.error("Batch callback transport exception: %s", e)
+            safe_error = redact_sensitive_text(str(e))
+            logger.error("Batch callback transport exception: %s", safe_error)
             return CallbackResult(
                 total=len(items), failed=len(items), batches=1,
-                last_error=f"CALLBACK_TRANSPORT_ERROR: {e}",
+                last_error=f"CALLBACK_TRANSPORT_ERROR: {safe_error}",
             )
         return self._parse_server_response(code, body, len(items))
 
@@ -225,15 +272,23 @@ class PlanItemStatusCallbackClient:
     # ------------------------------------------------------------------
 
     def send_single(self, url: str, item: dict[str, Any]) -> CallbackResult:
-        """Send a single item as {planId, deviceName, taskName, status, updater, errorMessage}."""
+        """Send a single item with up to 8 allowed callback fields.
+
+        The item dict may contain: planId, deviceName, taskName, status,
+        updater, errorMessage, startedAt, finishedAt.
+        Extra fields beyond _ALLOWED_CALLBACK_FIELDS are stripped via
+        _sanitize_callback_item().
+        """
         headers = {"Content-Type": "application/json; charset=utf-8"}
+        sanitized = _sanitize_callback_item(item)
         try:
-            code, body = self._transport.post(url, dict(item), headers)
+            code, body = self._transport.post(url, sanitized, headers)
         except Exception as e:
-            logger.error("Single callback transport exception: %s", e)
+            safe_error = redact_sensitive_text(str(e))
+            logger.error("Single callback transport exception: %s", safe_error)
             return CallbackResult(
                 total=1, failed=1, batches=1,
-                last_error=f"CALLBACK_TRANSPORT_ERROR: {e}",
+                last_error=f"CALLBACK_TRANSPORT_ERROR: {safe_error}",
             )
         return self._parse_server_response(code, body, 1)
 
@@ -244,14 +299,15 @@ class PlanItemStatusCallbackClient:
     def _parse_server_response(self, status_code: int, body: str,
                                 expected_count: int) -> CallbackResult:
         """Parse server response into CallbackResult with error classification."""
+        safe_body = redact_sensitive_text(body)
 
         # --- HTTP non-2xx ---
         if not (200 <= status_code < 300):
-            classification = self._classify_http_error(status_code, body)
+            classification = self._classify_http_error(status_code, safe_body)
             return CallbackResult(
                 total=expected_count, failed=expected_count, batches=1,
                 last_error=classification,
-                errors=[{"reason": classification, "httpStatus": status_code, "body": body[:500]}],
+                errors=[{"reason": classification, "httpStatus": status_code, "body": safe_body[:500]}],
             )
 
         # --- Parse JSON ---
@@ -261,7 +317,7 @@ class PlanItemStatusCallbackClient:
             return CallbackResult(
                 total=expected_count, failed=expected_count, batches=1,
                 last_error=f"CALLBACK_PARSE_ERROR: {e}",
-                errors=[{"reason": "CALLBACK_PARSE_ERROR", "body": body[:500]}],
+                errors=[{"reason": "CALLBACK_PARSE_ERROR", "body": safe_body[:500]}],
             )
 
         if not isinstance(data, dict):
@@ -273,7 +329,7 @@ class PlanItemStatusCallbackClient:
         # --- code != 0 ---
         code_val = data.get("code", -1)
         if code_val != 0:
-            msg = data.get("message", "")
+            msg = redact_sensitive_text(str(data.get("message", "")))
             classification = self._classify_error_message(msg)
             return CallbackResult(
                 total=expected_count, failed=expected_count, batches=1,
@@ -288,7 +344,7 @@ class PlanItemStatusCallbackClient:
         server_total = info.get("total", expected_count)
         server_success = info.get("success", 0)
         server_failed = info.get("failed", 0)
-        server_errors = info.get("errors", [])
+        server_errors = redact_nested_payload(info.get("errors", []))
 
         result = CallbackResult(
             total=server_total,
@@ -341,19 +397,69 @@ class PlanItemStatusCallbackClient:
 
 def build_callback_item(plan_id: str, device_name: str, task_name: str,
                          status: str, updater: str = "downstream-system",
-                         error_message: str | None = None) -> dict[str, Any]:
+                         error_message: str | None = None,
+                         started_at: str | None = None,
+                         finished_at: str | None = None) -> dict[str, Any]:
     """Build a single callback item dict with server-mapped status.
 
-    The returned dict contains exactly 6 fields:
-      {planId, deviceName, taskName, status, updater, errorMessage}
+    The returned dict contains up to 8 fields:
+      {planId, deviceName, taskName, status, updater, errorMessage,
+       startedAt, finishedAt}
 
-    No excelHash, runId, jobId, password, token, or secret is included.
+    No excelHash, jobId, password, token, or secret is included.
     """
-    return {
+    item = _sanitize_callback_item({
         "planId": str(plan_id),
         "deviceName": device_name,
         "taskName": task_name,
         "status": map_status_to_server(status),
         "updater": updater,
         "errorMessage": error_message,
-    }
+    })
+    if started_at is not None:
+        item["startedAt"] = started_at
+    if finished_at is not None:
+        item["finishedAt"] = finished_at
+    return item
+
+
+def _redact_sensitive_value(text: str) -> str:
+    """Redact sensitive values from a string, preferring JSON-structured redaction."""
+    if not text:
+        return text or ""
+    stripped = text.strip()
+    if stripped and stripped[0] in ('{', '['):
+        try:
+            parsed = json.loads(stripped)
+            redacted = redact_nested_payload(parsed)
+            return json.dumps(redacted, ensure_ascii=False)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+    return redact_sensitive_text(text)
+
+
+def _sanitize_callback_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Enforce the 8-field callback schema: discard extra fields.
+
+    Allowed fields: planId, deviceName, taskName, status, updater,
+    errorMessage, startedAt, finishedAt.
+
+    Any field not in _ALLOWED_CALLBACK_FIELDS is silently dropped.
+    This prevents accidental leakage of excelHash/runId/storedPath/metadata
+    into the callback body, even if the caller passes extra data.
+    """
+    result: dict[str, Any] = {}
+    for field in _ALLOWED_CALLBACK_FIELDS:
+        if field in item:
+            result[field] = item[field]
+        elif field == "errorMessage":
+            result[field] = None
+        else:
+            result[field] = ""
+    # Ensure planId is always a string
+    if "planId" in result and result["planId"] is not None:
+        result["planId"] = str(result["planId"])
+    if result.get("errorMessage") is not None:
+        result["errorMessage"] = _redact_sensitive_value(str(result["errorMessage"]))
+    result["status"] = map_status_to_server(str(result.get("status") or ""))
+    return result

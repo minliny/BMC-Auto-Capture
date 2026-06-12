@@ -9,6 +9,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -22,6 +23,7 @@ from ..plan_item_status_callback_client import (
     map_status_to_server,
 )
 from ..resource_lock_manager import ResourceLockManager
+from ..utils.sensitive import redact_url_for_log
 
 logger = logging.getLogger("bmc_auto_capture.plan_run")
 
@@ -29,6 +31,41 @@ logger = logging.getLogger("bmc_auto_capture.plan_run")
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RunConfigSnapshot:
+    """Immutable snapshot of latest Excel config at :run startup.
+
+    Once bound to a PlanRun, the run uses ONLY this snapshot — never re-reads
+    get_latest() or _get_latest_excel().  Updating latest.json after run start
+    does not affect any already-running plan.
+
+    Contains only excelHash + storedPath — no configId/configVersion exposed.
+    """
+    excel_hash: str
+    stored_path: str
+    original_filename: str = ""
+    source: str = ""
+    activated_at: str = ""
+    device_count: int = 0
+    enabled_device_count: int = 0
+    task_count: int = 0
+    enabled_task_count: int = 0
+
+    @classmethod
+    def from_latest_meta(cls, meta: dict[str, Any]) -> RunConfigSnapshot:
+        return cls(
+            excel_hash=meta.get("excelHash", ""),
+            stored_path=meta.get("storedPath", ""),
+            original_filename=meta.get("originalFilename", ""),
+            source=meta.get("source", ""),
+            activated_at=meta.get("activatedAt", ""),
+            device_count=meta.get("deviceCount", 0),
+            enabled_device_count=meta.get("enabledDeviceCount", 0),
+            task_count=meta.get("taskCount", 0),
+            enabled_task_count=meta.get("enabledTaskCount", 0),
+        )
+
 
 @dataclass
 class PlanRunItem:
@@ -58,19 +95,24 @@ class PlanRunItem:
 
 @dataclass
 class PlanRun:
+    """One plan run, identified by plan_id (the single business plan ID).
+
+    No serverPlanId, callbackPlanId, or executorPlanId.
+    No configVersion (use config_snapshot for everything).
+    """
     plan_id: int | str
     run_id: str = ""
     excel_hash: str = ""
     status: str = "ACCEPTED"
-    config_version: str = ""
     runner_mode: str = "fake"
     items: list[PlanRunItem] = field(default_factory=list)
     updater: str = "downstream-system"
     item_status_url: str = ""
     callback_mode: str = "batch"  # "batch" or "single"
-    callback_plan_id: str = ""  # service-side planId, e.g. "1"
     started_at: float = 0.0
     finished_at: float = 0.0
+    # ISSUE-001: immutable config snapshot bound at :run startup
+    config_snapshot: RunConfigSnapshot | None = None
 
     @property
     def summary(self) -> dict[str, int]:
@@ -101,11 +143,10 @@ def _set_latest_excel(path: str) -> dict[str, Any]:
     sha = hashlib.sha256()
     with open(path, "rb") as f:
         sha.update(f.read())
-    config_version = f"excel-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     enabled_devices = [d for d in devices if getattr(d, "enabled", True)]
     enabled_tasks = [t for t in tasks if getattr(t, "enabled", True)]
     info = {
-        "path": path, "sha256": sha.hexdigest(), "configVersion": config_version,
+        "path": path, "sha256": sha.hexdigest(),
         "devices": devices, "tasks": tasks,
         "deviceCount": len(devices), "enabledDeviceCount": len(enabled_devices),
         "taskCount": len(tasks), "enabledTaskCount": len(enabled_tasks),
@@ -128,12 +169,29 @@ class PlanRunService:
     """Orchestrates plan runs from latest Excel."""
 
     def __init__(self, use_http_callback: bool = False, callback_transport: Any = None,
-                 lock_manager: ResourceLockManager | None = None):
+                 lock_manager: ResourceLockManager | None = None,
+                 workspace_root: str | None = None):
+        if workspace_root is None:
+            from ..excel_config_store import _resolve_workspace
+            workspace_root = str(_resolve_workspace())
         self._runs: dict[str, PlanRun] = {}
         self._runs_lock = threading.Lock()
-        self._use_http = use_http_callback
         self._cb_transport = callback_transport
         self._lock_mgr = lock_manager or ResourceLockManager()
+        self._workspace_root = workspace_root
+
+        # P1-4: use_http_callback is deprecated — transport selection now uses
+        # _resolve_transport() which auto-detects HttpCallbackTransport when
+        # itemStatusUrl is provided.  The parameter is kept for backward
+        # compatibility only.
+        if use_http_callback:
+            logger.warning(
+                "PlanRunService(use_http_callback=True) is deprecated. "
+                "Transport is now auto-selected via _resolve_transport() based on "
+                "itemStatusUrl. Pass callback_transport=HttpCallbackTransport() "
+                "if you need an explicit HTTP transport."
+            )
+        self._use_http = use_http_callback  # deprecated, kept for compat
 
     @property
     def callback_transport(self):
@@ -142,6 +200,24 @@ class PlanRunService:
     @property
     def lock_manager(self) -> ResourceLockManager:
         return self._lock_mgr
+
+    # ------------------------------------------------------------------
+    # Transport resolution: auto HTTP when itemStatusUrl is provided
+    # ------------------------------------------------------------------
+
+    def _resolve_transport(self, item_status_url: str):
+        """Resolve callback transport.
+
+        Priority:
+        1. Explicit transport set at construction time (self._cb_transport)
+        2. HttpCallbackTransport if itemStatusUrl is non-empty
+        3. FakeCallbackTransport as fallback
+        """
+        if self._cb_transport is not None:
+            return self._cb_transport
+        if item_status_url:
+            return HttpCallbackTransport()
+        return FakeCallbackTransport()
 
     # ------------------------------------------------------------------
     # Latest Excel config
@@ -154,7 +230,7 @@ class PlanRunService:
             return {"accepted": False, "reason": "INVALID_EXCEL_CONFIG", "message": str(e)}
         filename = os.path.basename(path)
         return {
-            "accepted": True, "configVersion": info["configVersion"],
+            "accepted": True,
             "excelHash": info["sha256"],
             "filename": filename, "sha256": info["sha256"],
             "deviceCount": info["deviceCount"], "enabledDeviceCount": info["enabledDeviceCount"],
@@ -166,36 +242,44 @@ class PlanRunService:
     # External Plan API (excelHash + string planId)
     # ------------------------------------------------------------------
 
-    _plan_seq: dict[str, int] = {}
-    _plan_seq_lock = threading.Lock()
-
-    def _next_plan_id(self, excel_hash: str) -> str:
-        prefix = excel_hash[:8]
-        with self._plan_seq_lock:
-            seq = self._plan_seq.get(excel_hash, 0) + 1
-            self._plan_seq[excel_hash] = seq
-        return f"plan-{prefix}-{seq:06d}"
-
     def start_external_plan(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Start external plan via excelHash + planId. Hides runId from response."""
-        excel = _get_latest_excel()
-        if excel is None:
-            return {"accepted": False, "status": "FAILED",
-                    "errorMessage": "NO_LATEST_EXCEL_CONFIG"}
+        """Start external plan via excelHash + server planId.
 
+        The planId from callback.planId is the single business plan ID.
+        No runId, executionKey, or localPlanId is used.
+
+        ISSUE-001: validates + snapshots latest config at entry.
+        Changing latest.json after this does NOT affect the run.
+        """
         excel_hash = request.get("excelHash", "")
         if not excel_hash:
             return {"accepted": False, "status": "FAILED",
                     "errorMessage": "MISSING_EXCEL_HASH"}
 
-        if excel_hash != excel.get("sha256", ""):
+        # ISSUE-001: validate + snapshot at :run entry
+        snap_result = self._validate_and_snapshot_latest()
+        if not snap_result.get("ok"):
+            return {"accepted": False, "status": "FAILED",
+                    "errorMessage": snap_result.get("reason", "UNKNOWN"),
+                    "message": snap_result.get("message", "")}
+
+        snapshot: RunConfigSnapshot = snap_result["snapshot"]
+        devices = snap_result["devices"]
+        tasks = snap_result["tasks"]
+
+        # Validate caller-provided excelHash matches snapshot
+        if excel_hash != snapshot.excel_hash:
             return {"accepted": False, "status": "FAILED",
                     "errorMessage": "EXCEL_HASH_MISMATCH"}
 
         callback = request.get("callback", {})
         item_status_url = callback.get("itemStatusUrl", "")
         callback_mode = callback.get("mode", "batch")
-        callback_plan_id = str(callback.get("planId", "")) if callback.get("planId") else ""
+        # planId from callback.planId IS the single business plan ID
+        plan_id = str(callback.get("planId", ""))
+        if not plan_id:
+            return {"accepted": False, "status": "FAILED",
+                    "errorMessage": "MISSING_CALLBACK_PLAN_ID"}
         if callback_mode not in ("batch", "single"):
             return {"accepted": False, "status": "FAILED",
                     "errorMessage": f"INVALID_CALLBACK_MODE: {callback_mode}"}
@@ -204,11 +288,13 @@ class PlanRunService:
         if runner_mode not in ("fake", "real"):
             return {"accepted": False, "reason": f"INVALID_RUNNER: {runner_mode}"}
 
-        plan_id = self._next_plan_id(excel_hash)
-        run_id = f"plan-{plan_id}-run-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        # Check for duplicate — planId already running
+        with self._runs_lock:
+            existing = self._runs.get(str(plan_id))
+            if existing and existing.status == "RUNNING":
+                return {"accepted": False, "status": "PLAN_ALREADY_RUNNING",
+                        "errorMessage": f"Plan {plan_id} is already running"}
 
-        devices = excel["devices"]
-        tasks = excel["tasks"]
         enabled_devices = [d for d in devices if getattr(d, "enabled", True)]
         enabled_tasks = [t for t in tasks if getattr(t, "enabled", True)]
 
@@ -230,45 +316,56 @@ class PlanRunService:
                     lock_uri=lock_uri, _device=device, _task=task,
                 ))
 
+        run_id = f"plan-{plan_id}-run-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+
         run = PlanRun(
-            plan_id=plan_id, run_id=run_id, excel_hash=excel_hash,
+            plan_id=plan_id, run_id=run_id, excel_hash=snapshot.excel_hash,
             status="RUNNING", runner_mode=runner_mode,
-            config_version=excel["configVersion"], items=items,
+            items=items,
             updater=updater, item_status_url=item_status_url,
             callback_mode=callback_mode,
-            callback_plan_id=callback_plan_id,
             started_at=time.time(),
+            config_snapshot=snapshot,
         )
 
         with self._runs_lock:
-            self._runs[run_id] = run
+            self._runs[str(plan_id)] = run
 
-        transport = self._cb_transport or (
-            HttpCallbackTransport() if self._use_http else FakeCallbackTransport())
+        transport = self._resolve_transport(item_status_url)
         cb = PlanItemStatusCallbackClient(transport=transport)
+
+        # Log callback configuration
+        if item_status_url:
+            transport_mode = "http" if isinstance(transport, HttpCallbackTransport) else "fake"
+            logger.info(
+                "callback configured: url=%s mode=%s transport=%s planId=%s runId=%s itemCount=%d",
+                redact_url_for_log(item_status_url), callback_mode, transport_mode,
+                plan_id, run_id, len(items),
+            )
+        else:
+            logger.info("callback not configured: no itemStatusUrl provided")
+
         t = threading.Thread(target=self._execute_run, args=(run, cb), daemon=True)
         t.start()
 
-        filename = os.path.basename(excel.get("path", ""))
         return {
             "accepted": True, "excelHash": excel_hash,
-            "planId": plan_id, "filename": filename, "status": "ACCEPTED",
+            "planId": plan_id, "runId": run_id, "status": "ACCEPTED",
         }
 
     def get_external_plan(self, plan_id: str, excel_hash: str) -> dict[str, Any] | None:
         """Get external plan summary. Validates excelHash. Returns None if not found."""
         if not excel_hash:
             return None
-        run = self._get_run_by_plan_id(plan_id)
+        run = self._get_plan(plan_id)
         if run is None:
             return None
         if run.excel_hash != excel_hash:
             return None
-        excel = _get_latest_excel()
-        filename = os.path.basename(excel.get("path", "")) if excel else ""
         return {
             "excelHash": run.excel_hash, "planId": run.plan_id,
-            "filename": filename, "status": run.status,
+            "runId": run.run_id,
+            "status": run.status,
             "summary": run.summary,
             "startedAt": datetime.fromtimestamp(run.started_at, tz=timezone.utc).isoformat() if run.started_at else "",
             "finishedAt": datetime.fromtimestamp(run.finished_at, tz=timezone.utc).isoformat() if run.finished_at else "",
@@ -285,13 +382,11 @@ class PlanRunService:
         """Get external plan items. Validates excelHash. Returns None if not found."""
         if not excel_hash:
             return None
-        run = self._get_run_by_plan_id(plan_id)
+        run = self._get_plan(plan_id)
         if run is None:
             return None
         if run.excel_hash != excel_hash:
             return None
-        excel = _get_latest_excel()
-        filename = os.path.basename(excel.get("path", "")) if excel else ""
         items = [
             {
                 "deviceName": i.device_name, "taskName": i.task_name,
@@ -304,51 +399,171 @@ class PlanRunService:
         ]
         return {
             "excelHash": run.excel_hash, "planId": run.plan_id,
-            "filename": filename, "status": run.status,
+            "runId": run.run_id,
+            "status": run.status,
             "summary": run.summary, "items": items,
             "startedAt": datetime.fromtimestamp(run.started_at, tz=timezone.utc).isoformat() if run.started_at else "",
             "finishedAt": datetime.fromtimestamp(run.finished_at, tz=timezone.utc).isoformat() if run.finished_at else "",
         }
 
-    def _get_run_by_plan_id(self, plan_id: str) -> PlanRun | None:
-        """Find run by external plan_id string (linear scan, small dataset)."""
+    def _get_plan(self, plan_id: str) -> PlanRun | None:
+        """Find plan by plan_id (direct key lookup, O(1))."""
         with self._runs_lock:
-            for run in self._runs.values():
-                if str(run.plan_id) == plan_id:
-                    return run
-        return None
+            return self._runs.get(str(plan_id))
+
+    # ------------------------------------------------------------------
+    # Config snapshot validation (ISSUE-001)
+    # ------------------------------------------------------------------
+
+    def _validate_and_snapshot_latest(self) -> dict[str, Any]:
+        """Read latest config, validate integrity, return snapshot or error.
+
+        Returns dict with keys:
+          - ok=True + snapshot=RunConfigSnapshot + devices + tasks   (success)
+          - ok=False + reason + message                              (failure)
+
+        Once a snapshot is created, changing latest.json does NOT affect it.
+        """
+        # 1. Try ExcelConfigStore latest.json first
+        try:
+            from ..excel_config_store import get_default_store
+            store = get_default_store()
+            meta = store.get_latest()
+        except Exception:
+            meta = None
+
+        # NEW-005: Check get_latest() error codes (CONFIG_CORRUPTED, LATEST_EXCEL_MISSING)
+        if isinstance(meta, dict) and meta.get("code") in ("CONFIG_CORRUPTED", "LATEST_EXCEL_MISSING"):
+            reason = meta["code"]
+            msg = meta.get("message", f"Config error: {reason}")
+            return {"ok": False, "reason": reason, "message": msg}
+
+        # 2. Fallback to in-memory _get_latest_excel (legacy path)
+        #    Only when store.get_latest() returned None (no json at all).
+        #    Damaged latest.json never falls back.
+        excel = _get_latest_excel()
+        if meta is None and excel is None:
+            return {"ok": False, "reason": "NO_LATEST_EXCEL_CONFIG",
+                    "message": "No latest Excel config available"}
+
+        # If we have store meta, use it; otherwise build from in-memory
+        if meta:
+            stored_path = meta.get("storedPath", "")
+            excel_hash = meta.get("excelHash", "")
+
+            # Validate storedPath exists
+            if not stored_path or not os.path.isfile(stored_path):
+                return {"ok": False, "reason": "LATEST_EXCEL_MISSING",
+                        "message": f"Latest Excel storedPath missing: {stored_path}"}
+
+            # Validate sha256 matches
+            try:
+                actual_sha = hashlib.sha256()
+                with open(stored_path, "rb") as f:
+                    actual_sha.update(f.read())
+                actual_hash = actual_sha.hexdigest()
+                if actual_hash != excel_hash:
+                    return {"ok": False, "reason": "LATEST_EXCEL_HASH_MISMATCH",
+                            "message": f"Excel hash mismatch: expected {excel_hash[:12]}..., got {actual_hash[:12]}..."}
+            except OSError as e:
+                return {"ok": False, "reason": "LATEST_EXCEL_READ_ERROR",
+                        "message": f"Cannot read storedPath for hash validation: {e}"}
+
+            snapshot = RunConfigSnapshot.from_latest_meta(meta)
+
+            # NEW-004: ALWAYS load devices/tasks from storedPath, never from
+            # in-memory excel.  This guarantees snapshot metadata and
+            # devices/tasks originate from the exact same file.
+            try:
+                from ..loader.excel_reader import load_all
+                devices, tasks = load_all(stored_path)
+                excel = {
+                    "devices": devices, "tasks": tasks,
+                    "path": stored_path, "sha256": excel_hash,
+                    "deviceCount": snapshot.device_count,
+                    "enabledDeviceCount": snapshot.enabled_device_count,
+                    "taskCount": snapshot.task_count,
+                    "enabledTaskCount": snapshot.enabled_task_count,
+                }
+            except Exception as e:
+                return {"ok": False, "reason": "LATEST_EXCEL_PARSE_ERROR",
+                        "message": f"Cannot parse storedPath: {e}"}
+
+            return {"ok": True, "snapshot": snapshot, "devices": excel["devices"],
+                    "tasks": excel["tasks"], "excel": excel}
+
+        # Legacy in-memory only path
+        if excel is None:
+            return {"ok": False, "reason": "NO_LATEST_EXCEL_CONFIG",
+                    "message": "No latest Excel config available"}
+
+        stored_path = excel.get("path", "")
+        excel_hash = excel.get("sha256", "")
+
+        # Validate file exists
+        if not stored_path or not os.path.isfile(stored_path):
+            return {"ok": False, "reason": "LATEST_EXCEL_MISSING",
+                    "message": f"Excel file missing: {stored_path}"}
+
+        # Build a minimal snapshot from in-memory state
+        snapshot = RunConfigSnapshot(
+            excel_hash=excel_hash,
+            stored_path=stored_path,
+            original_filename=os.path.basename(stored_path),
+            source="in_memory",
+            device_count=excel.get("deviceCount", 0),
+            enabled_device_count=excel.get("enabledDeviceCount", 0),
+            task_count=excel.get("taskCount", 0),
+            enabled_task_count=excel.get("enabledTaskCount", 0),
+        )
+
+        return {"ok": True, "snapshot": snapshot, "devices": excel["devices"],
+                "tasks": excel["tasks"], "excel": excel}
 
     # ------------------------------------------------------------------
     # Start plan run (legacy)
     # ------------------------------------------------------------------
 
     def start_plan_run(self, plan_id: int, request: dict[str, Any]) -> dict[str, Any]:
-        excel = _get_latest_excel()
-        if excel is None:
-            return {"accepted": False, "reason": "NO_LATEST_EXCEL_CONFIG"}
+        # ISSUE-001: validate + snapshot at :run entry — never re-read latest
+        snap_result = self._validate_and_snapshot_latest()
+        if not snap_result.get("ok"):
+            return {"accepted": False,
+                    "reason": snap_result.get("reason", "UNKNOWN"),
+                    "message": snap_result.get("message", "")}
+
+        snapshot: RunConfigSnapshot = snap_result["snapshot"]
+        devices = snap_result["devices"]
+        tasks = snap_result["tasks"]
 
         callback = request.get("callback", {})
         item_status_url = callback.get("itemStatusUrl", "")
-        callback_plan_id = str(callback.get("planId", "")) if callback.get("planId") else ""
         callback_mode = callback.get("mode", "batch")
         if callback_mode not in ("batch", "single"):
             return {"accepted": False, "reason": f"INVALID_CALLBACK_MODE: {callback_mode}"}
         updater = request.get("updater", "downstream-system")
         runner_mode = request.get("runner", "fake")
 
+        # P1-1: path plan_id is authoritative.  If callback.planId is provided
+        # and differs from path plan_id, warn but do NOT change run ownership.
+        callback_plan_id = callback.get("planId", "")
+        if callback_plan_id and str(callback_plan_id) != str(plan_id):
+            logger.warning(
+                "callback.planId (%s) differs from path plan_id (%s) — "
+                "path plan_id is authoritative, callback.planId ignored",
+                callback_plan_id, plan_id,
+            )
+
         if runner_mode not in ("fake", "real"):
             return {"accepted": False, "reason": f"INVALID_RUNNER: {runner_mode}"}
 
-        run_id = f"plan-{plan_id}-run-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-
+        # Check for duplicate — plan_id already running
         with self._runs_lock:
-            for r in self._runs.values():
-                if r.plan_id == plan_id and r.status == "RUNNING":
-                    return {"accepted": False, "reason": "DUPLICATE",
-                            "runId": r.run_id, "status": r.status}
+            existing = self._runs.get(str(plan_id))
+            if existing and existing.status == "RUNNING":
+                return {"accepted": False, "reason": "PLAN_ALREADY_RUNNING",
+                        "planId": plan_id, "status": existing.status}
 
-        devices = excel["devices"]
-        tasks = excel["tasks"]
         enabled_devices = [d for d in devices if getattr(d, "enabled", True)]
         enabled_tasks = [t for t in tasks if getattr(t, "enabled", True)]
 
@@ -358,7 +573,6 @@ class PlanRunService:
                 match_group = getattr(task, "match_group", "") or ""
                 dg = getattr(device, "device_group", "") or ""
                 if match_group:
-                    # match_group supports "/"-separated groups, e.g. "L1/L2/A3"
                     allowed_groups = [g.strip().upper() for g in match_group.split("/") if g.strip()]
                     if dg.upper() not in allowed_groups:
                         continue
@@ -375,28 +589,43 @@ class PlanRunService:
                     _task=task,
                 ))
 
+        run_id = f"plan-{plan_id}-run-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+
         run = PlanRun(
             plan_id=plan_id, run_id=run_id, status="RUNNING",
-            runner_mode=runner_mode, config_version=excel["configVersion"],
+            runner_mode=runner_mode,
             items=items, updater=updater, item_status_url=item_status_url,
             callback_mode=callback_mode,
-            callback_plan_id=callback_plan_id,
             started_at=time.time(),
+            excel_hash=snapshot.excel_hash,
+            config_snapshot=snapshot,
         )
 
         with self._runs_lock:
-            self._runs[run_id] = run
+            self._runs[str(plan_id)] = run
 
-        transport = self._cb_transport or (
-            HttpCallbackTransport() if self._use_http else FakeCallbackTransport())
+        transport = self._resolve_transport(item_status_url)
         cb = PlanItemStatusCallbackClient(transport=transport)
+
+        # Log callback configuration
+        if item_status_url:
+            transport_mode = "http" if isinstance(transport, HttpCallbackTransport) else "fake"
+            logger.info(
+                "callback configured: url=%s mode=%s transport=%s planId=%s runId=%s itemCount=%d",
+                redact_url_for_log(item_status_url), callback_mode, transport_mode,
+                plan_id, run_id, len(items),
+            )
+        else:
+            logger.info("callback not configured: no itemStatusUrl provided")
 
         t = threading.Thread(target=self._execute_run, args=(run, cb), daemon=True)
         t.start()
 
         return {
-            "accepted": True, "planId": plan_id, "runId": run_id,
-            "status": "ACCEPTED", "configVersion": excel["configVersion"],
+            "accepted": True, "planId": plan_id,
+            "runId": run_id,
+            "status": "ACCEPTED",
+            "excelHash": snapshot.excel_hash,
             "message": "plan run accepted",
         }
 
@@ -419,7 +648,8 @@ class PlanRunService:
                 discovered = discover_callback_url()
                 if discovered:
                     logger.info(
-                        "Callback URL resolved via registry: %s", discovered,
+                        "Callback URL resolved via registry: %s",
+                        redact_url_for_log(discovered),
                     )
                     return discovered
             except Exception as e:
@@ -427,13 +657,16 @@ class PlanRunService:
 
         # Priority 2: request callback.itemStatusUrl
         if run.item_status_url:
-            logger.info("Callback URL from request: %s", run.item_status_url)
+            logger.info(
+                "Callback URL from request: %s",
+                redact_url_for_log(run.item_status_url),
+            )
             return run.item_status_url
 
         # Priority 3: environment variable
         env_url = os.environ.get("EXECUTOR_PLAN_ITEM_STATUS_URL", "")
         if env_url:
-            logger.info("Callback URL from env: %s", env_url)
+            logger.info("Callback URL from env: %s", redact_url_for_log(env_url))
             return env_url
 
         # Priority 4: not configured
@@ -454,7 +687,7 @@ class PlanRunService:
 
             # Lock
             if item.lock_uri:
-                if not self._lock_mgr.acquire(item.lock_uri, f"{run.run_id}:{item.device_name}:{item.task_name}"):
+                if not self._lock_mgr.acquire(item.lock_uri, f"{run.plan_id}:{item.device_name}:{item.task_name}"):
                     item.status = "FAILED"
                     item.error_message = f"LOCK_CONFLICT: {item.lock_uri}"
                     item.finished_at = time.time()
@@ -468,7 +701,7 @@ class PlanRunService:
                     self._execute_fake(item)
             finally:
                 if item.lock_uri:
-                    self._lock_mgr.release(item.lock_uri, f"{run.run_id}:{item.device_name}:{item.task_name}")
+                    self._lock_mgr.release(item.lock_uri, f"{run.plan_id}:{item.device_name}:{item.task_name}")
 
             item.finished_at = time.time()
             if item.status == "SUCCESS":
@@ -477,75 +710,166 @@ class PlanRunService:
                 item.add_info_event("ERROR", f"PlanItem failed: status={item.status} error={item.error_message}")
 
         run.finished_at = time.time()
+
+        # --- ISSUE-005: CallbackOutbox ---
+        # Write outbox + attempt delivery BEFORE marking run COMPLETED.
+        # Delivery failures NEVER change local plan/run status.
+        self._deliver_via_outbox(run, cb)
+
         run.status = "COMPLETED"
+
+    def _deliver_via_outbox(self, run: PlanRun, cb: PlanItemStatusCallbackClient):
+        """ISSUE-005: Write callback items to outbox, then attempt delivery.
+
+        Local plan/run status is never affected by callback outcome.
+        Callback body planId comes from run.plan_id (single business plan ID).
+        Batch payload includes runId, summary, and per-item startedAt/finishedAt.
+        """
+        from ..callback_outbox import (
+            CallbackOutbox, CallbackOutboxItem,
+            build_outbox_item_from_callback_body,
+            classify_callback_error,
+        )
 
         # --- Resolve callback URL ---
         callback_url = self._resolve_callback_url(run)
+        plan_id = str(run.plan_id)
+        url_configured = bool(callback_url and plan_id)
+
         if not callback_url:
-            logger.info("CALLBACK_URL_NOT_CONFIGURED: no callback URL resolved, skipping server callback")
-            return
+            logger.info("CALLBACK_URL_NOT_CONFIGURED: no callback URL resolved")
+        if not plan_id:
+            logger.warning("CALLBACK_PLAN_ID_MISSING: plan_id is empty")
 
-        # --- Check callback.planId for server callback ---
-        callback_plan_id = run.callback_plan_id
-        if not callback_plan_id:
-            logger.warning(
-                "CALLBACK_PLAN_ID_MISSING: itemStatusUrl=%s configured but no callback.planId, "
-                "skipping server callback", callback_url,
+        # --- Build callback items with startedAt/finishedAt ---
+        outbox = CallbackOutbox(plan_id, workspace_root=self._workspace_root)
+        outbox_items: list[CallbackOutboxItem] = []
+        cb_items: list[dict[str, Any]] = []
+
+        for item in run.items:
+            started_at_iso = (
+                datetime.fromtimestamp(item.started_at, tz=timezone.utc).isoformat()
+                if item.started_at else None
             )
-            return
-
-        # --- Build callback items ---
-        cb_items = [
-            build_callback_item(
-                plan_id=callback_plan_id,
+            finished_at_iso = (
+                datetime.fromtimestamp(item.finished_at, tz=timezone.utc).isoformat()
+                if item.finished_at else None
+            )
+            cb_body = build_callback_item(
+                plan_id=plan_id,
                 device_name=item.device_name,
                 task_name=item.task_name,
                 status=item.status,
                 updater=run.updater,
                 error_message=item.error_message,
+                started_at=started_at_iso,
+                finished_at=finished_at_iso,
             )
-            for item in run.items
-        ]
+            cb_items.append(cb_body)
 
-        if not cb_items:
+            oi = build_outbox_item_from_callback_body(
+                plan_id=cb_body["planId"],
+                device_name=cb_body["deviceName"],
+                task_name=cb_body["taskName"],
+                status=cb_body["status"],
+                updater=cb_body["updater"],
+                error_message=cb_body["errorMessage"],
+                callback_url=callback_url if url_configured else "",
+            )
+            if not url_configured:
+                oi.delivery_status = "URL_NOT_CONFIGURED"
+            outbox_items.append(oi)
+
+        if not outbox_items:
             logger.info("No callback items to send (plan has zero items)")
             return
 
-        # --- Dispatch based on callback mode ---
-        if run.callback_mode == "batch":
-            result: CallbackResult = cb.send_batch(callback_url, cb_items)
-        else:
-            # Single mode: send each item individually
-            result = CallbackResult(total=len(cb_items))
-            for item in cb_items:
-                r = cb.send_single(callback_url, item)
-                result.success += r.success
-                result.failed += r.failed
-                result.batches += 1
-                if r.errors:
-                    result.errors.extend(r.errors)
-                if r.last_error:
-                    result.last_error = r.last_error
+        outbox.append_batch(outbox_items)
+        transport_mode = "http" if isinstance(cb.transport, HttpCallbackTransport) else "fake"
+        logger.info(
+            "CallbackOutbox: %d items written to %s (url_configured=%s, transport=%s)",
+            len(outbox_items), outbox._outbox_path, url_configured, transport_mode,
+        )
 
-        # Log aggregated result
-        if result.ok:
-            logger.info(
-                "Callback completed: url=%s mode=%s planId=%s total=%d success=%d batches=%d",
-                callback_url, run.callback_mode, callback_plan_id,
-                result.total, result.success, result.batches,
-            )
-        elif result.last_error == "CALLBACK_PARTIAL_FAILURE":
-            logger.warning(
-                "Callback partial failure: url=%s mode=%s planId=%s total=%d success=%d failed=%d errors=%d",
-                callback_url, run.callback_mode, callback_plan_id,
-                result.total, result.success, result.failed, len(result.errors),
-            )
-        else:
+        if not url_configured:
+            return
+
+        # --- Build summary ---
+        summary = {
+            "total": len(run.items),
+            "success": sum(1 for it in run.items if it.status == "SUCCESS"),
+            "failed": sum(1 for it in run.items if it.status == "FAILED"),
+            "in_progress": sum(1 for it in run.items if it.status in ("IN_PROGRESS", "RUNNING")),
+            "pending": sum(1 for it in run.items if it.status == "PENDING"),
+        }
+
+        # --- Attempt delivery ---
+        logger.info(
+            "callback send start: runId=%s planId=%s itemCount=%d mode=%s url=%s",
+            run.run_id, plan_id, len(cb_items), run.callback_mode,
+            redact_url_for_log(callback_url),
+        )
+
+        try:
+            if run.callback_mode == "batch":
+                result: CallbackResult = cb.send_batch(
+                    callback_url, cb_items,
+                    run_id=run.run_id, summary=summary,
+                )
+                self._process_outbox_result(outbox, outbox_items, result, callback_url, run.run_id)
+            else:
+                # P1-2: single mode sends the same 8-field items as batch mode
+                # (planId, deviceName, taskName, status, updater, errorMessage,
+                #  startedAt, finishedAt).  Do NOT use oi.to_callback_body()
+                # which only returns 6 fields — that is the internal outbox
+                # format, not the external callback payload.
+                for idx, oi in enumerate(outbox_items):
+                    r = cb.send_single(callback_url, cb_items[idx])
+                    single_result = CallbackResult(
+                        total=1, success=1 if r.ok else 0,
+                        failed=0 if r.ok else 1, batches=1,
+                        last_error=r.last_error,
+                    )
+                    self._process_outbox_result(outbox, [oi], single_result, callback_url, run.run_id)
+        except Exception as e:
             logger.error(
-                "Callback failed: url=%s mode=%s planId=%s total=%d failed=%d error=%s",
-                callback_url, run.callback_mode, callback_plan_id,
-                result.total, result.failed, result.last_error,
+                "callback send failed: runId=%s exception=%s",
+                run.run_id, redact_sensitive_text(str(e)[:200]),
             )
+
+    def _process_outbox_result(
+        self, outbox, outbox_items: list,
+        result: Any, callback_url: str, run_id: str = "",
+    ):
+        """ISSUE-005: Update outbox items based on delivery result."""
+        from ..callback_outbox import classify_callback_error
+
+        if result.ok:
+            for oi in outbox_items:
+                outbox.mark_sent(oi.outbox_id)
+            logger.info(
+                "callback send success: runId=%s statusCode=200 itemCount=%d url=%s",
+                run_id, len(outbox_items), redact_url_for_log(callback_url),
+            )
+            return
+
+        # Partial or full failure — mark each item
+        error_msg = getattr(result, 'last_error', None) or "CALLBACK_FAILED"
+        retryable, _ = classify_callback_error(error_msg)
+
+        for oi in outbox_items:
+            outbox.mark_failed(
+                oi.outbox_id, error_message=error_msg,
+                retryable=retryable,
+            )
+
+        status = "FAILED_RETRYABLE" if retryable else "FAILED_FINAL"
+        from ..utils.sensitive import redact_sensitive_text
+        logger.warning(
+            "callback send failed: runId=%s itemCount=%d status=%s url=%s error=%s",
+            run_id, len(outbox_items), status, redact_url_for_log(callback_url),
+            redact_sensitive_text((error_msg or "")[:120]),
+        )
 
     def _execute_fake(self, item: PlanRunItem):
         time.sleep(0.001)
@@ -658,31 +982,20 @@ class PlanRunService:
             "task_snapshot": task_snapshot,
         }
 
-    def _do_callback(self, run: PlanRun, item: PlanRunItem, cb: PlanItemStatusCallbackClient):
-        if not run.item_status_url:
-            return
-        cb.send(
-            url=run.item_status_url, plan_id=item.plan_id,
-            device_name=item.device_name, task_name=item.task_name,
-            status=item.status, updater=run.updater,
-            error_message=item.error_message,
-            excel_hash=run.excel_hash if run.is_external else None,
-        )
-
     # ------------------------------------------------------------------
     # Query
     # ------------------------------------------------------------------
 
-    def get_run(self, run_id: str) -> dict[str, Any] | None:
-        run = self._runs.get(run_id)
+    def get_plan(self, plan_id: int) -> dict[str, Any] | None:
+        """Get plan summary by plan_id. Returns None if not found."""
+        run = self._runs.get(str(plan_id))
         if run is None:
             return None
-        return {"planId": run.plan_id, "runId": run.run_id,
-                "status": run.status, "summary": run.summary}
+        return {"planId": run.plan_id, "runId": run.run_id, "status": run.status, "summary": run.summary}
 
-    def get_run_items(self, run_id: str) -> dict[str, Any] | None:
-        """Get run with per-item details. Returns None if run not found."""
-        run = self._runs.get(run_id)
+    def get_plan_items(self, plan_id: int) -> dict[str, Any] | None:
+        """Get plan items with per-item details. Returns None if plan not found."""
+        run = self._runs.get(str(plan_id))
         if run is None:
             return None
         items = [
@@ -705,16 +1018,20 @@ class PlanRunService:
             "items": items,
         }
 
-    def run_all_sync(self, run_id: str):
-        """Execute run synchronously (for testing).
-        If run is already running (background thread), wait for it.
+    def run_by_plan_id(self, plan_id: int):
+        """Execute plan synchronously (for testing).
+        If plan is already running (background thread), wait for it.
+
+        Uses _resolve_transport() for transport selection, matching the
+        production code path in start_plan_run().
         """
-        run = self._runs.get(run_id)
+        run = self._runs.get(str(plan_id))
         if run is None:
             return
         if run.status == "COMPLETED":
             return
-        transport = self._cb_transport or FakeCallbackTransport()
+        # P2-1: use _resolve_transport() instead of self._cb_transport or FakeCallbackTransport()
+        transport = self._resolve_transport(run.item_status_url)
         cb = PlanItemStatusCallbackClient(transport=transport)
         self._execute_run(run, cb)
 

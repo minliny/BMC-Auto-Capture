@@ -3,7 +3,7 @@ Pydantic schemas for executor API request/response validation.
 """
 
 from __future__ import annotations
-from typing import Any, Optional
+from typing import Any, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -94,3 +94,58 @@ class ExecutorStatusResponse(BaseModel):
     job_counts: dict[str, int] = Field(default_factory=dict)
     total_jobs: int = 0
     uptime_seconds: float = 0.0
+
+
+class PlanRunCallbackConfig(BaseModel):
+    """Callback configuration for plan run status reporting."""
+    itemStatusUrl: str = Field(
+        default="",
+        description="URL to receive plan-item status callbacks",
+    )
+    planId: Union[str, int] = Field(
+        default="",
+        description="Business plan ID included in callback payloads",
+    )
+    mode: str = Field(
+        default="batch",
+        description="Callback delivery mode: batch or single",
+        pattern=r"^(batch|single)$",
+    )
+
+
+class PlanRunRequest(BaseModel):
+    """Request body for POST /executor/v1/plans/{plan_id}:run."""
+    callback: PlanRunCallbackConfig = Field(
+        default_factory=PlanRunCallbackConfig,
+        description="Callback configuration for status reporting",
+    )
+    updater: str = Field(
+        default="downstream-system",
+        description="Value sent in the updater field of each callback payload",
+    )
+    runner: str = Field(
+        default="fake",
+        description="Runner mode: fake executes instantly, real connects to devices",
+        pattern=r"^(fake|real)$",
+    )
+
+
+class ExternalPlanRequest(BaseModel):
+    """Request body for POST /executor/v1/plans (external plan with excelHash)."""
+    excelHash: str = Field(
+        default="",
+        description="SHA-256 hash of the currently activated Excel config",
+    )
+    callback: PlanRunCallbackConfig = Field(
+        default_factory=PlanRunCallbackConfig,
+        description="Callback configuration for status reporting",
+    )
+    updater: str = Field(
+        default="downstream-system",
+        description="Value sent in the updater field of each callback payload",
+    )
+    runner: str = Field(
+        default="fake",
+        description="Runner mode: fake executes instantly, real connects to devices",
+        pattern=r"^(fake|real)$",
+    )
