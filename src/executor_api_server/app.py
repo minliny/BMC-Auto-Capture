@@ -103,7 +103,8 @@ def create_app(
     # Direct dispatch (existing)
     # ==================================================================
 
-    @app.post("/executor/v1/jobs", response_model=JobAcceptResponse)
+    @app.post("/executor/v1/jobs", response_model=JobAcceptResponse,
+              include_in_schema=False, deprecated=True)
     async def receive_job(req: JobDispatchRequest):
         try:
             result = service.submit_job(req.model_dump())
@@ -111,7 +112,8 @@ def create_app(
             raise HTTPException(status_code=400, detail={"code": e.code, "message": e.message})
         return JobAcceptResponse(**result)
 
-    @app.get("/executor/v1/jobs/{job_id}", response_model=JobStatusResponse)
+    @app.get("/executor/v1/jobs/{job_id}", response_model=JobStatusResponse,
+             include_in_schema=False, deprecated=True)
     async def get_job(job_id: str):
         status = service.get_job_status(job_id)
         if status.get("status") == "NOT_FOUND":
@@ -431,7 +433,8 @@ def _register_plan_run_routes(app: FastAPI, prs):
     # External Plan API (excelHash + string planId)
     # ==================================================================
 
-    @app.get("/executor/v1/runs/{run_id}", response_model=PlanStatusResponse)
+    @app.get("/executor/v1/runs/{run_id}", response_model=PlanStatusResponse,
+             include_in_schema=False, deprecated=True)
     async def get_run_by_id(run_id: str):
         r = prs.get_run(run_id)
         if r is None:
@@ -439,7 +442,8 @@ def _register_plan_run_routes(app: FastAPI, prs):
                                                          "message": f"Run not found: {run_id}"})
         return r
 
-    @app.get("/executor/v1/runs/{run_id}/items", response_model=PlanItemsResponse)
+    @app.get("/executor/v1/runs/{run_id}/items", response_model=PlanItemsResponse,
+             include_in_schema=False, deprecated=True)
     async def get_run_items_by_id(run_id: str):
         r = prs.get_run_items(run_id)
         if r is None:
@@ -488,7 +492,7 @@ def _register_plan_routes(app: FastAPI, rs):
     executor_state/plans/{planId}.
     """
 
-    @app.post("/executor/v1/plans:import")
+    @app.post("/executor/v1/plans:import", include_in_schema=False, deprecated=True)
     async def import_plan(req: Request):
         body = await req.json()
         excel = body.get("excel_path", "")
@@ -500,7 +504,7 @@ def _register_plan_routes(app: FastAPI, rs):
             return JSONResponse(content=result, status_code=400)
         return result
 
-    @app.get("/executor/v1/plans/{plan_id}/tasks")
+    @app.get("/executor/v1/plans/{plan_id}/tasks", include_in_schema=False, deprecated=True)
     async def get_plan_tasks(plan_id: str):
         """DEPRECATED/ISOLATED: RunDispatchService plan tasks.
         PlanRunService routes use /plans/{plan_id} and /plans/{plan_id}/items."""
@@ -509,7 +513,7 @@ def _register_plan_routes(app: FastAPI, rs):
             raise HTTPException(status_code=404, detail=f"Plan not found: {plan_id}")
         return {"plan_id": plan_id, "tasks": tasks}
 
-    @app.get("/executor/v1/plans/{plan_id}/tasks/{task_id}")
+    @app.get("/executor/v1/plans/{plan_id}/tasks/{task_id}", include_in_schema=False, deprecated=True)
     async def get_plan_task(plan_id: str, task_id: str):
         t = rs.get_plan_task(plan_id, task_id)
         if t is None:
@@ -526,7 +530,7 @@ def _register_run_routes(app: FastAPI, rs):
     New code should use /executor/v1/plans/{plan_id}:run instead.
     """
 
-    @app.post("/executor/v1/runs")  # DEPRECATED: use /executor/v1/plans/{plan_id}:run
+    @app.post("/executor/v1/runs", include_in_schema=False, deprecated=True)  # DEPRECATED
     async def start_run(req: Request):
         body = await req.json()
         result = rs.start_run(body)
@@ -534,21 +538,21 @@ def _register_run_routes(app: FastAPI, rs):
             return JSONResponse(content=result, status_code=400 if "not_found" in str(result.get("reason","")) else 409)
         return result
 
-    @app.get("/executor/v1/runs/{run_id}")  # DEPRECATED: legacy RunDispatchService
+    @app.get("/executor/v1/runs/{run_id}", include_in_schema=False, deprecated=True)
     async def get_run(run_id: str):
         r = rs.get_run(run_id)
         if r is None:
             raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
         return r
 
-    @app.get("/executor/v1/runs/{run_id}/tasks")  # DEPRECATED: legacy RunDispatchService
+    @app.get("/executor/v1/runs/{run_id}/tasks", include_in_schema=False, deprecated=True)
     async def get_run_tasks(run_id: str):
         tasks = rs.get_run_tasks(run_id)
         if tasks is None:
             raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
         return {"run_id": run_id, "tasks": tasks}
 
-    @app.get("/executor/v1/runs/{run_id}/tasks/{task_id}")  # DEPRECATED: legacy RunDispatchService
+    @app.get("/executor/v1/runs/{run_id}/tasks/{task_id}", include_in_schema=False, deprecated=True)
     async def get_run_task(run_id: str, task_id: str):
         t = rs.get_run_task(run_id, task_id)
         if t is None:
@@ -573,29 +577,48 @@ def _register_debug_callback_receiver(app: FastAPI):
     @app.post("/debug/plan-item-statuses")
     async def debug_receive_plan_item_status(req: Request):
         body = await req.json()
-        payload = {
-            "planId": body.get("planId"),
-            "deviceName": body.get("deviceName", ""),
-            "taskName": body.get("taskName", ""),
-            "status": body.get("status", ""),
-            "updater": body.get("updater", ""),
-            "errorMessage": body.get("errorMessage"),
-            "startedAt": body.get("startedAt"),
-            "finishedAt": body.get("finishedAt"),
-        }
-        # Debug receiver stores exactly the 8 callback fields — no excelHash/configId/runId
-        entry = {
-            "receivedAt": time.time(),
-            "payload": payload,
-        }
+        entries = []
+        if isinstance(body.get("items"), list):
+            source_items = body.get("items", [])
+        elif "summary" in body and not body.get("taskName"):
+            source_items = []
+            entries.append({
+                "receivedAt": time.time(),
+                "type": "summary",
+                "payload": {
+                    "planId": body.get("planId"),
+                    "summary": body.get("summary", {}),
+                },
+            })
+        else:
+            source_items = [body]
+
+        for raw in source_items:
+            payload = {
+                "planId": raw.get("planId"),
+                "deviceGroup": raw.get("deviceGroup", ""),
+                "deviceName": raw.get("deviceName", ""),
+                "taskName": raw.get("taskName", ""),
+                "status": raw.get("status", ""),
+                "updater": raw.get("updater", ""),
+                "errorMessage": raw.get("errorMessage"),
+                "startedAt": raw.get("startedAt"),
+                "finishedAt": raw.get("finishedAt"),
+            }
+            entries.append({
+                "receivedAt": time.time(),
+                "type": "item",
+                "payload": payload,
+            })
+
         with _debug_callback_lock:
-            _debug_callback_store.append(entry)
-        pid = payload["planId"]
-        dn = payload["deviceName"]
-        tn = payload["taskName"]
-        st = payload["status"]
-        logger.info("[debug-callback] planId=%s device=%s task=%s status=%s", pid, dn, tn, st)
-        return {"ok": True}
+            _debug_callback_store.extend(entries)
+        logger.info("[debug-callback] received %d callback entrie(s)", len(entries))
+        return {
+            "code": 0,
+            "message": "success",
+            "data": {"total": len(entries), "success": len(entries), "failed": 0, "errors": []},
+        }
 
     @app.get("/debug/plan-item-statuses")
     async def debug_list_plan_item_statuses():
@@ -603,13 +626,20 @@ def _register_debug_callback_receiver(app: FastAPI):
             items = list(_debug_callback_store)
         s, f = 0, 0
         for it in items:
+            if it.get("type") != "item":
+                continue
             st = it["payload"].get("status", "")
             if st == "SUCCESS":
                 s += 1
             elif st == "FAILED":
                 f += 1
         return {
-            "summary": {"total": len(items), "SUCCESS": s, "FAILED": f},
+            "summary": {
+                "total": sum(1 for it in items if it.get("type") == "item"),
+                "SUCCESS": s,
+                "FAILED": f,
+                "summaryCallbacks": sum(1 for it in items if it.get("type") == "summary"),
+            },
             "items": items,
         }
 

@@ -8,6 +8,7 @@ Two modes:
 """
 
 from __future__ import annotations
+import json
 import logging
 import os
 import time
@@ -28,6 +29,7 @@ class JobResult:
     steps: list[dict[str, Any]] = field(default_factory=list)
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     error: dict[str, Any] | None = None
+    execution_result: Any | None = None
 
 
 class JobRunner(Protocol):
@@ -102,6 +104,7 @@ class RealRunnerAdapter:
         output_root: str = "./output_api_direct",
         bmc_connect_timeout: float = 30.0,
         bmc_page_timeout: float = 60.0,
+        bmc_artifact_profile: str = "full",
         ssh_connect_timeout: float = 15.0,
         ssh_command_timeout: float = 60.0,
         ssh_idle_timeout: float = 5.0,
@@ -109,6 +112,7 @@ class RealRunnerAdapter:
         self.output_root = output_root
         self._bmc_connect_timeout = bmc_connect_timeout
         self._bmc_page_timeout = bmc_page_timeout
+        self._bmc_artifact_profile = bmc_artifact_profile
         self._ssh_connect_timeout = ssh_connect_timeout
         self._ssh_command_timeout = ssh_command_timeout
         self._ssh_idle_timeout = ssh_idle_timeout
@@ -168,16 +172,19 @@ class RealRunnerAdapter:
 
     def _run_bmc(self, plan: Any) -> JobResult:
         from ..executor.bmc_executor import BMCExecutor
+        from ..executor.retry import execute_with_retry
 
         started = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         t0 = time.time()
 
         try:
-            exec_result = BMCExecutor(
+            executor = BMCExecutor(
                 browser_manager=self._get_browser_manager(),
                 connect_timeout=self._bmc_connect_timeout,
                 page_timeout=self._bmc_page_timeout,
-            ).execute(plan, self.output_root)
+                artifact_profile=self._bmc_artifact_profile,
+            )
+            exec_result = execute_with_retry(executor, plan, self.output_root)
         except Exception as e:
             logger.exception("BMC execution crashed for plan %s", plan.plan_id)
             elapsed_ms = int((time.time() - t0) * 1000)
@@ -189,7 +196,7 @@ class RealRunnerAdapter:
                        "retryable": True, "category": "BMC"},
             )
 
-        return self._execution_result_to_job_result(exec_result, started)
+        return self._execution_result_to_job_result(exec_result, started, protocol="BMC")
 
     # ------------------------------------------------------------------
     # SSH execution
@@ -197,16 +204,18 @@ class RealRunnerAdapter:
 
     def _run_ssh(self, plan: Any) -> JobResult:
         from ..executor.ssh_executor import SSHExecutor
+        from ..executor.retry import execute_with_retry
 
         started = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         t0 = time.time()
 
         try:
-            exec_result = SSHExecutor(
+            executor = SSHExecutor(
                 connect_timeout=self._ssh_connect_timeout,
                 command_timeout=self._ssh_command_timeout,
                 idle_timeout=self._ssh_idle_timeout,
-            ).execute(plan, self.output_root)
+            )
+            exec_result = execute_with_retry(executor, plan, self.output_root)
         except Exception as e:
             logger.exception("SSH execution crashed for plan %s", plan.plan_id)
             elapsed_ms = int((time.time() - t0) * 1000)
@@ -218,7 +227,7 @@ class RealRunnerAdapter:
                        "retryable": True, "category": "SSH"},
             )
 
-        return self._execution_result_to_job_result(exec_result, started)
+        return self._execution_result_to_job_result(exec_result, started, protocol="SSH")
 
     # ------------------------------------------------------------------
     # Model conversion
@@ -250,16 +259,17 @@ class RealRunnerAdapter:
             "command_or_url", ""
         ) or snapshot.get("url", "")
 
-        return Task(
+        task = Task(
             row_index=0,
-            sequence=0,
+            sequence=int(snapshot.get("sequence", 0) or 0),
+            sequence_str=str(snapshot.get("sequence_str", "") or ""),
             task_name=snapshot.get("task_name", ""),
             task_type=snapshot.get("task_type", "BMC"),
             execution_mode=snapshot.get("execution_mode", "BMC_URL"),
-            match_group="",
+            match_group=snapshot.get("match_group", ""),
             command_or_url=cmd,
             actions_json=snapshot.get("actions_json", ""),
-            rules_json="",
+            rules_json=snapshot.get("rules_json", ""),
             output_dir_template=snapshot.get(
                 "output_dir_template", "{device_name}/{task_name}"
             ),
@@ -269,14 +279,65 @@ class RealRunnerAdapter:
             timeout_seconds=int(snapshot.get("timeout_seconds", 60)),
             retry_count=int(snapshot.get("retry_count", 0)),
             enabled=True,
+            full_screenshot=bool(snapshot.get("full_screenshot", False)),
+            screenshot_mode=snapshot.get("screenshot_mode", "auto") or "auto",
         )
+        task_def = self._coerce_dict(snapshot.get("task_def"))
+        for key in (
+            "ssh_profile",
+            "ssh_type",
+            "evidence_mode",
+            "ssh_evidence_mode",
+            "ssh_transport",
+            "ssh_strategy",
+            "per_group_ssh_profile",
+            "per_group_ssh_type",
+            "per_group_evidence_mode",
+            "per_group_ssh_evidence_mode",
+            "per_group_ssh_transport",
+            "per_group_ssh_strategy",
+            "artifact_profile",
+            "bmc_artifact_profile",
+        ):
+            if key in snapshot and snapshot.get(key) not in ("", None):
+                task_def.setdefault(key, snapshot.get(key))
+        if task_def:
+            object.__setattr__(task, "_task_def", task_def)
+        per_group_commands = self._coerce_dict(snapshot.get("per_group_commands"))
+        if per_group_commands:
+            object.__setattr__(task, "_per_group_commands", per_group_commands)
+        per_group_no_split = self._coerce_dict(snapshot.get("per_group_no_split"))
+        if per_group_no_split:
+            object.__setattr__(task, "_per_group_no_split", per_group_no_split)
+        per_group_timeout_seconds = (
+            self._coerce_dict(snapshot.get("per_group_timeout_seconds"))
+            or self._coerce_dict(snapshot.get("per_group_timeout"))
+        )
+        if per_group_timeout_seconds:
+            object.__setattr__(task, "_per_group_timeout_seconds", per_group_timeout_seconds)
+        if snapshot.get("no_split"):
+            object.__setattr__(task, "_no_split", True)
+        return task
+
+    @staticmethod
+    def _coerce_dict(value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
 
     # ------------------------------------------------------------------
     # Result mapping
     # ------------------------------------------------------------------
 
-    def _execution_result_to_job_result(self, er: Any, started: str) -> JobResult:
+    def _execution_result_to_job_result(self, er: Any, started: str, protocol: str = "") -> JobResult:
         status = er.execution_status or ""
+        category = protocol or ("BMC" if "BMC" in str(status) else "SSH")
 
         if status == "EXEC_SUCCESS":
             job_status = "SUCCEEDED"
@@ -331,10 +392,10 @@ class RealRunnerAdapter:
         reason = getattr(er, "execution_failure_reason", "")
         if reason and job_status != "SUCCEEDED":
             error = {
-                "code": self._map_error_code(status, reason),
+                "code": self._map_error_code(status, reason, category),
                 "message": reason[:300],
                 "retryable": status not in ("EXEC_SKIPPED_PORT_BLOCKED",),
-                "category": "BMC" if "BMC" in str(status) else "SSH",
+                "category": category,
             }
 
         return JobResult(
@@ -345,19 +406,23 @@ class RealRunnerAdapter:
             steps=steps,
             artifacts=artifacts,
             error=error,
+            execution_result=er,
         )
 
     @staticmethod
-    def _map_error_code(status: str, reason: str) -> str:
+    def _map_error_code(status: str, reason: str, category: str = "") -> str:
+        prefix = category or ("BMC" if "BMC" in str(status) else "SSH")
+        if "Retry wrapper exception" in reason:
+            return f"{prefix}_EXECUTOR_CRASH"
         if "timeout" in reason.lower() or status == "EXEC_TIMEOUT":
-            return "BMC_TIMEOUT" if "BMC" in str(status) else "SSH_TIMEOUT"
+            return f"{prefix}_TIMEOUT"
         if "auth" in reason.lower() or "password" in reason.lower():
-            return "BMC_AUTH_FAILED" if "BMC" in str(status) else "SSH_AUTH_FAILED"
+            return f"{prefix}_AUTH_FAILED"
         if "connect" in reason.lower() or "refused" in reason.lower():
-            return "BMC_CONNECT_FAILED" if "BMC" in str(status) else "SSH_CONNECT_FAILED"
+            return f"{prefix}_CONNECT_FAILED"
         if "port" in reason.lower() or "blocked" in reason.lower():
             return "BMC_CONNECT_FAILED"
-        return f"{'BMC' if 'BMC' in str(status) else 'SSH'}_EXEC_ERROR"
+        return f"{prefix}_EXEC_ERROR"
 
     # ------------------------------------------------------------------
     # BrowserManager (lazy)

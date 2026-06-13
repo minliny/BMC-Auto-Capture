@@ -319,7 +319,8 @@ class App:
                                idle_timeout=self.config.ssh_idle_timeout)
         bm = BrowserManager(headless=self.config.browser_headless)
         bmc_exec = BMCExecutor(bm, connect_timeout=self.config.tcp_connect_timeout,
-                                 popup_timeout=self.config.popup_dismiss_selector_timeout)
+                                 popup_timeout=self.config.popup_dismiss_selector_timeout,
+                                 artifact_profile=getattr(self.config, "bmc_artifact_profile", "full"))
 
         total = len(plans)
         logger.info("Sequential execution of %d plans", total)

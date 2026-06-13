@@ -9,7 +9,7 @@ import os
 import sys
 from pathlib import Path
 
-from .cli.args import build_parser
+from .cli.args import build_parser, resolve_execution_cli
 from .models.app_config import AppConfig
 from .app import App
 
@@ -45,6 +45,10 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
+    effective_mode, effective_max_bmc_workers, effective_max_ssh_workers, _legacy_concurrency = (
+        resolve_execution_cli(args, sys.argv[1:])
+    )
+
     # Load config — resolve bundled path if no explicit config given
     base = _bundle_dir()
     config_path = args.config or base / "config" / "default_config.yaml"
@@ -57,11 +61,12 @@ def main():
     # --- Apply CLI overrides ---
     config.apply_cli_overrides(
         output_root=args.output,
-        max_bmc_workers=args.max_bmc_workers,
-        max_ssh_workers=args.max_ssh_workers,
+        max_bmc_workers=effective_max_bmc_workers,
+        max_ssh_workers=effective_max_ssh_workers,
         ssh_command_timeout=args.ssh_command_timeout,
         ssh_idle_timeout=args.ssh_idle_timeout,
         bmc_page_timeout=args.bmc_page_timeout,
+        bmc_artifact_profile=args.bmc_artifact_profile,
         no_preflight=args.no_preflight,
     )
 
@@ -121,7 +126,7 @@ def main():
 
     # Run
     app = App(config)
-    results = app.run(str(excel_path))
+    results = app.run(str(excel_path), mode=effective_mode)
 
     # Exit code
     if not results:

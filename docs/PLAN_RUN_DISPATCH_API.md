@@ -2,7 +2,7 @@
 
 ## 当前推荐协议
 
-Executor API 以“latest Excel config + planId/runId”为核心：
+Executor API 以“latest Excel config + planId”为核心：
 
 ```
 POST /executor/v1/config/excel
@@ -10,12 +10,10 @@ POST /executor/v1/plans
 POST /executor/v1/plans/{plan_id}:run
 GET  /executor/v1/plans/{plan_id}
 GET  /executor/v1/plans/{plan_id}/items
-GET  /executor/v1/runs/{run_id}
-GET  /executor/v1/runs/{run_id}/items
 POST /executor/v1/plans/{plan_id}/callbacks:retry
 ```
 
-`planId` 是业务 plan 标识；`runId` 是一次执行的唯一标识。两者都可查询，同一 plan 多次执行时 `/plans/{plan_id}` 返回该 plan 最新一次 run。
+`planId` 是服务端下发的执行批次 ID，也是调度端和执行端共同使用的主键。执行端内部可保留调试用 run id，但公开主契约不要求服务端理解、保存或回传 `runId`。
 
 ## 上传 Excel
 
@@ -60,7 +58,6 @@ curl -X POST http://127.0.0.1:8080/executor/v1/plans \
   "accepted": true,
   "excelHash": "<sha256>",
   "planId": "1",
-  "runId": "plan-1-run-...",
   "status": "ACCEPTED",
   "callbackTransportMode": "http"
 }
@@ -73,8 +70,6 @@ curl -X POST http://127.0.0.1:8080/executor/v1/plans \
 ```bash
 curl "http://127.0.0.1:8080/executor/v1/plans/1?excelHash=<sha256>"
 curl "http://127.0.0.1:8080/executor/v1/plans/1/items?excelHash=<sha256>"
-curl "http://127.0.0.1:8080/executor/v1/runs/<runId>"
-curl "http://127.0.0.1:8080/executor/v1/runs/<runId>/items"
 ```
 
 Plan summary：
@@ -82,9 +77,17 @@ Plan summary：
 ```json
 {
   "planId": "1",
-  "runId": "plan-1-run-...",
   "status": "COMPLETED",
-  "summary": {"total": 20, "success": 20, "failed": 0, "in_progress": 0, "pending": 0},
+  "summary": {
+    "total": 20,
+    "success": 20,
+    "failed": 0,
+    "in_progress": 0,
+    "pending": 0,
+    "failureSummary": [],
+    "outputRoot": "executor_state/outputs/1/20260613T000000Z"
+  },
+  "outputRoot": "executor_state/outputs/1/20260613T000000Z",
   "excelHash": "<sha256>",
   "startedAt": "2026-06-13T00:00:00+00:00",
   "finishedAt": "2026-06-13T00:00:03+00:00",
@@ -93,7 +96,7 @@ Plan summary：
 }
 ```
 
-Items response adds `items[]` with `deviceName`, `taskName`, `status`, `errorMessage`, `startedAt`, `finishedAt`, and `infoEvents`.
+Items response adds `items[]` with `deviceGroup`, `deviceName`, `taskName`, `status`, `errorMessage`, `startedAt`, `finishedAt`, and `infoEvents`.
 
 ## Callback Retry
 
@@ -108,3 +111,5 @@ curl -X POST http://127.0.0.1:8080/executor/v1/plans/1/callbacks:retry \
 ## Legacy RunDispatchService
 
 `/executor/v1/plans:import` and `/executor/v1/runs` belong to the older isolated `RunDispatchService` path. They are only available when that legacy service is explicitly registered and are not the default `run.py --server` integration path.
+
+`GET /executor/v1/runs/{run_id}` and `GET /executor/v1/runs/{run_id}/items` are internal/debug compatibility routes for existing local diagnostics only. 服务端主链路应使用 `planId` 查询。

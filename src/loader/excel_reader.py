@@ -502,6 +502,10 @@ def load_tasks(
         per_group_no_split = tdef.get("per_group_no_split") or {}
         if per_group_no_split:
             object.__setattr__(task, '_per_group_no_split', per_group_no_split)
+        # Attach per_group_timeout_seconds
+        per_group_timeout_seconds = tdef.get("per_group_timeout_seconds") or tdef.get("per_group_timeout") or {}
+        if per_group_timeout_seconds:
+            object.__setattr__(task, '_per_group_timeout_seconds', per_group_timeout_seconds)
         # Attach global no_split
         if tdef.get("no_split"):
             object.__setattr__(task, '_no_split', True)

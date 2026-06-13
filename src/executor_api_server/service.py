@@ -356,6 +356,8 @@ class DirectDispatchService:
             device_group = device_snapshot.get("device_group", "").upper()
             if device_group in ("L1", "L2"):
                 ssh_type = "SSH_VRP"
+            else:
+                ssh_type = "SSH_LINUX"
 
         try:
             return derive_lock_uri(

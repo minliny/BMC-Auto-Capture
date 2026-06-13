@@ -255,7 +255,7 @@ echo(
 echo(   --- Executor API: http://%HOST%:%PORT%/executor/v1/status ---
 echo(   --- 配置 Excel:  POST /executor/v1/config/excel:path ---
 echo(   --- 执行计划:    POST /executor/v1/plans/{planId}:run ---
-echo(   --- 查询进度:    GET  /executor/v1/plans/{planId}/runs/{runId} ---
+echo(   --- 查询进度:    GET  /executor/v1/plans/{planId} ---
 echo(
 echo(   调试回调接收器: 加 --enable-debug-callback-receiver 参数
 echo(   --- 接收回调:    POST /debug/plan-item-statuses ---
@@ -270,7 +270,11 @@ echo( ============================================================
 echo(
 
 set "PYTHONPATH=%ROOT%\app;%ROOT%;%PYTHONPATH%"
-call :run_engine --app-dir "%APP_DIR%" --server --host %HOST% --port %PORT% --log-level %LOG_LEVEL%
+if "%RAW_ARGS%"=="" (
+    call :run_engine --app-dir "%APP_DIR%" --server --host %HOST% --port %PORT% --log-level %LOG_LEVEL%
+) else (
+    call :run_engine --app-dir "%APP_DIR%" %RAW_ARGS%
+)
 set "SERVER_EXIT=%ERRORLEVEL%"
 if %SERVER_EXIT% neq 0 (
     echo( [错误] 服务器启动失败,退出码: %SERVER_EXIT%
@@ -535,9 +539,9 @@ exit /b 0
 
 :run_engine
 if "%ENGINE_SCRIPT%"=="" (
-    "%ENGINE_EXE%" %1 %2 %3 %4 %5 %6 %7 %8 %9
+    "%ENGINE_EXE%" %*
 ) else (
-    "%ENGINE_EXE%" "%ENGINE_SCRIPT%" %1 %2 %3 %4 %5 %6 %7 %8 %9
+    "%ENGINE_EXE%" "%ENGINE_SCRIPT%" %*
 )
 exit /b %ERRORLEVEL%
 

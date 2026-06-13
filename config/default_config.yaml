@@ -36,6 +36,11 @@ ssh_idle_timeout: 5.0
 bmc_page_timeout: 60.0
 popup_dismiss_selector_timeout: 1000
 
+# BMC artifact profile:
+#   full: PNG + HTML + evidence.html + MHTML + state JSON (default, complete evidence)
+#   fast: PNG + HTML only (explicit opt-in for faster field runs)
+bmc_artifact_profile: "full"
+
 # --- Preflight ---
 preflight_enabled: true
 route_guard_enabled: true

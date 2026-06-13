@@ -242,7 +242,7 @@ def main():
         sys.argv = [sys.argv[0]] + clean_args
         return _run_launcher_mode(clean_args)
 
-    from src.cli.args import build_parser
+    from src.cli.args import build_parser, resolve_execution_cli
     parser = build_parser()
     # --excel is optional in shared parser; run.py validates below
     args = parser.parse_args()
@@ -272,6 +272,10 @@ def main():
     from src.models.app_config import AppConfig
     from src.app import App as PipelineApp
 
+    effective_mode, effective_max_bmc_workers, effective_max_ssh_workers, _legacy_concurrency = (
+        resolve_execution_cli(args, sys.argv[1:])
+    )
+
     # Config
     config_path = args.config or app_dir / "config" / "default_config.yaml"
     if not Path(config_path).exists():
@@ -285,11 +289,12 @@ def main():
     # --- Apply CLI overrides ---
     cli_changes = config.apply_cli_overrides(
         output_root=args.output,
-        max_bmc_workers=args.max_bmc_workers,
-        max_ssh_workers=args.max_ssh_workers,
+        max_bmc_workers=effective_max_bmc_workers,
+        max_ssh_workers=effective_max_ssh_workers,
         ssh_command_timeout=args.ssh_command_timeout,
         ssh_idle_timeout=args.ssh_idle_timeout,
         bmc_page_timeout=args.bmc_page_timeout,
+        bmc_artifact_profile=args.bmc_artifact_profile,
         no_preflight=args.no_preflight,
     )
 
@@ -307,12 +312,13 @@ def main():
     print("─" * 60)
     print(f"  config file   : {config_path}")
     print(f"  output_root   : {config.output_root}")
-    print(f"  mode          : {args.mode}")
+    print(f"  mode          : {effective_mode}")
     print(f"  max_bmc_workers: {config.max_bmc_workers}")
     print(f"  max_ssh_workers: {config.max_ssh_workers}")
     print(f"  ssh_command_timeout: {config.ssh_command_timeout}s")
     print(f"  ssh_idle_timeout   : {config.ssh_idle_timeout}s")
     print(f"  bmc_page_timeout   : {config.bmc_page_timeout}s")
+    print(f"  bmc_artifact_profile: {config.bmc_artifact_profile}")
     print(f"  preflight_enabled  : {config.preflight_enabled}")
     if cli_changes:
         print(f"  CLI overrides ({len(cli_changes)}):")
@@ -509,7 +515,7 @@ def main():
 
     # Run
     app = PipelineApp(config)
-    results = app.run(str(excel_path), mode=args.mode)
+    results = app.run(str(excel_path), mode=effective_mode)
 
     if not results:
         sys.exit(1)

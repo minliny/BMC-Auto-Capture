@@ -14,6 +14,34 @@ from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, F
 
 EXCEL_FILE = str(Path(__file__).parent.parent / "examples" / "task_template.xlsx")
 
+CALLBACK_ITEM_FIELDS = {
+    "planId", "deviceGroup", "deviceName", "taskName", "status",
+    "updater", "errorMessage", "startedAt", "finishedAt",
+}
+CALLBACK_FORBIDDEN_FIELDS = {
+    "job_id", "external_task_id", "executor_id", "duration_ms", "artifacts",
+    "excelHash", "runId",
+}
+
+
+def _transport_item_payloads(transport: FakeCallbackTransport) -> list[dict]:
+    """Return item callback payloads, ignoring final summary-only callbacks."""
+    items: list[dict] = []
+    for call in transport.calls:
+        payload = call["payload"]
+        if isinstance(payload.get("items"), list):
+            items.extend(payload["items"])
+        elif "taskName" in payload:
+            items.append(payload)
+    return items
+
+
+def _transport_final_item_payloads(transport: FakeCallbackTransport) -> list[dict]:
+    return [
+        item for item in _transport_item_payloads(transport)
+        if item.get("status") in {"SUCCESS", "FAILED"}
+    ]
+
 
 def _clear_store():
     with _store_lock:
@@ -85,14 +113,14 @@ class TestExcelConfig:
 # ===========================================================================
 
 class TestPlanRun:
-    def test_start_plan_run_returns_plan_id_and_run_id(self, tmp_path):
-        """7+9. Run returns planId and runId."""
+    def test_start_plan_run_returns_plan_id_without_run_id(self, tmp_path):
+        """7+9. Run returns planId; runId is not public contract."""
         svc = PlanRunService()
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(42, {"callback": {}})
         assert r["accepted"] is True
         assert r["planId"] == 42
-        assert "runId" in r
+        assert "runId" not in r
 
     def test_scope_all_expands_devices_tasks(self, tmp_path):
         """10. scope=ALL expands enabled devices × enabled tasks."""
@@ -139,50 +167,48 @@ class TestPlanRun:
         """14. Successful items callback with status=SUCCESS."""
         transport = FakeCallbackTransport()
         cb = PlanItemStatusCallbackClient(transport=transport)
-        svc = PlanRunService()
+        svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb/items"}})
         svc.run_by_plan_id(r["planId"])
-        for call in transport.calls:
-            assert call["payload"]["status"] == "SUCCESS"
-            assert call["payload"]["errorMessage"] is None
+        for payload in _transport_final_item_payloads(transport):
+            assert payload["status"] == "SUCCESS"
+            assert payload["errorMessage"] is None
 
     def test_updater_default(self, tmp_path):
         """16. updater defaults to downstream-system."""
         transport = FakeCallbackTransport()
         cb = PlanItemStatusCallbackClient(transport=transport)
-        svc = PlanRunService()
+        svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb/items"}})
         svc.run_by_plan_id(r["planId"])
-        for call in transport.calls:
-            assert call["payload"]["updater"] == "downstream-system"
+        for payload in _transport_item_payloads(transport):
+            assert payload["updater"] == "downstream-system"
 
     def test_updater_override(self, tmp_path):
         """17. updater can be overridden in request."""
         transport = FakeCallbackTransport()
         cb = PlanItemStatusCallbackClient(transport=transport)
-        svc = PlanRunService()
+        svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb/items"}, "updater": "custom-updater"})
         svc.run_by_plan_id(r["planId"])
-        for call in transport.calls:
-            assert call["payload"]["updater"] == "custom-updater"
+        for payload in _transport_item_payloads(transport):
+            assert payload["updater"] == "custom-updater"
 
     def test_callback_no_legacy_fields(self, tmp_path):
-        """18+19. Callback has ONLY 8 fields, no legacy fields."""
+        """18+19. Callback item has only public fields, no legacy fields."""
         transport = FakeCallbackTransport()
         cb = PlanItemStatusCallbackClient(transport=transport)
-        svc = PlanRunService()
+        svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb/items"}})
         svc.run_by_plan_id(r["planId"])
-        required_fields = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
-        forbidden_fields = {"job_id", "external_task_id", "executor_id", "duration_ms", "artifacts"}
-        for call in transport.calls:
-            keys = set(call["payload"].keys())
-            assert keys == required_fields
-            assert not (keys & forbidden_fields)
+        for payload in _transport_item_payloads(transport):
+            keys = set(payload.keys())
+            assert keys == CALLBACK_ITEM_FIELDS
+            assert not (keys & CALLBACK_FORBIDDEN_FIELDS)
 
     def test_get_run_summary(self, tmp_path):
         """20. GET run returns summary."""
@@ -268,9 +294,9 @@ class TestRealRunner:
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
-        for call in transport.calls:
-            assert call["payload"]["status"] == "SUCCESS"
-            assert call["payload"]["errorMessage"] is None
+        for payload in _transport_final_item_payloads(transport):
+            assert payload["status"] == "SUCCESS"
+            assert payload["errorMessage"] is None
 
     def test_real_runner_failed_callback_failed(self, monkeypatch):
         """6. Real failure → callback FAILED, errorMessage non-empty."""
@@ -286,10 +312,10 @@ class TestRealRunner:
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
         has_failed = False
-        for call in transport.calls:
-            if call["payload"]["status"] == "FAILED":
+        for payload in _transport_item_payloads(transport):
+            if payload["status"] == "FAILED":
                 has_failed = True
-                assert call["payload"]["errorMessage"] is not None
+                assert payload["errorMessage"] is not None
         assert has_failed
 
     def test_real_runner_exception_callback_failed(self, monkeypatch):
@@ -305,13 +331,13 @@ class TestRealRunner:
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
         has_failed = False
-        for call in transport.calls:
-            if call["payload"]["status"] == "FAILED":
+        for payload in _transport_item_payloads(transport):
+            if payload["status"] == "FAILED":
                 has_failed = True
         assert has_failed
 
-    def test_callback_still_8_fields_with_real(self, monkeypatch):
-        """9. Real runner callback still 8 fields only."""
+    def test_callback_public_fields_with_real(self, monkeypatch):
+        """9. Real runner callback uses only public item fields."""
         def _fake_run_job(self_ignored, job_payload):
             from src.job_runner_adapter import JobResult
             return JobResult(status="SUCCEEDED")
@@ -323,11 +349,9 @@ class TestRealRunner:
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
-        required = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
-        forbidden = {"job_id", "external_task_id", "executor_id", "duration_ms", "artifacts"}
-        for call in transport.calls:
-            assert set(call["payload"].keys()) == required
-            assert not (set(call["payload"].keys()) & forbidden)
+        for payload in _transport_item_payloads(transport):
+            assert set(payload.keys()) == CALLBACK_ITEM_FIELDS
+            assert not (set(payload.keys()) & CALLBACK_FORBIDDEN_FIELDS)
 
     def test_device_name_from_excel_real(self, monkeypatch):
         """10. deviceName from Excel in real mode."""
@@ -342,8 +366,8 @@ class TestRealRunner:
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
-        for call in transport.calls:
-            assert call["payload"]["deviceName"] != ""
+        for payload in _transport_item_payloads(transport):
+            assert payload["deviceName"] != ""
 
     def test_task_name_from_excel_real(self, monkeypatch):
         """11. taskName from Excel in real mode."""
@@ -358,8 +382,8 @@ class TestRealRunner:
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
-        for call in transport.calls:
-            assert call["payload"]["taskName"] != ""
+        for payload in _transport_item_payloads(transport):
+            assert payload["taskName"] != ""
 
     def test_lock_acquired_in_real_mode(self, monkeypatch):
         """12. Lock acquire called in real mode."""
@@ -444,8 +468,8 @@ class TestRealRunner:
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         svc.run_by_plan_id(r["planId"])
-        for call in transport.calls:
-            payload_str = str(call["payload"])
+        for payload in _transport_item_payloads(transport):
+            payload_str = str(payload)
             assert "password" not in payload_str.lower()
 
     def test_real_runner_still_serial(self, monkeypatch):
@@ -572,12 +596,12 @@ class TestStatusMapping:
 
 
 class TestBuildCallbackItem:
-    """build_callback_item produces correct 8-field dict."""
+    """build_callback_item produces the public item callback dict."""
 
-    def test_item_has_exactly_8_fields(self):
+    def test_item_has_public_fields(self):
         from src.plan_item_status_callback_client import build_callback_item
         item = build_callback_item("plan-abc-001", "D1", "T1", "SUCCESS")
-        assert set(item.keys()) == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
+        assert set(item.keys()) == CALLBACK_ITEM_FIELDS
 
     def test_plan_id_is_string(self):
         from src.plan_item_status_callback_client import build_callback_item
@@ -780,8 +804,8 @@ class TestBatchModeIntegration:
         assert len(transport.calls) >= 1
         first_call = transport.calls[0]
         assert "items" in first_call["payload"]
-        batch_count = len(first_call["payload"]["items"])
-        assert batch_count == run["summary"]["total"]
+        final_items = _transport_final_item_payloads(transport)
+        assert len(final_items) == run["summary"]["total"]
 
     def test_single_mode_sends_per_item(self):
         svc = PlanRunService()
@@ -815,11 +839,65 @@ class TestBatchModeIntegration:
         transport.set_failure()
         svc._cb_transport = transport
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
-        svc.run_by_plan_id(r["planId"])
+        for _ in range(60):
+            run = svc.get_plan(r["planId"])
+            if run and run["status"] == "COMPLETED":
+                break
+            time.sleep(0.1)
         run = svc.get_plan(r["planId"])
         # Plan status is still COMPLETED even though callback failed
         assert run["status"] == "COMPLETED"
         assert run["summary"]["success"] == run["summary"]["total"]
+
+    def test_final_summary_failure_is_written_to_outbox(self, tmp_path):
+        from src.callback_outbox import CallbackOutbox
+        from src.plan_run_service.service import PlanRun, PlanRunItem
+
+        transport = FakeCallbackTransport()
+        transport.set_failure()
+        svc = PlanRunService(callback_transport=transport, workspace_root=str(tmp_path))
+        run = PlanRun(
+            plan_id="p-summary",
+            run_id="internal-only",
+            item_status_url="http://cb",
+            output_root=str(tmp_path / "outputs" / "p-summary"),
+            items=[
+                PlanRunItem(
+                    plan_id="p-summary",
+                    device_group="A3",
+                    device_name="D1",
+                    task_name="T1",
+                    status="SUCCESS",
+                )
+            ],
+        )
+        cb = PlanItemStatusCallbackClient(transport=transport)
+
+        svc._deliver_plan_summary(run, cb)
+
+        outbox = CallbackOutbox("p-summary", workspace_root=str(tmp_path))
+        with open(outbox._outbox_path, encoding="utf-8") as f:
+            records = [json.loads(line) for line in f if line.strip()]
+        summary_records = [r for r in records if r.get("payloadType") == "summary"]
+        assert len(summary_records) == 1
+        assert summary_records[0]["deliveryStatus"] in {"FAILED_RETRYABLE", "FAILED_FINAL"}
+        assert summary_records[0]["summary"]["outputRoot"] == run.output_root
+
+    def test_plan_run_writes_batch_report_files(self, tmp_path):
+        svc = PlanRunService(workspace_root=str(tmp_path))
+        svc.set_latest_excel(EXCEL_FILE)
+        r = svc.start_plan_run(1, {"callback": {}})
+        for _ in range(80):
+            run = svc.get_plan(r["planId"])
+            if run and run["status"] == "COMPLETED":
+                break
+            time.sleep(0.1)
+
+        run = svc.get_plan(r["planId"])
+        output_root = Path(run["outputRoot"])
+        assert (output_root / "result.csv").is_file()
+        assert (output_root / "final_result.csv").is_file()
+        assert (output_root / "execution_summary.json").is_file()
 
     def test_external_plan_default_batch_mode(self):
         svc = PlanRunService()
@@ -903,7 +981,7 @@ class TestPlanItemCountEdgeCases:
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         time.sleep(3)
         run = svc.get_plan(r["planId"])
-        batch_items = transport.calls[0]["payload"]["items"]
+        batch_items = _transport_final_item_payloads(transport)
         assert len(batch_items) == run["summary"]["total"]
 
     def test_external_plan_id_is_string(self):
@@ -918,7 +996,7 @@ class TestPlanItemCountEdgeCases:
         assert isinstance(r["planId"], str)
         assert r["planId"] == "1"
 
-    def test_external_plan_response_includes_run_id(self):
+    def test_external_plan_response_hides_run_id(self):
         svc = PlanRunService()
         svc.set_latest_excel(EXCEL_FILE)
         excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
@@ -927,7 +1005,7 @@ class TestPlanItemCountEdgeCases:
             "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        assert "runId" in r
+        assert "runId" not in r
         assert "jobId" not in r
 
 
@@ -962,7 +1040,7 @@ class TestCallbackPlanId:
             "runner": "fake",
         })
         time.sleep(3)
-        batch_items = transport.calls[0]["payload"]["items"]
+        batch_items = _transport_item_payloads(transport)
         for item in batch_items:
             assert item["planId"] == "7"
             assert isinstance(item["planId"], str)
@@ -979,9 +1057,8 @@ class TestCallbackPlanId:
             "runner": "fake",
         })
         time.sleep(3)
-        for call in transport.calls:
-            for item in call["payload"]["items"]:
-                assert isinstance(item["planId"], str)
+        for item in _transport_item_payloads(transport):
+            assert isinstance(item["planId"], str)
 
     def test_callback_plan_id_from_plan_id_field(self):
         """Callback uses plan_id directly (no server_plan_id needed)."""
@@ -1012,7 +1089,7 @@ class TestCallbackPlanId:
             "runner": "fake",
         })
         time.sleep(3)
-        batch_items = transport.calls[0]["payload"]["items"]
+        batch_items = _transport_item_payloads(transport)
         for item in batch_items:
             # planId in callback body equals the response planId (same single ID)
             assert item["planId"] == r["planId"]
@@ -1383,22 +1460,10 @@ class TestResolveTransport:
         assert svc.callback_transport is None
 
     def test_start_plan_run_uses_http_transport_via_resolve(self):
-        """Integration: start_plan_run() with itemStatusUrl selects HttpCallbackTransport.
-
-        We verify this indirectly: when itemStatusUrl is provided and no explicit
-        transport is injected, the run should still complete successfully (meaning
-        _resolve_transport was called). Since we can't easily intercept the
-        transport without mocking, we verify the run completes and the response
-        indicates callbackTransportMode=http.
-        """
+        """_resolve_transport() selects HttpCallbackTransport for itemStatusUrl."""
         svc = PlanRunService()
-        svc.set_latest_excel(EXCEL_FILE)
-        r = svc.start_plan_run(1, {"callback": {"itemStatusUrl": "http://cb/items"}})
-        assert r["accepted"] is True
-        # The response should work fine — transport resolution happened internally
-        time.sleep(3)
-        run = svc.get_plan(r["planId"])
-        assert run["status"] == "COMPLETED"
+        transport = svc._resolve_transport("http://cb/items")
+        assert isinstance(transport, HttpCallbackTransport)
 
 
 # ===========================================================================
@@ -1538,17 +1603,16 @@ class TestSingleModeCallbackFields:
         svc.run_by_plan_id(r["planId"])
 
         assert len(transport.calls) > 0, "Expected at least one callback call"
-        for call in transport.calls:
-            payload = call["payload"]
+        for payload in _transport_item_payloads(transport):
             assert "startedAt" in payload, (
                 f"Single mode payload missing startedAt: {list(payload.keys())}"
             )
             assert "finishedAt" in payload, (
                 f"Single mode payload missing finishedAt: {list(payload.keys())}"
             )
-            # startedAt and finishedAt should be non-None for executed items
             assert payload["startedAt"] is not None, "startedAt should not be None"
-            assert payload["finishedAt"] is not None, "finishedAt should not be None"
+            if payload["status"] in {"SUCCESS", "FAILED"}:
+                assert payload["finishedAt"] is not None, "finishedAt should not be None for final item callbacks"
 
     def test_single_mode_has_same_fields_as_batch_item(self):
         """Single mode and batch mode items have identical field sets."""
@@ -1561,7 +1625,7 @@ class TestSingleModeCallbackFields:
             "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "batch"},
         })
         svc_batch.run_by_plan_id(r_batch["planId"])
-        batch_item_keys = set(transport_batch.calls[0]["payload"]["items"][0].keys())
+        batch_item_keys = set(_transport_item_payloads(transport_batch)[0].keys())
 
         # Single mode test
         svc_single = PlanRunService()
@@ -1572,11 +1636,10 @@ class TestSingleModeCallbackFields:
             "callback": {"planId": "2", "itemStatusUrl": "http://cb", "mode": "single"},
         })
         svc_single.run_by_plan_id(r_single["planId"])
-        single_item_keys = set(transport_single.calls[0]["payload"].keys())
+        single_item_keys = set(_transport_item_payloads(transport_single)[0].keys())
 
-        # Both should have the same 8 fields
-        expected_fields = {"planId", "deviceName", "taskName", "status",
-                           "updater", "errorMessage", "startedAt", "finishedAt"}
+        # Both modes should have the same public item fields
+        expected_fields = CALLBACK_ITEM_FIELDS
         assert batch_item_keys == expected_fields, (
             f"Batch item fields mismatch: {batch_item_keys ^ expected_fields}"
         )
@@ -1585,10 +1648,9 @@ class TestSingleModeCallbackFields:
         )
 
     def test_single_mode_does_not_use_outbox_to_callback_body(self):
-        """Single mode sends 8-field items, NOT the 6-field outbox internal format.
+        """Single mode sends public item fields, NOT the legacy outbox-only format.
 
-        CallbackOutboxItem.to_callback_body() returns 6 fields (no startedAt/finishedAt).
-        Single mode must use build_callback_item() which returns 8 fields.
+        Single mode must use build_callback_item(), including deviceGroup and timestamps.
         """
         svc = PlanRunService()
         svc.set_latest_excel(EXCEL_FILE)
@@ -1600,19 +1662,14 @@ class TestSingleModeCallbackFields:
         })
         svc.run_by_plan_id(r["planId"])
 
-        for call in transport.calls:
-            payload = call["payload"]
-            # If to_callback_body() (6 fields) were used, startedAt/finishedAt would be missing
+        for payload in _transport_item_payloads(transport):
             assert "startedAt" in payload, (
-                "startedAt missing — single mode may be using 6-field outbox format incorrectly"
+                "startedAt missing — single mode may be using legacy outbox format incorrectly"
             )
             assert "finishedAt" in payload, (
-                "finishedAt missing — single mode may be using 6-field outbox format incorrectly"
+                "finishedAt missing — single mode may be using legacy outbox format incorrectly"
             )
-            # 8 fields total
-            assert len(payload) == 8, (
-                f"Expected 8 fields, got {len(payload)}: {list(payload.keys())}"
-            )
+            assert set(payload.keys()) == CALLBACK_ITEM_FIELDS
 
     def test_batch_mode_items_also_have_started_at_finished_at(self):
         """Batch mode item payloads also include startedAt/finishedAt."""
@@ -1627,12 +1684,13 @@ class TestSingleModeCallbackFields:
         svc.run_by_plan_id(r["planId"])
 
         assert len(transport.calls) > 0
-        items = transport.calls[0]["payload"]["items"]
+        items = _transport_item_payloads(transport)
         for item in items:
             assert "startedAt" in item
             assert "finishedAt" in item
             assert item["startedAt"] is not None
-            assert item["finishedAt"] is not None
+            if item["status"] in {"SUCCESS", "FAILED"}:
+                assert item["finishedAt"] is not None
 
 
 # ===========================================================================
@@ -1737,14 +1795,15 @@ class TestContractsConsistency:
         assert "callback.mode" in cb_children
 
     def test_plan_run_contract_response_fields(self):
-        """Plan run contract response includes accepted, planId, runId, status, etc."""
+        """Plan run contract response includes public planId fields and hides runId."""
         from src.executor_api_server.contracts import PLAN_RUN_CONTRACT
 
         resp = PLAN_RUN_CONTRACT["responseBody"]
         field_names = {f["name"] for f in resp.get("fields", [])}
-        required_fields = {"accepted", "planId", "runId", "status", "excelHash", "message"}
+        required_fields = {"accepted", "planId", "status", "excelHash", "message"}
         for rf in required_fields:
             assert rf in field_names, f"Response missing field: {rf}"
+        assert "runId" not in field_names
 
     def test_plan_run_contract_response_includes_callback_transport_mode(self):
         """Plan run contract response includes callbackTransportMode field."""
@@ -1765,31 +1824,30 @@ class TestContractsConsistency:
         assert "finishedAt" in field_names, "Callback contract missing finishedAt"
 
     def test_callback_contract_batch_payload_has_top_level_fields(self):
-        """Batch callback payload includes planId/runId/items/summary at top level."""
+        """Batch callback payload includes planId/items and never top-level runId."""
         from src.executor_api_server.contracts import PLAN_ITEM_STATUS_CALLBACK_CONTRACT
 
         batch = PLAN_ITEM_STATUS_CALLBACK_CONTRACT["modes"]["batch"]
         payload = batch["payloadStructure"]
         assert "planId" in payload, "Batch payload structure missing planId"
-        assert "runId" in payload, "Batch payload structure missing runId"
+        assert "runId" not in payload, "Batch payload structure must not expose runId"
         assert "items" in payload, "Batch payload structure missing items"
-        assert "summary" in payload, "Batch payload structure missing summary"
+        summary = PLAN_ITEM_STATUS_CALLBACK_CONTRACT["modes"]["summary"]["payloadStructure"]
+        assert "summary" in summary, "Summary payload structure missing summary"
 
-    def test_callback_contract_single_mode_has_8_fields(self):
-        """Single mode contract payload has 8 fields including startedAt/finishedAt."""
+    def test_callback_contract_single_mode_has_public_fields(self):
+        """Single mode contract payload has public item fields including deviceGroup and timestamps."""
         from src.executor_api_server.contracts import PLAN_ITEM_STATUS_CALLBACK_CONTRACT
 
         single = PLAN_ITEM_STATUS_CALLBACK_CONTRACT["modes"]["single"]
         example = single["examplePayload"]
-        required_single_fields = {"planId", "deviceName", "taskName", "status",
-                                   "updater", "errorMessage", "startedAt", "finishedAt"}
-        for field in required_single_fields:
+        for field in CALLBACK_ITEM_FIELDS:
             assert field in example, (
                 f"Single mode examplePayload missing field: {field}"
             )
 
-    def test_batch_payload_has_plan_id_run_id_items_summary(self):
-        """Integration: real batch payload includes planId, runId, items, summary."""
+    def test_batch_payload_has_plan_id_items_and_summary_is_separate(self):
+        """Integration: item callbacks use planId/items; final callback uses planId/summary."""
         svc = PlanRunService()
         svc.set_latest_excel(EXCEL_FILE)
         transport = FakeCallbackTransport()
@@ -1802,12 +1860,18 @@ class TestContractsConsistency:
 
         batch_payload = transport.calls[0]["payload"]
         assert "planId" in batch_payload, "Batch payload missing top-level planId"
-        assert "runId" in batch_payload, "Batch payload missing top-level runId"
+        assert "runId" not in batch_payload, "Batch payload must not expose top-level runId"
         assert "items" in batch_payload, "Batch payload missing items array"
-        assert "summary" in batch_payload, "Batch payload missing summary"
         assert isinstance(batch_payload["items"], list)
-        assert isinstance(batch_payload["summary"], dict)
-        assert "total" in batch_payload["summary"]
+        summary_payloads = [
+            call["payload"] for call in transport.calls
+            if "summary" in call["payload"] and "items" not in call["payload"]
+        ]
+        assert summary_payloads, "Final summary callback missing"
+        assert "runId" not in summary_payloads[-1]
+        assert isinstance(summary_payloads[-1]["summary"], dict)
+        assert "total" in summary_payloads[-1]["summary"]
+        assert "outputRoot" in summary_payloads[-1]["summary"]
 
     def test_callback_contract_matches_runtime_payload(self):
         """Callback contract field names match what build_callback_item produces."""

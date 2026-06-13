@@ -29,6 +29,7 @@ import time
 from typing import Callable
 
 from ..models.task_plan import TaskPlan
+from ..models.task import resolve_task_timeout_seconds
 from ..models.execution_result import ExecutionResult
 from ..models.verdict import AttemptRecord, compute_verdict, is_retryable_failure
 from ..executor.bmc_executor import BMCExecutor
@@ -52,6 +53,7 @@ class BMCEndpointSessionRunner:
         output_root: str,
         connect_timeout: float = 30.0,
         page_timeout: float = 60.0,
+        artifact_profile: str = "full",
         on_plan_done: Callable | None = None,
         on_group_done: Callable | None = None,
     ):
@@ -63,6 +65,7 @@ class BMCEndpointSessionRunner:
         self._output_root = output_root
         self._connect_timeout = connect_timeout
         self._page_timeout = page_timeout
+        self._artifact_profile = artifact_profile
         self._on_plan_done = on_plan_done
         self._on_group_done = on_group_done
 
@@ -184,7 +187,8 @@ class BMCEndpointSessionRunner:
                 from ..executor.bmc_executor import BMCExecutor as _BMC
                 # We need a minimal executor for output dir / file naming helpers
                 _exec = _BMC(self._bm, connect_timeout=self._connect_timeout,
-                             page_timeout=self._page_timeout)
+                             page_timeout=self._page_timeout,
+                             artifact_profile=self._artifact_profile)
 
                 output_dir = _exec._build_output_dir(self._output_root, device, task)
                 import os
@@ -238,10 +242,8 @@ class BMCEndpointSessionRunner:
 
                 # --- Execute with per-plan timeout and optional retry ---
                 max_retries = max(0, task.retry_count)
-                plan_timeout = (
-                    float(task.timeout_seconds)
-                    if task.timeout_seconds > 0
-                    else float(self._page_timeout)
+                plan_timeout = resolve_task_timeout_seconds(
+                    task, device.device_group, fallback=self._page_timeout,
                 )
                 _attempts_data: list[AttemptRecord] = []
                 _retry_reasons: list[str] = []
@@ -489,6 +491,7 @@ class BMCEndpointSessionRunner:
             self._bm,
             connect_timeout=self._connect_timeout,
             page_timeout=self._page_timeout,
+            artifact_profile=self._artifact_profile,
         )
         try:
             return await asyncio.wait_for(

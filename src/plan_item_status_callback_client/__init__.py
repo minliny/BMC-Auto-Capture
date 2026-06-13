@@ -2,8 +2,9 @@
 PlanItemStatusCallbackClient — sends per-device-per-task status callbacks.
 
 Supports two modes:
-  - batch  (default): POST {items: [{planId, deviceName, taskName, status, updater, errorMessage}, ...]}
-  - single:          POST {planId, deviceName, taskName, status, updater, errorMessage} per item
+  - batch  (default): POST {planId, items: [{planId, deviceGroup, deviceName, taskName, status, updater, errorMessage}, ...]}
+  - single:          POST {planId, deviceGroup, deviceName, taskName, status, updater, errorMessage} per item
+  - summary:         POST {planId, summary} after the plan batch finishes
 
 Server response format:
   {"code": 0, "message": "success", "data": {"total": N, "success": N, "failed": 0, "errors": []}}
@@ -34,7 +35,7 @@ from ..utils.sensitive import (
 # ---------------------------------------------------------------------------
 
 _ALLOWED_CALLBACK_FIELDS = frozenset({
-    "planId", "deviceName", "taskName",
+    "planId", "deviceGroup", "deviceName", "taskName",
     "status", "updater", "errorMessage",
     "startedAt", "finishedAt",
 })
@@ -223,8 +224,8 @@ class PlanItemStatusCallbackClient:
 
         NOTE: excel_hash parameter is accepted for backward compatibility only
         but is NEVER serialized to the server callback body.  The callback body
-        always contains exactly 6 fields: {planId, deviceName, taskName, status,
-        updater, errorMessage}.  See build_callback_item() for the canonical form.
+        contains the canonical task identity/status fields.  See
+        build_callback_item() for the current callback item shape.
         """
         # P0-5: excel_hash is deprecated compatibility only; never sent to server.
         _ = excel_hash  # explicitly ignored
@@ -261,11 +262,13 @@ class PlanItemStatusCallbackClient:
     def send_batch(self, url: str, items: list[dict[str, Any]],
                    max_batch_size: int | None = None,
                    run_id: str = "", summary: dict[str, Any] | None = None) -> CallbackResult:
-        """Send items as batch {planId, runId, items, summary}.
+        """Send items as batch {planId, items, summary}.
 
         - If items is empty: returns empty CallbackResult (no POST).
         - Chunks at max_batch_size (default 1000) if needed.
         - Aggregates results from all chunks.
+        - run_id is accepted for backward-compatible callers but is not
+          serialized into the server-facing payload.
         """
         if max_batch_size is None:
             max_batch_size = self.MAX_BATCH_SIZE
@@ -303,15 +306,15 @@ class PlanItemStatusCallbackClient:
         """POST a single batch and parse the server response.
 
         All items are sanitized to the allowed callback fields.
-        The payload includes planId, runId, items, and summary at the top level.
+        The payload includes planId, items, and optionally summary at the top level.
+        run_id is intentionally ignored: planId is the public batch identifier.
         """
+        _ = run_id
         sanitized_items = [_sanitize_callback_item(it) for it in items]
         payload: dict[str, Any] = {"items": sanitized_items}
         # Add planId at top level from first item (all items share the same planId)
         if sanitized_items and "planId" in sanitized_items[0]:
             payload["planId"] = sanitized_items[0]["planId"]
-        if run_id:
-            payload["runId"] = run_id
         if summary is not None:
             payload["summary"] = summary
         headers = {"Content-Type": "application/json; charset=utf-8"}
@@ -326,15 +329,35 @@ class PlanItemStatusCallbackClient:
             )
         return self._parse_server_response(code, body, len(items))
 
+    def send_summary(self, url: str, plan_id: int | str,
+                     summary: dict[str, Any]) -> CallbackResult:
+        """Send the final plan summary as {planId, summary}.
+
+        The summary callback has no item directory fields.  It is intentionally
+        keyed only by planId so schedulers do not need to understand runId.
+        """
+        payload = {"planId": str(plan_id), "summary": dict(summary)}
+        headers = {"Content-Type": "application/json; charset=utf-8"}
+        try:
+            code, body = self._transport.post(url, payload, headers)
+        except Exception as e:
+            safe_error = redact_sensitive_text(str(e))
+            logger.error("Summary callback transport exception: %s", safe_error)
+            return CallbackResult(
+                total=1, failed=1, batches=1,
+                last_error=f"CALLBACK_TRANSPORT_ERROR: {safe_error}",
+            )
+        return self._parse_server_response(code, body, 1)
+
     # ------------------------------------------------------------------
     # Single send
     # ------------------------------------------------------------------
 
     def send_single(self, url: str, item: dict[str, Any]) -> CallbackResult:
-        """Send a single item with up to 8 allowed callback fields.
+        """Send a single item with the allowed callback fields.
 
-        The item dict may contain: planId, deviceName, taskName, status,
-        updater, errorMessage, startedAt, finishedAt.
+        The item dict may contain: planId, deviceGroup, deviceName, taskName,
+        status, updater, errorMessage, startedAt, finishedAt.
         Extra fields beyond _ALLOWED_CALLBACK_FIELDS are stripped via
         _sanitize_callback_item().
         """
@@ -458,17 +481,19 @@ def build_callback_item(plan_id: str, device_name: str, task_name: str,
                          status: str, updater: str = "downstream-system",
                          error_message: str | None = None,
                          started_at: str | None = None,
-                         finished_at: str | None = None) -> dict[str, Any]:
+                         finished_at: str | None = None,
+                         device_group: str = "") -> dict[str, Any]:
     """Build a single callback item dict with server-mapped status.
 
-    The returned dict contains up to 8 fields:
-      {planId, deviceName, taskName, status, updater, errorMessage,
+    The returned dict contains up to 9 fields:
+      {planId, deviceGroup, deviceName, taskName, status, updater, errorMessage,
        startedAt, finishedAt}
 
     No excelHash, jobId, password, token, or secret is included.
     """
     item = _sanitize_callback_item({
         "planId": str(plan_id),
+        "deviceGroup": device_group,
         "deviceName": device_name,
         "taskName": task_name,
         "status": map_status_to_server(status),
@@ -498,10 +523,10 @@ def _redact_sensitive_value(text: str) -> str:
 
 
 def _sanitize_callback_item(item: dict[str, Any]) -> dict[str, Any]:
-    """Enforce the 8-field callback schema: discard extra fields.
+    """Enforce the public callback item schema: discard extra fields.
 
-    Allowed fields: planId, deviceName, taskName, status, updater,
-    errorMessage, startedAt, finishedAt.
+    Allowed fields: planId, deviceGroup, deviceName, taskName, status,
+    updater, errorMessage, startedAt, finishedAt.
 
     Any field not in _ALLOWED_CALLBACK_FIELDS is silently dropped.
     This prevents accidental leakage of excelHash/runId/storedPath/metadata

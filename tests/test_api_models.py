@@ -162,7 +162,8 @@ class TestLockUriDerivation:
             inband_username="u",
             inband_password="p",
         )
-        assert dev.lock_uri_ssh == "ssh://10.0.1.1"
+        assert dev.ssh_type == "SSH_LINUX"
+        assert dev.lock_uri_ssh == "ssh-linux://10.0.1.1"
 
     def test_device_lock_uri_ssh_vrp_from_group(self):
         dev = Device(
@@ -331,6 +332,28 @@ class TestSerialization:
         assert ts2.execution_mode == "BMC_URL"
         assert len(ts2.rules) == 1
         assert ts2.rules[0].checks[0].type == "text_exists"
+
+    def test_task_snapshot_ssh_profile_roundtrip(self):
+        ts = TaskSnapshot(
+            task_id="task-ssh",
+            task_name="Linux terminal evidence",
+            task_type="SSH",
+            execution_mode="SSH_CMD",
+            command_or_url="uname -a",
+            ssh_profile="linux",
+            ssh_evidence_mode="terminal",
+            ssh_transport="terminal_session",
+            artifact_profile="fast",
+            per_group_timeout_seconds={"A3": 900, "L1": 60},
+        )
+        d = ts.to_dict()
+        ts2 = TaskSnapshot.from_dict(d)
+        assert d["ssh_profile"] == "linux"
+        assert d["ssh_evidence_mode"] == "terminal"
+        assert d["per_group_timeout_seconds"] == {"A3": 900, "L1": 60}
+        assert ts2.ssh_transport == "terminal_session"
+        assert ts2.artifact_profile == "fast"
+        assert ts2.per_group_timeout_seconds == {"A3": 900, "L1": 60}
 
     def test_job_roundtrip(self):
         job = Job(

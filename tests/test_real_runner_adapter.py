@@ -165,6 +165,29 @@ class TestRealRunnerAdapterConversion:
         ))
         assert task.command_or_url == "display device"
 
+    def test_task_snapshot_preserves_runtime_semantics(self):
+        """Adapter rebuild must preserve actions, rules, task_def, and no_split."""
+        adapter = RealRunnerAdapter()
+        task = adapter._task_from_snapshot(self._make_task_snapshot(
+            task_type="SSH",
+            execution_mode="SSH_CMD",
+            command_or_url="default",
+            actions_json='[{"action":"goto","value":"/"}]',
+            rules_json='[{"name":"r","checks":[{"type":"text_exists","target":"ok"}]}]',
+            task_def={"stderr_fail_patterns": ["fatal"]},
+            per_group_commands={"A3": "for i in 1; do echo $i; done"},
+            per_group_no_split={"A3": True},
+            per_group_timeout_seconds={"A3": 900, "L1": 60},
+        ))
+        from src.executor.ssh_executor import resolve_task_no_split
+
+        assert task.actions_json
+        assert len(task.parsed_rules()) == 1
+        assert getattr(task, "_task_def", {}).get("stderr_fail_patterns") == ["fatal"]
+        assert getattr(task, "_per_group_commands", {}).get("A3")
+        assert getattr(task, "_per_group_timeout_seconds", {}).get("L1") == 60
+        assert resolve_task_no_split(task, "A3") is True
+
     def test_unsupported_task_type_in_run_job(self):
         """7. Unsupported task_type returns FAILED with UNSUPPORTED_TASK_TYPE."""
         adapter = RealRunnerAdapter()
@@ -189,8 +212,10 @@ class _FakeExecResult:
         self.execution_status = status
         self.execution_failure_reason = reason
         self.screenshots = screenshots
+        self.raw_screenshots = ()
         self.html_file = html_file
         self.txt_file = txt_file
+        self.output_dir = "/tmp/out"
         self.step_results = step_results or []
         self.duration_seconds = duration
 
@@ -346,6 +371,52 @@ class TestRealRunnerAdapterExecute:
         })
         types = [a["artifact_type"] for a in result.artifacts]
         assert "TXT_SSH_OUTPUT" in types
+
+    def test_ssh_retry_count_is_honored(self, monkeypatch, tmp_path):
+        """RealRunnerAdapter must use retry_count from task_snapshot."""
+        from src.models.execution_result import ExecutionResult
+
+        attempts = []
+
+        def _fake_ssh_execute(self_ignored, plan, output_root):
+            attempts.append(plan.retry_attempt)
+            status = "EXEC_FAILED" if len(attempts) == 1 else "EXEC_SUCCESS"
+            reason = "transient transport failure" if status == "EXEC_FAILED" else ""
+            started = time.time()
+            return ExecutionResult(
+                plan_id=plan.plan_id,
+                device_name=plan.device.device_name,
+                device_group=plan.device.device_group,
+                task_name=plan.task.task_name,
+                task_type=plan.task.task_type,
+                execution_mode=plan.task.execution_mode,
+                execution_status=status,
+                execution_failure_reason=reason,
+                started_at=started,
+                ended_at=started + 0.01,
+                duration_seconds=0.01,
+            )
+
+        monkeypatch.setattr(
+            "src.executor.ssh_executor.SSHExecutor.execute", _fake_ssh_execute
+        )
+        adapter = RealRunnerAdapter(output_root=str(tmp_path))
+        result = adapter.run_job({
+            "device_snapshot": {
+                "device_name": "D1", "oob_ip": "",
+                "inband_ip": "192.0.2.1", "inband_username": "u",
+                "oob_username": "", "oob_password_ref": "",
+                "inband_password_ref": "plain:x",
+            },
+            "task_snapshot": {
+                "task_id": "t1", "task_name": "T1",
+                "task_type": "SSH", "execution_mode": "SSH_CMD",
+                "ssh_cmd": "show ver", "retry_count": 1,
+            },
+        })
+        assert attempts == [0, 1]
+        assert result.status == "SUCCEEDED"
+        assert result.execution_result.attempt_count == 2
 
     def test_non_empty_bad_ref_raises_in_run_job(self):
         """12. Non-empty unresolvable secret_ref raises SecretError."""

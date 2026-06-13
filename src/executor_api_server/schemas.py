@@ -45,6 +45,8 @@ class TaskSnapshotPayload(BaseModel):
     image_name_template: str = "{device_name}_{task_name}_{step}_{timestamp}"
     full_screenshot: bool = False
     screenshot_mode: str = "auto"
+    artifact_profile: str = ""
+    per_group_timeout_seconds: dict[str, int] = Field(default_factory=dict)
 
 
 class JobPayload(BaseModel):
@@ -130,7 +132,6 @@ class LatestConfigResponse(BaseModel):
 class PlanRunAcceptResponse(BaseModel):
     accepted: bool
     planId: Union[str, int] = ""
-    runId: str = ""
     status: str = ""
     excelHash: str = ""
     message: str = ""
@@ -143,6 +144,8 @@ class PlanSummary(BaseModel):
     failed: int = 0
     in_progress: int = 0
     pending: int = 0
+    failureSummary: list[dict[str, Any]] = Field(default_factory=list)
+    outputRoot: str = ""
 
 
 class PlanInfoEvent(BaseModel):
@@ -152,6 +155,7 @@ class PlanInfoEvent(BaseModel):
 
 
 class PlanItemStatusResponse(BaseModel):
+    deviceGroup: str = ""
     deviceName: str = ""
     taskName: str = ""
     status: str = ""
@@ -163,10 +167,10 @@ class PlanItemStatusResponse(BaseModel):
 
 class PlanStatusResponse(BaseModel):
     planId: Union[str, int] = ""
-    runId: str = ""
     status: str = ""
     summary: PlanSummary = Field(default_factory=PlanSummary)
     excelHash: str = ""
+    outputRoot: str = ""
     startedAt: str = ""
     finishedAt: str = ""
     errorMessage: Optional[str] = None
@@ -192,7 +196,6 @@ class CallbackRetryRequest(BaseModel):
 class CallbackRetryResponse(BaseModel):
     accepted: bool
     planId: Union[str, int] = ""
-    runId: str = ""
     attempted: int = 0
     sent: int = 0
     failed: int = 0

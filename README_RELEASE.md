@@ -11,6 +11,8 @@ BMC Auto-Capture 是一个 BMC/SSH 自动化测试证据采集平台，支持：
 - 5-Gate 页面健康检查（自动检测登录页/账号冲突/loading/error）
 - 账户密码可用性预检
 
+新增 SSH/BMC 任务的配置方法见 [任务添加指南](docs/TASK_ADDING_GUIDE.md)。
+
 ## 二、目录结构
 
 ```
@@ -59,6 +61,10 @@ runtime\bmc-engine.exe --app-dir app --excel tasks.xlsx --mode full
 runtime\bmc-engine.exe --app-dir app --excel tasks.xlsx --preflight-auth all
 ```
 
+`--concurrency N` 是兼容参数。`N > 1` 时会自动使用 full 动态调度，并在未显式指定 worker 时同时映射到 BMC/SSH worker。新脚本建议直接使用 `--mode full --max-bmc-workers N --max-ssh-workers M`。
+
+BMC 证据默认使用 `--bmc-artifact-profile full`，会保存 PNG、HTML、evidence.html、MHTML 和 state JSON。现场批量跑得很慢且只需要最终截图/HTML 时，可显式使用 `--bmc-artifact-profile fast`，该模式只保存 PNG + HTML。
+
 ### 方式四：Executor API 服务（推荐用于远程调用）
 
 Executor API 是默认的 server 模式，启动新版 API（基于 FastAPI + uvicorn），
@@ -92,15 +98,16 @@ runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --legacy-network-boo
 
 ```text
 - POST /executor/v1/plans/{planId}:run
-- GET  /executor/v1/plans/{planId}/runs/{runId}
-- GET  /executor/v1/plans/{planId}/runs/{runId}/items
+- GET  /executor/v1/runs/{runId}              （内部/调试兼容，不推荐服务端主链路使用）
+- GET  /executor/v1/runs/{runId}/items        （内部/调试兼容，不推荐服务端主链路使用）
 ```
 
 ### 所有端点列表
 - `GET /executor/v1/status` — Executor 状态
 - `POST /executor/v1/config/excel:path` — 设置最新 Excel
 - `POST /executor/v1/plans/{planId}:run` — 启动 plan 执行
-- `GET /executor/v1/plans/{planId}/runs/{runId}` — 查询执行进度
+- `GET /executor/v1/plans/{planId}` — 查询批次汇总
+- `GET /executor/v1/plans/{planId}/items` — 查询任务明细
 - `GET /health` — 兼容健康检查
 - `GET /version` — 兼容版本信息
 - `GET /network/ping` — 兼容网络检测
@@ -142,8 +149,10 @@ runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --legacy-network-boo
 | `--app-dir` | app 目录路径 | 必填 |
 | `--excel` | Excel 文件路径 | 自动查找 |
 | `--mode` | sequential / full | sequential |
+| `--concurrency` | 兼容参数，>1 时隐式 full 并映射缺省 worker | — |
 | `--max-bmc-workers` | BMC 并发 endpoint 数 | 4 |
 | `--max-ssh-workers` | SSH 并发 endpoint 数 | 8 |
+| `--bmc-artifact-profile` | BMC 证据模式：full 或 fast | full |
 | `--preflight-only` | 仅 TCP 预检 | — |
 | `--preflight-target` | 预检对象 all/bmc/ssh | all |
 | `--preflight-auth` | 凭证检测 all/bmc/ssh | — |

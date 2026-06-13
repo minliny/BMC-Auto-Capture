@@ -143,6 +143,10 @@ class Task:
     def has_advanced_rules(self) -> bool:
         return len(self.advanced_rules()) > 0
 
+    def effective_timeout_seconds(self, device_group: str = "", fallback: float = 60.0) -> float:
+        """Return timeout_seconds, allowing tasks.json per-group overrides."""
+        return resolve_task_timeout_seconds(self, device_group, fallback)
+
     def to_capture_flow(self) -> dict:
         """Unify BMC_URL / BMC_ACTIONS into a single capture flow dict.
 
@@ -191,3 +195,33 @@ class Task:
             "target_url": target_url,
             "pre_capture_actions": pre_actions,
         }
+
+
+def resolve_task_timeout_seconds(task: Any, device_group: str = "", fallback: float = 60.0) -> float:
+    """Resolve task timeout with optional per_group_timeout_seconds override."""
+    group = (device_group or "").upper().strip()
+    tdef = getattr(task, "_task_def", None) or {}
+    per_group = getattr(task, "_per_group_timeout_seconds", None) or {}
+    if not per_group:
+        per_group = tdef.get("per_group_timeout_seconds") or tdef.get("per_group_timeout") or {}
+
+    if isinstance(per_group, dict) and group:
+        normalised = {str(k).upper().strip(): v for k, v in per_group.items()}
+        if group in normalised:
+            value = _positive_float_or_zero(normalised[group])
+            if value > 0:
+                return value
+
+    value = _positive_float_or_zero(getattr(task, "timeout_seconds", 0))
+    if value > 0:
+        return value
+    fallback_value = _positive_float_or_zero(fallback)
+    return fallback_value if fallback_value > 0 else 60.0
+
+
+def _positive_float_or_zero(value: Any) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return numeric if numeric > 0 else 0.0

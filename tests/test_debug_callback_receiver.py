@@ -30,6 +30,15 @@ def clear_debug_store():
 
 EXCEL_FILE = str(Path(__file__).parent.parent / "examples" / "task_template.xlsx")
 
+CALLBACK_ITEM_FIELDS = {
+    "planId", "deviceGroup", "deviceName", "taskName", "status",
+    "updater", "errorMessage", "startedAt", "finishedAt",
+}
+CALLBACK_FORBIDDEN_FIELDS = {
+    "job_id", "external_task_id", "executor_id", "duration_ms", "artifacts",
+    "excelHash", "runId",
+}
+
 
 # ===========================================================================
 # Fixtures
@@ -78,7 +87,7 @@ class TestDebugCallbackReceiver:
         }
         resp = client.post("/debug/plan-item-statuses", json=payload)
         assert resp.status_code == 200
-        assert resp.json() == {"ok": True}
+        assert resp.json()["code"] == 0
 
         # Verify stored
         resp2 = client.get("/debug/plan-item-statuses")
@@ -91,10 +100,11 @@ class TestDebugCallbackReceiver:
         assert data["items"][0]["payload"]["status"] == "SUCCESS"
         assert data["items"][0]["payload"]["errorMessage"] is None
 
-    def test_debug_callback_payload_strict_8_fields(self, client):
-        """POST payload only contains the 8 required fields, no extra legacy fields."""
+    def test_debug_callback_payload_public_fields(self, client):
+        """POST payload stores only public item fields, no extra legacy fields."""
         payload = {
             "planId": 1,
+            "deviceGroup": "A3",
             "deviceName": "Switch-A",
             "taskName": "BMC Login",
             "status": "SUCCESS",
@@ -109,12 +119,10 @@ class TestDebugCallbackReceiver:
         resp2 = client.get("/debug/plan-item-statuses")
         data = resp2.json()
         stored_payload = data["items"][-1]["payload"]
-        required_fields = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
-        forbidden_fields = {"job_id", "external_task_id", "executor_id", "duration_ms", "artifacts"}
 
         keys = set(stored_payload.keys())
-        assert keys == required_fields, f"Expected 8 fields, got: {keys}"
-        assert not (keys & forbidden_fields), f"Should not have legacy fields, got: {keys & forbidden_fields}"
+        assert keys == CALLBACK_ITEM_FIELDS, f"Expected public item fields, got: {keys}"
+        assert not (keys & CALLBACK_FORBIDDEN_FIELDS), f"Should not have legacy fields, got: {keys & CALLBACK_FORBIDDEN_FIELDS}"
 
     def test_debug_callback_post_failed_status(self, client):
         """POST with status=FAILED is correctly counted."""
@@ -188,14 +196,22 @@ class TestDebugCallbackWithPlanRun:
                 # Handle batch payload: expand items into individual entries
                 if "items" in payload:
                     for item in payload["items"]:
-                        entry = {"receivedAt": time.time(), "payload": dict(item)}
+                        entry = {"receivedAt": time.time(), "type": "item", "payload": dict(item)}
                         with _debug_callback_lock:
                             _debug_callback_store.append(entry)
-                else:
-                    entry = {"receivedAt": time.time(), "payload": dict(payload)}
+                elif "summary" in payload and "taskName" not in payload:
+                    entry = {
+                        "receivedAt": time.time(),
+                        "type": "summary",
+                        "payload": {"planId": payload.get("planId"), "summary": payload.get("summary", {})},
+                    }
                     with _debug_callback_lock:
                         _debug_callback_store.append(entry)
-                return 200, '{"ok":true}'
+                else:
+                    entry = {"receivedAt": time.time(), "type": "item", "payload": dict(payload)}
+                    with _debug_callback_lock:
+                        _debug_callback_store.append(entry)
+                return 200, '{"code":0,"message":"success","data":{"total":1,"success":1,"failed":0,"errors":[]}}'
 
         svc = DirectDispatchService(executor_id="test-plan-run-debug")
         svc.start_background_worker()
@@ -242,17 +258,17 @@ class TestDebugCallbackWithPlanRun:
         cb_success = cb_data["summary"]["SUCCESS"]
         cb_failed = cb_data["summary"]["FAILED"]
 
-        assert cb_total == total, f"Callback count ({cb_total}) should match run total ({total})"
+        assert cb_total >= total, f"Callback count ({cb_total}) should include status changes for run total ({total})"
         assert cb_success == total, f"Callback success count ({cb_success}) should match run total ({total})"
         assert cb_failed == 0, f"Callback failed count ({cb_failed}) should be 0"
 
-        # Verify each callback has exactly 8 fields
-        required_fields = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
-        forbidden_fields = {"job_id", "external_task_id", "executor_id", "duration_ms", "artifacts"}
+        # Verify each item callback has only public fields
         for item in cb_data["items"]:
+            if item.get("type") != "item":
+                continue
             keys = set(item["payload"].keys())
-            assert keys == required_fields, f"Expected 8 fields, got {keys}"
-            assert not (keys & forbidden_fields), f"Has forbidden fields: {keys & forbidden_fields}"
+            assert keys == CALLBACK_ITEM_FIELDS, f"Expected public item fields, got {keys}"
+            assert not (keys & CALLBACK_FORBIDDEN_FIELDS), f"Has forbidden fields: {keys & CALLBACK_FORBIDDEN_FIELDS}"
 
     def test_debug_callback_not_available_without_flag(self):
         """Debug callback receiver NOT present when debug_callback_receiver=False."""
@@ -276,11 +292,12 @@ class TestDebugCallbackWithPlanRun:
         assert "receivedAt" in data["items"][0]
         assert data["items"][0]["receivedAt"] > 0
 
-    def test_debug_callback_stores_only_8_fields_from_extra_payload(self, client):
-        """Extra fields in POST body are dropped — only 8 fields stored."""
+    def test_debug_callback_stores_only_public_fields_from_extra_payload(self, client):
+        """Extra fields in POST body are dropped — only public item fields stored."""
         # POST with extra fields
         client.post("/debug/plan-item-statuses", json={
             "planId": 1,
+            "deviceGroup": "A3",
             "deviceName": "D1",
             "taskName": "T1",
             "status": "SUCCESS",
@@ -299,7 +316,7 @@ class TestDebugCallbackWithPlanRun:
         assert "job_id" not in stored, "job_id should have been dropped"
         assert "duration_ms" not in stored, "duration_ms should have been dropped"
         keys = set(stored.keys())
-        assert keys == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
+        assert keys == CALLBACK_ITEM_FIELDS
 
 
 # ===========================================================================
@@ -342,14 +359,14 @@ class TestDefaultServerMode:
 
 
 # ===========================================================================
-# Regression: 8-field payload test from existing tests
+# Regression: public callback payload fields
 # ===========================================================================
 
 class TestCallbackPayloadFields:
-    """Verify that the 8-field callback contract is maintained via debug receiver."""
+    """Verify that the public callback item contract is maintained via debug receiver."""
 
-    def test_callback_payload_contains_all_8_fields(self):
-        """Test that any POST to debug callback receiver stores all 8 fields correctly."""
+    def test_callback_payload_contains_all_public_fields(self):
+        """Test that any POST to debug callback receiver stores all public fields correctly."""
         svc = DirectDispatchService(executor_id="test-6fields")
         svc.start_background_worker()
         prs = PlanRunService()
@@ -362,6 +379,7 @@ class TestCallbackPayloadFields:
         for status_val in ["SUCCESS", "FAILED", "RUNNING", "PENDING"]:
             payload = {
                 "planId": 42,
+                "deviceGroup": "A3",
                 "deviceName": f"Device-{status_val}",
                 "taskName": f"Task-{status_val}",
                 "status": status_val,

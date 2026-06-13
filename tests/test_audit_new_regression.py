@@ -365,15 +365,18 @@ class TestAuditNew002CallbackLeak:
             assert "STANDALONE_SECRET_TOKEN" not in content
             assert "***REDACTED***" in content
 
-    def test_callback_body_strict_eight_fields(self):
-        """PlanItem callback body must be exactly 8 fields."""
+    def test_callback_body_public_fields(self):
+        """PlanItem callback body must be exactly the public item fields."""
         from src.plan_item_status_callback_client import build_callback_item
         body = build_callback_item(
             plan_id="p1", device_name="d1", task_name="t1",
             status="SUCCESS", updater="system",
             error_message=None,
         )
-        assert set(body.keys()) == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
+        assert set(body.keys()) == {
+            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "updater", "errorMessage", "startedAt", "finishedAt",
+        }
 
     def test_callback_body_rejects_extra_fields(self):
         """Extra fields in callback body must be stripped."""
@@ -387,7 +390,10 @@ class TestAuditNew002CallbackLeak:
         result = _sanitize_callback_item(item)
         assert "excelHash" not in result
         assert "metadata" not in result
-        assert len(result) == 8
+        assert set(result.keys()) == {
+            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "updater", "errorMessage", "startedAt", "finishedAt",
+        }
 
     def test_callback_error_message_is_redacted(self):
         from src.plan_item_status_callback_client import _sanitize_callback_item

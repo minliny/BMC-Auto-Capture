@@ -87,14 +87,6 @@ CONTRACT_INDEX: dict[str, Any] = {
             "detailPath": "/executor/v1/contracts/plan-items",
         },
         {
-            "id": "run-query",
-            "name": "Run Status Query",
-            "method": "GET",
-            "direction": "inbound",
-            "path": "/executor/v1/runs/{run_id}",
-            "detailPath": "/executor/v1/contracts/run-query",
-        },
-        {
             "id": "callback-retry",
             "name": "Retry Pending Plan Callbacks",
             "method": "POST",
@@ -152,43 +144,55 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
 
     "modes": {
         "batch": {
-            "description": "All items sent in one or more batch POSTs after ALL items complete",
+            "description": "One or more changed items sent in a batch wrapper when item status changes",
             "payloadStructure": {
                 "planId": "string — business plan ID",
-                "runId": "string — unique run identifier",
                 "items": "array of item objects",
-                "summary": "object — aggregate counts",
+                "summary": "optional object — only present for final batch summaries",
             },
             "maxBatchSize": 1000,
             "examplePayload": {
                 "planId": "<planId>",
-                "runId": "<runId>",
                 "items": [
                     {
                         "planId": "<planId>",
+                        "deviceGroup": "<deviceGroup>",
                         "deviceName": "<deviceName>",
                         "taskName": "<taskName>",
-                        "status": "SUCCESS",
+                        "status": "IN_PROGRESS",
                         "updater": "downstream-system",
                         "errorMessage": None,
                         "startedAt": "2026-01-01T00:00:00+00:00",
-                        "finishedAt": "2026-01-01T00:00:01+00:00",
+                        "finishedAt": None,
                     }
                 ],
+            },
+        },
+        "summary": {
+            "description": "Final plan summary sent after the batch completes",
+            "payloadStructure": {
+                "planId": "string — business plan ID",
+                "summary": "object — aggregate counts, failureSummary, outputRoot",
+            },
+            "examplePayload": {
+                "planId": "<planId>",
                 "summary": {
                     "total": 1,
                     "success": 1,
                     "failed": 0,
                     "in_progress": 0,
                     "pending": 0,
+                    "failureSummary": [],
+                    "outputRoot": "<outputRoot>",
                 },
             },
         },
         "single": {
-            "description": "Each item sent as a separate POST after ALL items complete",
-            "payloadStructure": "flat object (no items wrapper) — same 8 fields as batch mode items",
+            "description": "Each changed item sent as a separate POST when item status changes",
+            "payloadStructure": "flat object (no items wrapper) — same item fields as batch mode",
             "examplePayload": {
                 "planId": "<planId>",
+                "deviceGroup": "<deviceGroup>",
                 "deviceName": "<deviceName>",
                 "taskName": "<taskName>",
                 "status": "FAILED",
@@ -201,9 +205,10 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
     },
 
     "callbackTiming": {
-        "description": "Callbacks are sent AFTER ALL items in the plan have finished executing",
-        "isPerItemImmediate": False,
-        "isBatchAfterAllComplete": True,
+        "description": "Item callbacks are sent whenever an item status changes; a final summary is sent after all items finish",
+        "isPerItemImmediate": True,
+        "isBatchAfterAllComplete": False,
+        "hasFinalSummary": True,
     },
 
     "fields": [
@@ -214,6 +219,14 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
             "source": "callback.planId from plan run request",
             "description": "Business plan ID provided by the caller",
             "example": "<planId>",
+        },
+        {
+            "name": "deviceGroup",
+            "type": "string",
+            "required": True,
+            "source": "Excel device row device_group column",
+            "description": "Device group used with planId/deviceName/taskName to locate the task",
+            "example": "<deviceGroup>",
         },
         {
             "name": "deviceName",
@@ -284,15 +297,10 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
     ],
 
     "statusesActuallySent": {
-        "description": "Current code only sends final statuses after all items complete",
-        "sent": ["SUCCESS", "FAILED"],
-        "notSent": ["PENDING", "IN_PROGRESS"],
-        "reason": (
-            "The _execute_run method sets item.status to IN_PROGRESS during "
-            "execution but only calls _deliver_via_outbox after the entire "
-            "for-loop completes.  At that point each item is either SUCCESS "
-            "or FAILED."
-        ),
+        "description": "Current code sends status changes as they happen",
+        "sent": ["IN_PROGRESS", "SUCCESS", "FAILED"],
+        "notSent": ["PENDING"],
+        "reason": "PENDING is the initial in-memory state before execution starts.",
     },
 
     "forbiddenFields": {
@@ -300,9 +308,9 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
         "fields": [
             "excelHash", "configId", "configVersion", "storedPath",
             "executorPlanId", "callbackPlanId", "serverPlanId",
-            "password", "token", "secret", "Authorization",
+            "runId", "password", "token", "secret", "Authorization",
         ],
-        "note": "runId is included in the batch wrapper (top-level), not in per-item payloads",
+        "note": "runId is internal/debug-only and is not serialized in callback payloads",
     },
 
     "serverExpectedResponse": {
@@ -516,23 +524,22 @@ PLAN_RUN_CONTRACT: dict[str, Any] = {
             },
         ],
     },
-    "responseBody": {
-        "fields": [
-            {"name": "accepted", "type": "boolean", "required": True},
-            {"name": "planId", "type": "integer"},
-            {"name": "runId", "type": "string", "description": "Unique run identifier"},
-            {"name": "status", "type": "string", "description": "Always 'ACCEPTED' on success"},
-            {"name": "excelHash", "type": "string"},
-            {"name": "message", "type": "string"},
+	    "responseBody": {
+	        "fields": [
+	            {"name": "accepted", "type": "boolean", "required": True},
+	            {"name": "planId", "type": "integer"},
+	            {"name": "status", "type": "string", "description": "Always 'ACCEPTED' on success"},
+	            {"name": "excelHash", "type": "string"},
+	            {"name": "message", "type": "string"},
             {"name": "callbackTransportMode", "type": "string", "description": "'http' if itemStatusUrl provided, 'fake' otherwise"},
         ],
     },
-    "behavior": {
-        "description": "Starts a background thread that executes all items serially",
-        "callbackTiming": "After ALL items complete, not per-item",
-        "callbackTransport": "Auto: HttpCallbackTransport when itemStatusUrl provided, FakeCallbackTransport otherwise",
-        "realRunnerGate": "runner=real requires --enable-real-runner, PlanRunService(allow_real_runner=True), or EXECUTOR_ENABLE_REAL_RUNNER=1",
-    },
+	    "behavior": {
+	        "description": "Starts a background thread that executes all items serially",
+	        "callbackTiming": "On each item status change, with a final summary after all items complete",
+	        "callbackTransport": "Auto: HttpCallbackTransport when itemStatusUrl provided, FakeCallbackTransport otherwise",
+	        "realRunnerGate": "runner=real requires --enable-real-runner, PlanRunService(allow_real_runner=True), or EXECUTOR_ENABLE_REAL_RUNNER=1",
+	    },
     "errorResponses": [
         {"statusCode": 400, "code": "REAL_RUNNER_NOT_ENABLED", "description": "runner=real requested without server-side enablement"},
         {"statusCode": 400, "code": "INVALID_CALLBACK_URL", "description": "callback URL rejected by URL policy"},
@@ -579,15 +586,14 @@ EXTERNAL_PLAN_CONTRACT: dict[str, Any] = {
             },
         ],
     },
-    "responseBody": {
-        "fields": [
-            {"name": "accepted", "type": "boolean"},
-            {"name": "excelHash", "type": "string"},
-            {"name": "planId", "type": "string"},
-            {"name": "runId", "type": "string", "description": "Unique run identifier"},
-            {"name": "status", "type": "string"},
-            {"name": "callbackTransportMode", "type": "string", "description": "'http' if itemStatusUrl provided, 'fake' otherwise"},
-        ],
+	    "responseBody": {
+	        "fields": [
+	            {"name": "accepted", "type": "boolean"},
+	            {"name": "excelHash", "type": "string"},
+	            {"name": "planId", "type": "string"},
+	            {"name": "status", "type": "string"},
+	            {"name": "callbackTransportMode", "type": "string", "description": "'http' if itemStatusUrl provided, 'fake' otherwise"},
+	        ],
     },
 }
 
@@ -618,7 +624,10 @@ PLAN_QUERY_CONTRACT: dict[str, Any] = {
                 {"name": "failed", "type": "integer"},
                 {"name": "in_progress", "type": "integer"},
                 {"name": "pending", "type": "integer"},
+                {"name": "failureSummary", "type": "array"},
+                {"name": "outputRoot", "type": "string"},
             ]},
+            {"name": "outputRoot", "type": "string"},
         ],
     },
 }
@@ -646,6 +655,7 @@ PLAN_ITEMS_CONTRACT: dict[str, Any] = {
             {"name": "status", "type": "string"},
             {"name": "summary", "type": "object"},
             {"name": "items", "type": "array", "itemFields": [
+                {"name": "deviceGroup", "type": "string"},
                 {"name": "deviceName", "type": "string"},
                 {"name": "taskName", "type": "string"},
                 {"name": "status", "type": "string", "allowedValues": ["PENDING", "IN_PROGRESS", "SUCCESS", "FAILED"]},
@@ -665,10 +675,12 @@ PLAN_ITEMS_CONTRACT: dict[str, Any] = {
 
 RUN_QUERY_CONTRACT: dict[str, Any] = {
     "id": "run-query",
-    "name": "Run Status Query",
+    "name": "Run Status Query (Deprecated/Internal)",
     "method": "GET",
     "direction": "inbound",
     "path": "/executor/v1/runs/{run_id}",
+    "deprecated": True,
+    "debugOnly": True,
     "pathParams": [
         {"name": "run_id", "type": "string", "required": True},
     ],
@@ -696,7 +708,6 @@ CALLBACK_RETRY_CONTRACT: dict[str, Any] = {
         "fields": [
             {"name": "accepted", "type": "boolean"},
             {"name": "planId", "type": "string | integer"},
-            {"name": "runId", "type": "string"},
             {"name": "attempted", "type": "integer"},
             {"name": "sent", "type": "integer"},
             {"name": "failed", "type": "integer"},

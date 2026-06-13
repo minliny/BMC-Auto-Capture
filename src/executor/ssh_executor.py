@@ -1,10 +1,10 @@
 """
 SSH/Telnet executor using Paramiko (pure Python socket — satisfies security policy).
 
-Two strategies:
-  - exec_command:    Linux OpenSSH / A3 devices. One channel per command, get_pty=False.
-  - interactive_shell: Huawei VRP / L1 / L2 devices. Single invoke_shell() channel,
-                       screen-length + all task commands share one transport session.
+Primary evidence strategies:
+  - terminal_session: Linux shell session with PTY, used for terminal-style evidence.
+  - interactive_shell: Huawei VRP / L1 / L2 shell with prompt and pagination handling.
+  - exec_command: Structured SSH command execution, available only by explicit config.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import paramiko
 
 from .base import AbstractExecutor
 from ..models.task_plan import TaskPlan
+from ..models.task import resolve_task_timeout_seconds
 from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
 from ..out.file_writer import write_text_file, write_log_file
@@ -31,6 +32,7 @@ from ..utils.path_safety import safe_filename, validate_template_for_path
 MAX_MORE_PAGES = 200
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024  # 10 MB output limit per command
 HCCN_MARKER_RE = re.compile(r'={10,}>\s*(\d+)')
+TERMINAL_SENTINEL_EXIT_RE_TEMPLATE = r"(?m)^%s:(\d+)[ \t]*$"
 VRP_PROMPT_RE = re.compile(
     r"(?m)(?:^|\r?\n)[<\[][^<>\[\]\r\n]{1,128}[>\]][ \t]*(?:\r?\n)?\Z"
 )
@@ -156,6 +158,10 @@ class SSHError(Exception):
     pass
 
 
+def _normalized_option(value) -> str:
+    return str(value or "").strip().lower().replace("-", "_")
+
+
 @dataclass(frozen=True)
 class SSHExecutionOptions:
     command_timeout: float
@@ -178,18 +184,21 @@ class SSHExecutor(AbstractExecutor):
         re.IGNORECASE,
     )
 
-    # Device groups that require interactive shell (Huawei VRP / proprietary)
-    INTERACTIVE_SHELL_GROUPS = frozenset({"L1", "L2"})
+    # Device groups that require VRP interactive shell semantics.
+    VRP_GROUPS = frozenset({"L1", "L2"})
+    INTERACTIVE_SHELL_GROUPS = VRP_GROUPS  # backward-compatible alias
 
     def __init__(self, connect_timeout: float = 15.0, command_timeout: float = 60.0, idle_timeout: float = 5.0):
         self.connect_timeout = connect_timeout
         self.command_timeout = command_timeout
         self.idle_timeout = idle_timeout
 
-    def _resolve_execution_options(self, task) -> SSHExecutionOptions:
-        task_timeout = float(getattr(task, "timeout_seconds", 0) or 0)
+    def _resolve_execution_options(self, task, device_group: str = "") -> SSHExecutionOptions:
+        task_timeout = resolve_task_timeout_seconds(
+            task, device_group, fallback=self.command_timeout,
+        )
         return SSHExecutionOptions(
-            command_timeout=task_timeout if task_timeout > 0 else self.command_timeout,
+            command_timeout=task_timeout,
             idle_timeout=self.idle_timeout,
             retry_count=max(0, int(getattr(task, "retry_count", 0) or 0)),
         )
@@ -198,24 +207,100 @@ class SSHExecutor(AbstractExecutor):
     # SSH strategy detection
     # ------------------------------------------------------------------
     def _get_ssh_strategy(self, device, task=None) -> str:
-        """Determine SSH strategy based on device group.
+        """Determine the SSH transport used for evidence capture.
 
-        L1 / L2 → interactive_shell (Huawei VRP / 灵衢)
-        Everything else → exec_command (Linux OpenSSH, Cisco, etc.)
+        User-facing model:
+          - ssh_profile=vrp   -> VRP interactive terminal
+          - ssh_profile=linux -> Linux terminal-style evidence
+
+        Internal transports:
+          - interactive_shell -> VRP prompt/pagination handling
+          - terminal_session  -> Linux PTY terminal transcript
+          - exec_command      -> structured command mode, explicit opt-in only
         """
         group = (device.device_group or "").upper().strip()
-        if (
-            group == "A3"
-            and task is not None
-            and getattr(task, "task_name", "") == "计算节点光模块信息查询测试"
-        ):
-            logger.info("SSH strategy: terminal_session (A3 optical module task)")
-            return "terminal_session"
-        if group in self.INTERACTIVE_SHELL_GROUPS:
-            logger.info("SSH strategy: interactive_shell (group=%s)", group)
+        profile = self._resolve_ssh_profile(device, task)
+        evidence_mode = self._resolve_ssh_evidence_mode(task, group)
+        explicit_transport = self._resolve_ssh_transport(task, group)
+
+        if explicit_transport:
+            logger.info(
+                "SSH strategy: %s (explicit transport, group=%s, profile=%s, evidence_mode=%s)",
+                explicit_transport, group, profile, evidence_mode,
+            )
+            return explicit_transport
+
+        if profile == "vrp":
+            logger.info(
+                "SSH strategy: interactive_shell (profile=vrp, group=%s, evidence_mode=%s)",
+                group, evidence_mode,
+            )
             return "interactive_shell"
-        logger.info("SSH strategy: exec_command (group=%s)", group)
-        return "exec_command"
+
+        if evidence_mode == "structured":
+            logger.info("SSH strategy: exec_command (profile=%s, group=%s)", profile, group)
+            return "exec_command"
+
+        logger.info(
+            "SSH strategy: terminal_session (profile=linux, group=%s, evidence_mode=%s)",
+            group, evidence_mode,
+        )
+        return "terminal_session"
+
+    def _resolve_ssh_profile(self, device, task=None) -> str:
+        group = (getattr(device, "device_group", "") or "").upper().strip()
+        profile = self._task_group_option(task, group, "ssh_profile", "ssh_type")
+        profile = _normalized_option(profile)
+        if profile in ("ssh_vrp", "vrp"):
+            return "vrp"
+        if profile in ("ssh_linux", "linux", "ssh", "generic"):
+            return "linux"
+        if group in self.VRP_GROUPS:
+            return "vrp"
+        return "linux"
+
+    def _resolve_ssh_evidence_mode(self, task=None, group: str = "") -> str:
+        mode = _normalized_option(self._task_group_option(task, group, "evidence_mode", "ssh_evidence_mode"))
+        if mode in ("structured", "exec", "exec_command", "command"):
+            return "structured"
+        return "terminal"
+
+    def _resolve_ssh_transport(self, task=None, group: str = "") -> str:
+        value = _normalized_option(
+            self._task_group_option(
+                task, group, "ssh_transport", "ssh_strategy", "transport",
+            )
+        )
+        if not value:
+            return ""
+        if value in ("exec", "exec_command", "structured", "command"):
+            return "exec_command"
+        if value in ("vrp", "interactive", "interactive_shell"):
+            return "interactive_shell"
+        if value in ("terminal", "terminal_session", "pty", "linux_terminal"):
+            return "terminal_session"
+        logger.warning("Unknown SSH transport option %r; falling back to profile", value)
+        return ""
+
+    def _task_group_option(self, task, group: str, *names: str):
+        if task is None:
+            return ""
+        tdef = getattr(task, "_task_def", None) or {}
+        group_key = (group or "").upper().strip()
+        for name in names:
+            per_group_key = f"per_group_{name}"
+            per_group = tdef.get(per_group_key)
+            if isinstance(per_group, dict) and group_key:
+                if group_key in per_group:
+                    return per_group[group_key]
+                lower_map = {str(k).upper().strip(): v for k, v in per_group.items()}
+                if group_key in lower_map:
+                    return lower_map[group_key]
+            if name in tdef:
+                return tdef[name]
+            if hasattr(task, name):
+                return getattr(task, name)
+        return ""
 
     # ------------------------------------------------------------------
     # Main execute entry point
@@ -313,7 +398,7 @@ class SSHExecutor(AbstractExecutor):
         has_timeout = False
         failure_reasons: list[str] = []
 
-        options = self._resolve_execution_options(task)
+        options = self._resolve_execution_options(task, dg)
 
         try:
             client = paramiko.SSHClient()
@@ -331,8 +416,12 @@ class SSHExecutor(AbstractExecutor):
             )
 
             strategy = self._get_ssh_strategy(device, task)
+            ssh_profile = self._resolve_ssh_profile(device, task)
+            ssh_evidence_mode = self._resolve_ssh_evidence_mode(task, dg)
 
             transcript_meta = {
+                "ssh_profile": ssh_profile,
+                "ssh_evidence_mode": ssh_evidence_mode,
                 "ssh_strategy": strategy,
                 "input_echo_available": strategy in ("interactive_shell", "terminal_session"),
                 "prompt_preserved": strategy in ("interactive_shell", "terminal_session"),
@@ -714,12 +803,21 @@ class SSHExecutor(AbstractExecutor):
         all_output.append(banner)
 
         for step_index, (cmd_name, cmd) in enumerate(commands):
-            channel.send(cmd + "\n")
+            sentinel = self._make_terminal_sentinel(step_index)
+            stop_pattern = self._terminal_sentinel_pattern(sentinel)
+            channel.send(self._append_terminal_sentinel(cmd, sentinel))
             output, meta = self._read_terminal_until_idle(
                 channel,
                 timeout=options.command_timeout,
                 idle_timeout=options.idle_timeout,
+                stop_pattern=stop_pattern,
             )
+            exit_code = self._extract_terminal_sentinel_exit_code(output, sentinel)
+            output = self._strip_terminal_sentinel(output, sentinel)
+            meta["sentinel_detected"] = exit_code is not None
+            meta["exit_code_available"] = exit_code is not None
+            if exit_code is not None:
+                meta["exit_code"] = exit_code
             # Some test doubles/devices do not echo input despite PTY. Preserve
             # the submitted command as explicit terminal evidence in that case.
             if cmd not in output:
@@ -743,6 +841,11 @@ class SSHExecutor(AbstractExecutor):
                 reason = f"terminal output matched fail pattern: {output[:160]}"
                 failure_reasons.append(reason)
                 status = "FAILED"
+            elif exit_code not in (None, 0):
+                has_failure = True
+                reason = f"命令退出码非0: {exit_code} ({cmd[:50]}...)"
+                failure_reasons.append(reason)
+                status = "FAILED"
             else:
                 status = "SUCCESS"
             step_results.append(StepResult(
@@ -758,9 +861,34 @@ class SSHExecutor(AbstractExecutor):
             pass
         return all_output, has_failure, has_timeout, failure_reasons, cmd_outputs, step_results
 
+    def _make_terminal_sentinel(self, step_index: int) -> str:
+        return f"__BMC_AUTO_CAPTURE_DONE_{os.getpid()}_{int(time.time() * 1000000)}_{step_index}__"
+
+    def _append_terminal_sentinel(self, cmd: str, sentinel: str) -> str:
+        return f"{cmd}\nprintf '\\n{sentinel}:%s\\n' \"$?\"\n"
+
+    def _terminal_sentinel_pattern(self, sentinel: str):
+        return re.compile(TERMINAL_SENTINEL_EXIT_RE_TEMPLATE % re.escape(sentinel))
+
+    def _extract_terminal_sentinel_exit_code(self, output: str, sentinel: str) -> int | None:
+        normalised = output.replace("\r\n", "\n").replace("\r", "\n")
+        match = self._terminal_sentinel_pattern(sentinel).search(normalised)
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
+    def _strip_terminal_sentinel(self, output: str, sentinel: str) -> str:
+        lines = output.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        kept = [line for line in lines if sentinel not in line]
+        return "\n".join(kept)
+
     def _read_terminal_until_idle(
         self, channel, timeout: float, idle_timeout: float,
         max_output_bytes: int = MAX_OUTPUT_BYTES,
+        stop_pattern=None,
     ) -> tuple[str, dict]:
         started_at = time.time()
         deadline = started_at + timeout
@@ -792,6 +920,11 @@ class SSHExecutor(AbstractExecutor):
                     markers = HCCN_MARKER_RE.findall(text_so_far)
                     if markers:
                         last_marker = int(markers[-1])
+                    if stop_pattern is not None:
+                        normalised_text = text_so_far.replace("\r\n", "\n").replace("\r", "\n")
+                        if stop_pattern.search(normalised_text):
+                            timeout_reason = "sentinel_detected"
+                            break
                 except Exception:
                     pass
 
@@ -825,6 +958,7 @@ class SSHExecutor(AbstractExecutor):
             "duration_seconds": round(finished_at - started_at, 3),
             "hard_timeout_hit": finished_at >= deadline,
             "idle_timeout_hit": bool(chunks) and finished_at < deadline and timeout_reason == "idle_timeout",
+            "sentinel_detected": timeout_reason == "sentinel_detected",
             "output_truncated": output_truncated,
             "max_output_bytes": max_output_bytes,
             "last_non_empty_line": last_non_empty_line,
@@ -1619,6 +1753,8 @@ class SSHExecutor(AbstractExecutor):
             f"Duration: {result.duration_seconds:.1f}s",
         ]
         if transcript_meta:
+            lines.append(f"ssh_profile={transcript_meta.get('ssh_profile', 'N/A')}")
+            lines.append(f"ssh_evidence_mode={transcript_meta.get('ssh_evidence_mode', 'N/A')}")
             lines.append(f"ssh_strategy={transcript_meta.get('ssh_strategy', 'N/A')}")
             lines.append(f"input_echo_available={transcript_meta.get('input_echo_available', False)}")
             lines.append(f"raw_transcript_preserved=true")

@@ -454,8 +454,8 @@ class TestCallbackOutboxSensitiveRedaction:
         assert "my-api-secret-999" not in redacted
         assert "***REDACTED***" in redacted
 
-    def test_callback_body_still_6_fields(self):
-        """to_callback_body() must still return exactly 6 fields (no metadata leak)."""
+    def test_callback_body_public_fields(self):
+        """to_callback_body() must return public callback fields without metadata leak."""
         from src.callback_outbox import CallbackOutboxItem
 
         item = CallbackOutboxItem(
@@ -463,7 +463,10 @@ class TestCallbackOutboxSensitiveRedaction:
             status="SUCCESS", callback_url="http://example.com?token=abc",
         )
         body = item.to_callback_body()
-        assert set(body.keys()) == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage"}
+        assert set(body.keys()) == {
+            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "updater", "errorMessage", "startedAt", "finishedAt",
+        }
         # The token is redacted in outbox storage but NOT present in callback body
         assert "token" not in str(body.values())
 
@@ -583,7 +586,10 @@ class TestLegacyCallbackBackdoor:
         assert len(transport.calls) == 1
         payload = transport.calls[0]["payload"]
         assert "excelHash" not in payload, f"excelHash leaked: {payload}"
-        assert set(payload.keys()) == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}, \
+        assert set(payload.keys()) == {
+            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "updater", "errorMessage", "startedAt", "finishedAt",
+        }, \
             f"Payload has extra fields: {payload}"
 
     def test_send_excel_hash_none_no_excel_hash(self):
@@ -602,21 +608,24 @@ class TestLegacyCallbackBackdoor:
         payload = transport.calls[0]["payload"]
         assert "excelHash" not in payload
 
-    def test_send_single_body_8_fields(self):
-        """send_single() body must contain exactly 8 fields."""
+    def test_send_single_body_public_fields(self):
+        """send_single() body must contain exactly the public item fields."""
         from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, FakeCallbackTransport
 
         transport = FakeCallbackTransport()
         client = PlanItemStatusCallbackClient(transport)
 
         client.send_single("http://example.com/cb", {
-            "planId": "1", "deviceName": "d1", "taskName": "t1",
+            "planId": "1", "deviceGroup": "g1", "deviceName": "d1", "taskName": "t1",
             "status": "SUCCESS", "updater": "system", "errorMessage": None,
             "startedAt": None, "finishedAt": None,
         })
 
         payload = transport.calls[0]["payload"]
-        assert set(payload.keys()) == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
+        assert set(payload.keys()) == {
+            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "updater", "errorMessage", "startedAt", "finishedAt",
+        }
 
     def test_send_single_rejects_execution_status_value(self):
         """Execution-domain statuses must never cross the callback boundary."""
@@ -633,12 +642,15 @@ class TestLegacyCallbackBackdoor:
 
         assert transport.calls == []
 
-    def test_build_callback_item_8_fields(self):
-        """build_callback_item() must return exactly 8 fields."""
+    def test_build_callback_item_public_fields(self):
+        """build_callback_item() must return exactly the public item fields."""
         from src.plan_item_status_callback_client import build_callback_item
 
         item = build_callback_item("1", "d1", "t1", "SUCCESS")
-        assert set(item.keys()) == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
+        assert set(item.keys()) == {
+            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "updater", "errorMessage", "startedAt", "finishedAt",
+        }
 
     def test_rule_context_resolve_path_stays_under_output_root(self, tmp_path):
         """Rule action filenames cannot traverse outside the evidence root."""
@@ -647,7 +659,7 @@ class TestLegacyCallbackBackdoor:
         with pytest.raises(ValueError, match="Unsafe path component"):
             RuleContext(output_dir=str(tmp_path)).resolve_path("../../outside.html")
 
-    def test_send_batch_items_exactly_8_fields_each(self):
+    def test_send_batch_items_public_fields_each(self):
         """send_batch() items must not contain excelHash."""
         from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, FakeCallbackTransport
 
@@ -655,7 +667,7 @@ class TestLegacyCallbackBackdoor:
         client = PlanItemStatusCallbackClient(transport)
 
         items = [
-            {"planId": "1", "deviceName": "d1", "taskName": "t1",
+            {"planId": "1", "deviceGroup": "g1", "deviceName": "d1", "taskName": "t1",
              "status": "SUCCESS", "updater": "system", "errorMessage": None,
              "startedAt": None, "finishedAt": None},
         ]
@@ -663,7 +675,10 @@ class TestLegacyCallbackBackdoor:
 
         payload = transport.calls[0]["payload"]
         for item in payload["items"]:
-            assert set(item.keys()) == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
+            assert set(item.keys()) == {
+                "planId", "deviceGroup", "deviceName", "taskName", "status",
+                "updater", "errorMessage", "startedAt", "finishedAt",
+            }
 
 
 # ============================================================================

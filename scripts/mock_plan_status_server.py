@@ -13,7 +13,11 @@ class Store:
 
     def add(self, payload: dict):
         with self._lock:
-            self._items.append({"received_at": time.time(), "payload": dict(payload)})
+            self._items.append({"received_at": time.time(), "type": "item", "payload": dict(payload)})
+
+    def add_summary(self, payload: dict):
+        with self._lock:
+            self._items.append({"received_at": time.time(), "type": "summary", "payload": dict(payload)})
 
     def list_all(self) -> list[dict]:
         with self._lock:
@@ -23,10 +27,14 @@ class Store:
         with self._lock:
             s, f = 0, 0
             for it in self._items:
+                if it.get("type") != "item":
+                    continue
                 st = it["payload"].get("status", "")
                 if st == "SUCCESS": s += 1
                 elif st == "FAILED": f += 1
-            return {"total": len(self._items), "SUCCESS": s, "FAILED": f}
+            item_total = sum(1 for it in self._items if it.get("type") == "item")
+            summary_total = sum(1 for it in self._items if it.get("type") == "summary")
+            return {"total": item_total, "SUCCESS": s, "FAILED": f, "summaryCallbacks": summary_total}
 
 
 _store = Store()
@@ -37,13 +45,34 @@ class Handler(BaseHTTPRequestHandler):
         cl = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(cl).decode("utf-8", errors="replace") if cl > 0 else "{}"
         payload = json.loads(body)
-        _store.add(payload)
-        pid = payload.get("planId", "?")
-        dn = payload.get("deviceName", "?")
-        tn = payload.get("taskName", "?")
-        st = payload.get("status", "?")
-        print(f"[CALLBACK] planId={pid} device={dn} task={tn} status={st}")
-        self._respond(200, {"ok": True})
+        count = 0
+        if isinstance(payload.get("items"), list):
+            for item in payload["items"]:
+                _store.add(item)
+                count += 1
+                print(
+                    f"[CALLBACK] planId={item.get('planId', '?')} "
+                    f"group={item.get('deviceGroup', '?')} device={item.get('deviceName', '?')} "
+                    f"task={item.get('taskName', '?')} status={item.get('status', '?')}"
+                )
+        elif "summary" in payload and not payload.get("taskName"):
+            _store.add_summary({"planId": payload.get("planId"), "summary": payload.get("summary", {})})
+            count = 1
+            print(f"[SUMMARY] planId={payload.get('planId', '?')}")
+        else:
+            _store.add(payload)
+            count = 1
+            pid = payload.get("planId", "?")
+            dg = payload.get("deviceGroup", "?")
+            dn = payload.get("deviceName", "?")
+            tn = payload.get("taskName", "?")
+            st = payload.get("status", "?")
+            print(f"[CALLBACK] planId={pid} group={dg} device={dn} task={tn} status={st}")
+        self._respond(200, {
+            "code": 0,
+            "message": "success",
+            "data": {"total": count, "success": count, "failed": 0, "errors": []},
+        })
 
     def do_GET(self):
         path = urlparse(self.path).path.strip("/")

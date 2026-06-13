@@ -82,11 +82,16 @@ class PlanCatalogPlanner:
 
         # Filter devices by match_group
         for device in enabled_devices:
-            device_group = getattr(device, "device_group", "") or ""
+            device_group = (getattr(device, "device_group", "") or "").strip().lower()
 
             for task in enabled_tasks:
                 match_group = getattr(task, "match_group", "") or ""
-                if match_group and device_group != match_group:
+                allowed_groups = [
+                    g.strip().lower()
+                    for g in match_group.split("/")
+                    if g.strip()
+                ]
+                if allowed_groups and device_group not in allowed_groups:
                     continue
 
                 planned = self._plan_task(device, task, plan_id, report, source_prefix="excel")
@@ -321,7 +326,9 @@ class PlanCatalogPlanner:
         exec_mode = nt.execution_mode
         source_ref = f"validation.json:network_tests[{idx}]"
 
-        lock_uri = f"ssh://{inband_ip}" if inband_ip else ""
+        lock_uri = self._derive_lock_uri(
+            task_type, exec_mode, "", inband_ip, device,
+        )
 
         if not inband_ip:
             report.errors.append(ValidationError(
@@ -354,7 +361,11 @@ class PlanCatalogPlanner:
             "image_name_template": "{device_name}_{task_name}_{timestamp}",
         }
 
-        resource_lock = {"lock_uri": lock_uri, "lock_exclusive": True, "lock_type": "SSH"}
+        resource_lock = {
+            "lock_uri": lock_uri,
+            "lock_exclusive": True,
+            "lock_type": _derive_ssh_type(device),
+        }
 
         return PlannedTask(
             task_id=task_id, plan_id=plan_id, task_no=task_no,
@@ -413,7 +424,7 @@ def _derive_ssh_type(device: Any) -> str:
     dg = (getattr(device, "device_group", "") or "").upper().strip()
     if dg in ("L1", "L2"):
         return "SSH_VRP"
-    return "SSH"
+    return "SSH_LINUX"
 
 
 def _make_secret_ref(prefix: str, device_name: str) -> str:

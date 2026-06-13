@@ -108,11 +108,18 @@ v0.1 只覆盖**一个执行端与一个服务端之间的最小任务闭环**�
   "output_dir_template": "{device_name}/{task_name}",
   "image_name_template": "{device_name}_{task_name}_{step}_{timestamp}",
   "timeout_seconds": 60,
+  "per_group_timeout_seconds": {
+    "A3": 900,
+    "L1": 60,
+    "L2": 60
+  },
   "retry_count": 2,
   "full_screenshot": false,
   "screenshot_mode": "auto"
 }
 ```
+
+`per_group_timeout_seconds` 为可选字段，用于同一任务覆盖多个设备分组时按分组覆盖 `timeout_seconds`。
 
 ### 2.4 Job
 

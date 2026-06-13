@@ -8,6 +8,7 @@ identical output. No more duplicated argparse definitions.
 from __future__ import annotations
 
 import argparse
+import sys
 
 
 _DESCRIPTION = "BMC Auto-Capture v0.2.4-RC5 — BMC/SSH 自动化测试证据采集平台"
@@ -50,6 +51,8 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     # --- Execution mode ---
     parser.add_argument("--mode", "-m", choices=["sequential", "full"], default="sequential",
                         help="Execution mode: sequential (one-by-one) or full (dynamic scheduler)")
+    parser.add_argument("--concurrency", type=int, default=None,
+                        help="Deprecated compatibility flag. Values >1 imply --mode full and map to both worker pools when explicit max worker flags are not set")
 
     # --- Worker pools ---
     parser.add_argument("--max-bmc-workers", type=int, default=None,
@@ -66,6 +69,8 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     # --- BMC timeout ---
     parser.add_argument("--bmc-page-timeout", type=float, default=None,
                         help="BMC page load/selector timeout in seconds (overrides YAML)")
+    parser.add_argument("--bmc-artifact-profile", choices=["full", "fast"], default=None,
+                        help="BMC artifact profile: full saves PNG/HTML/evidence/MHTML/state JSON; fast saves PNG/HTML only")
 
     # --- Preflight ---
     parser.add_argument("--preflight-only", action="store_true",
@@ -105,3 +110,36 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     # --- Verbose ---
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable debug-level logging")
+
+
+def mode_arg_was_explicit(argv: list[str] | None = None) -> bool:
+    """Return True when the caller explicitly supplied --mode/-m."""
+    args = sys.argv[1:] if argv is None else list(argv)
+    return any(
+        arg == "--mode"
+        or arg.startswith("--mode=")
+        or arg == "-m"
+        or (arg.startswith("-m") and not arg.startswith("--"))
+        for arg in args
+    )
+
+
+def resolve_execution_cli(args, argv: list[str] | None = None) -> tuple[str, int | None, int | None, int]:
+    """Resolve deprecated --concurrency into mode and worker overrides.
+
+    Returns (mode, max_bmc_workers, max_ssh_workers, legacy_concurrency).
+    """
+    legacy_concurrency = int(getattr(args, "concurrency", 0) or 0)
+    mode = getattr(args, "mode", None) or "sequential"
+    if legacy_concurrency > 1 and not mode_arg_was_explicit(argv):
+        mode = "full"
+
+    max_bmc_workers = getattr(args, "max_bmc_workers", None)
+    max_ssh_workers = getattr(args, "max_ssh_workers", None)
+    if legacy_concurrency > 1:
+        if max_bmc_workers is None:
+            max_bmc_workers = legacy_concurrency
+        if max_ssh_workers is None:
+            max_ssh_workers = legacy_concurrency
+
+    return mode, max_bmc_workers, max_ssh_workers, legacy_concurrency

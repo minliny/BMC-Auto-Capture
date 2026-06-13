@@ -152,15 +152,20 @@ RETRY_BACKOFF_BASE = 5.0  # seconds
 
 @dataclass
 class CallbackOutboxItem:
-    """One callback item in the outbox. Contains only 6 callback fields + delivery metadata."""
+    """One callback item in the outbox plus delivery metadata."""
 
-    # --- Callback body fields (exactly 6) ---
+    # --- Callback body fields ---
     plan_id: str
     device_name: str
     task_name: str
     status: str
+    device_group: str = ""
     updater: str = "downstream-system"
     error_message: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    payload_type: str = "item"  # "item" | "summary"
+    summary: dict[str, Any] | None = None
 
     # --- Delivery metadata (NEVER sent to server) ---
     outbox_id: str = ""
@@ -180,15 +185,24 @@ class CallbackOutboxItem:
             self.created_at = time.time()
 
     def to_callback_body(self) -> dict[str, Any]:
-        """Return exactly the 6 allowed callback fields. No delivery metadata leaks."""
-        return {
+        """Return the server-facing callback fields. No delivery metadata leaks."""
+        if self.payload_type == "summary":
+            return {
+                "planId": str(self.plan_id),
+                "summary": dict(self.summary or {}),
+            }
+        body = {
             "planId": str(self.plan_id),
+            "deviceGroup": self.device_group,
             "deviceName": self.device_name,
             "taskName": self.task_name,
             "status": self.status,
             "updater": self.updater,
             "errorMessage": _redact_sensitive(self.error_message) if self.error_message else None,
+            "startedAt": self.started_at,
+            "finishedAt": self.finished_at,
         }
+        return body
 
     def to_outbox_dict(self) -> dict[str, Any]:
         """Full outbox record for persistence (delivery metadata included).
@@ -197,14 +211,17 @@ class CallbackOutboxItem:
         redacted from callbackUrl, errorMessage, and lastErrorMessage before
         being written to the jsonl file.
         """
-        return {
+        record = {
             "outboxId": self.outbox_id,
             "planId": str(self.plan_id),
+            "deviceGroup": self.device_group,
             "deviceName": self.device_name,
             "taskName": self.task_name,
             "status": self.status,
             "updater": self.updater,
             "errorMessage": _redact_sensitive(self.error_message) if self.error_message else None,
+            "startedAt": self.started_at,
+            "finishedAt": self.finished_at,
             "callbackUrl": _redact_sensitive(self.callback_url),
             "deliveryStatus": self.delivery_status,
             "attemptCount": self.attempt_count,
@@ -214,16 +231,25 @@ class CallbackOutboxItem:
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
+        if self.payload_type != "item":
+            record["payloadType"] = self.payload_type
+            record["summary"] = dict(self.summary or {})
+        return record
 
     @classmethod
     def from_outbox_dict(cls, d: dict[str, Any]) -> CallbackOutboxItem:
         return cls(
             plan_id=str(d.get("planId", "")),
+            device_group=str(d.get("deviceGroup", "")),
             device_name=str(d.get("deviceName", "")),
             task_name=str(d.get("taskName", "")),
             status=str(d.get("status", "")),
             updater=str(d.get("updater", "downstream-system")),
             error_message=d.get("errorMessage"),
+            started_at=d.get("startedAt"),
+            finished_at=d.get("finishedAt"),
+            payload_type=str(d.get("payloadType", "item") or "item"),
+            summary=d.get("summary") if isinstance(d.get("summary"), dict) else None,
             outbox_id=str(d.get("outboxId", "")),
             callback_url=str(d.get("callbackUrl", "")),
             delivery_status=str(d.get("deliveryStatus", PENDING)),
@@ -490,14 +516,38 @@ def build_outbox_item_from_callback_body(
     status: str, updater: str = "downstream-system",
     error_message: str | None = None,
     callback_url: str = "",
+    device_group: str = "",
+    started_at: str | None = None,
+    finished_at: str | None = None,
 ) -> CallbackOutboxItem:
-    """Factory: create a CallbackOutboxItem from the 6 callback fields."""
+    """Factory: create a CallbackOutboxItem from callback fields."""
     return CallbackOutboxItem(
         plan_id=plan_id,
+        device_group=device_group,
         device_name=device_name,
         task_name=task_name,
         status=status,
         updater=updater,
         error_message=error_message,
         callback_url=callback_url,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+
+
+def build_outbox_summary_from_callback_body(
+    plan_id: str,
+    summary: dict[str, Any],
+    callback_url: str = "",
+) -> CallbackOutboxItem:
+    """Factory: create a final-summary callback outbox record."""
+    return CallbackOutboxItem(
+        plan_id=plan_id,
+        device_group="",
+        device_name="",
+        task_name="",
+        status="SUMMARY",
+        callback_url=callback_url,
+        payload_type="summary",
+        summary=dict(summary),
     )

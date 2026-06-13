@@ -9,6 +9,7 @@ from src.app import App
 from src.executor.bmc_executor import BMCExecutor
 from src.executor.ssh_executor import SSHExecutor
 from src.models.execution_result import ExecutionResult
+from src.models.task import resolve_task_timeout_seconds
 from src.out.collector import compute_summary
 
 
@@ -31,6 +32,21 @@ def test_ssh_timeout_options_are_task_scoped():
     assert executor._resolve_execution_options(long).command_timeout == 900
     assert executor._resolve_execution_options(fallback).command_timeout == 60
     assert executor.command_timeout == 60
+
+
+def test_ssh_timeout_options_can_be_overridden_by_device_group():
+    executor = SSHExecutor(command_timeout=60, idle_timeout=5)
+    task = _Task()
+    task.timeout_seconds = 900
+    object.__setattr__(task, "_per_group_timeout_seconds", {"A3": 900, "L1": 60, "L2": "45"})
+
+    assert resolve_task_timeout_seconds(task, "A3", fallback=60) == 900
+    assert resolve_task_timeout_seconds(task, "L1", fallback=60) == 60
+    assert resolve_task_timeout_seconds(task, "L2", fallback=60) == 45
+    assert resolve_task_timeout_seconds(task, "UNKNOWN", fallback=60) == 900
+    assert executor._resolve_execution_options(task, "A3").command_timeout == 900
+    assert executor._resolve_execution_options(task, "L1").command_timeout == 60
+    assert executor._resolve_execution_options(task, "L2").command_timeout == 45
 
 
 def test_ssh_timeout_options_do_not_cross_contaminate():

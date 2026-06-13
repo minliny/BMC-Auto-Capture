@@ -43,6 +43,7 @@ class AppConfig:
     ssh_idle_timeout: float = 5.0
     bmc_page_timeout: float = 60.0
     popup_dismiss_selector_timeout: int = 1000
+    bmc_artifact_profile: str = "full"
 
     # --- Preflight ---
     preflight_enabled: bool = True
@@ -65,6 +66,7 @@ class AppConfig:
         ssh_command_timeout: float | None = None,
         ssh_idle_timeout: float | None = None,
         bmc_page_timeout: float | None = None,
+        bmc_artifact_profile: str | None = None,
         no_preflight: bool = False,
     ) -> list[str]:
         """Apply CLI overrides on top of YAML config.
@@ -76,9 +78,11 @@ class AppConfig:
             changes.append(f"output_root = {output_root} (CLI)")
         if max_bmc_workers is not None:
             self.max_bmc_workers = max_bmc_workers
+            self.base_bmc_workers = min(self.base_bmc_workers, self.max_bmc_workers)
             changes.append(f"max_bmc_workers = {max_bmc_workers} (CLI)")
         if max_ssh_workers is not None:
             self.max_ssh_workers = max_ssh_workers
+            self.base_ssh_workers = min(self.base_ssh_workers, self.max_ssh_workers)
             changes.append(f"max_ssh_workers = {max_ssh_workers} (CLI)")
         if ssh_command_timeout is not None:
             self.ssh_command_timeout = ssh_command_timeout
@@ -89,6 +93,9 @@ class AppConfig:
         if bmc_page_timeout is not None:
             self.bmc_page_timeout = bmc_page_timeout
             changes.append(f"bmc_page_timeout = {bmc_page_timeout} (CLI)")
+        if bmc_artifact_profile is not None:
+            self.bmc_artifact_profile = _normalise_bmc_artifact_profile(bmc_artifact_profile)
+            changes.append(f"bmc_artifact_profile = {self.bmc_artifact_profile} (CLI)")
         if no_preflight:
             self.preflight_enabled = False
             changes.append("preflight_enabled = false (CLI --no-preflight)")
@@ -122,6 +129,7 @@ class AppConfig:
             ssh_idle_timeout=float(data.get("ssh_idle_timeout", 5.0)),
             bmc_page_timeout=float(data.get("bmc_page_timeout", 60.0)),
             popup_dismiss_selector_timeout=int(data.get("popup_dismiss_selector_timeout", 1000)),
+            bmc_artifact_profile=_normalise_bmc_artifact_profile(data.get("bmc_artifact_profile", "full")),
             preflight_enabled=bool(data.get("preflight_enabled", True)),
             route_guard_enabled=bool(data.get("route_guard_enabled", True)),
             route_guard_check_interval=float(data.get("route_guard_check_interval", 30.0)),
@@ -129,3 +137,10 @@ class AppConfig:
             api_host=str(data.get("api_host", "0.0.0.0")),
             api_port=int(data.get("api_port", 8080)),
         )
+
+
+def _normalise_bmc_artifact_profile(value: object) -> str:
+    raw = str(value or "full").strip().lower()
+    if raw in ("fast", "light", "lite", "minimal", "basic"):
+        return "fast"
+    return "full"

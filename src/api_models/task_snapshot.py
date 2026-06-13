@@ -67,9 +67,14 @@ class TaskSnapshot:
     retry_count: int = 0
     full_screenshot: bool = False
     screenshot_mode: str = "auto"
+    ssh_profile: str = ""  # linux | vrp
+    ssh_evidence_mode: str = ""  # terminal | structured
+    ssh_transport: str = ""  # optional internal override
+    artifact_profile: str = ""  # full | fast, BMC only
+    per_group_timeout_seconds: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "task_id": self.task_id,
             "task_name": self.task_name,
             "task_type": self.task_type,
@@ -85,6 +90,17 @@ class TaskSnapshot:
             "full_screenshot": self.full_screenshot,
             "screenshot_mode": self.screenshot_mode,
         }
+        if self.ssh_profile:
+            data["ssh_profile"] = self.ssh_profile
+        if self.ssh_evidence_mode:
+            data["ssh_evidence_mode"] = self.ssh_evidence_mode
+        if self.ssh_transport:
+            data["ssh_transport"] = self.ssh_transport
+        if self.artifact_profile:
+            data["artifact_profile"] = self.artifact_profile
+        if self.per_group_timeout_seconds:
+            data["per_group_timeout_seconds"] = dict(self.per_group_timeout_seconds)
+        return data
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "TaskSnapshot":
@@ -104,4 +120,9 @@ class TaskSnapshot:
             retry_count=int(d.get("retry_count", 0)),
             full_screenshot=bool(d.get("full_screenshot", False)),
             screenshot_mode=d.get("screenshot_mode", "auto"),
+            ssh_profile=d.get("ssh_profile", ""),
+            ssh_evidence_mode=d.get("ssh_evidence_mode", ""),
+            ssh_transport=d.get("ssh_transport", ""),
+            artifact_profile=d.get("artifact_profile", ""),
+            per_group_timeout_seconds=dict(d.get("per_group_timeout_seconds", {}) or {}),
         )

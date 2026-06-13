@@ -27,7 +27,8 @@ def svc():
 @pytest.fixture
 def prs():
     from src.plan_run_service import PlanRunService
-    return PlanRunService()
+    from src.plan_item_status_callback_client import FakeCallbackTransport
+    return PlanRunService(callback_transport=FakeCallbackTransport())
 
 
 @pytest.fixture
@@ -109,7 +110,7 @@ class TestStartExternalPlan:
         assert data["accepted"] is True
         assert data["excelHash"] == excel_hash
         assert str(data["planId"]) == "1"
-        assert "runId" in data, "External API must include runId"
+        assert "runId" not in data, "External API must not expose runId"
         assert data["status"] == "ACCEPTED"
 
     def test_missing_excel_hash(self, client):
@@ -155,7 +156,7 @@ class TestStartExternalPlan:
             ids.add(str(resp.json()["planId"]))
         assert ids == {"1", "2", "3"}
 
-    def test_plan_id_includes_run_id(self, client):
+    def test_plan_id_does_not_include_run_id(self, client):
         upload = _set_excel(client)
         resp = client.post("/executor/v1/plans", json={
             "excelHash": upload["excelHash"],
@@ -163,7 +164,7 @@ class TestStartExternalPlan:
             "runner": "fake",
         })
         data = resp.json()
-        assert "runId" in data
+        assert "runId" not in data
         assert "jobId" not in data
         assert "job_id" not in str(data)
 
@@ -195,7 +196,7 @@ class TestQueryExternalPlan:
         assert data["status"] in ("ACCEPTED", "RUNNING", "COMPLETED", "FAILED")
         assert "summary" in data
         assert data["summary"]["total"] > 0
-        assert "runId" in data
+        assert "runId" not in data
         assert "jobId" not in data
         assert "job_id" not in str(data)
 
@@ -260,7 +261,7 @@ class TestQueryExternalPlanItems:
         assert data["planId"] == plan_id
         assert data["status"] == "COMPLETED"
         assert len(data["items"]) == data["summary"]["total"]
-        assert "runId" in data
+        assert "runId" not in data
         assert "jobId" not in data
 
     def test_items_status_enum(self, client):
@@ -404,7 +405,7 @@ class TestRegression:
         data = resp.json()
         assert data["accepted"] is True
         assert data["planId"] == 1
-        assert "runId" in data
+        assert "runId" not in data
 
     def test_direct_dispatch_still_works(self, client):
         payload = {

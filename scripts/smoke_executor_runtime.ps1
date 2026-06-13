@@ -154,7 +154,6 @@ try {
             "/executor/v1/plans/{plan_id}:run",
             "/executor/v1/plans/{plan_id}",
             "/executor/v1/plans/{plan_id}/items",
-            "/executor/v1/plans/{plan_id}/runs/{run_id}",
             "/health", "/version", "/network/ping",
             "/debug/plan-item-statuses"
         )
@@ -216,8 +215,11 @@ try {
         runner = "fake"
     }
     if ($runResp.accepted -eq $true) {
-        $runId = $runResp.runId
-        Write-Pass "Plan run accepted: runId=$runId"
+        if ($runResp.PSObject.Properties.Name -contains "runId") {
+            Write-Fail "Plan run response must NOT contain runId"
+            exit 1
+        }
+        Write-Pass "Plan run accepted: planId=$($runResp.planId)"
     } else {
         Write-Fail "Plan run NOT accepted: $($runResp | ConvertTo-Json -Compress)"
         exit 1
@@ -228,11 +230,11 @@ try {
     # ======================================================================
     Write-Step "9. Waiting for run to complete"
     Start-Sleep -Seconds 3  # Fake runner is fast, but give it time
-    $runStatus = Invoke-Api -Method GET -Path "/executor/v1/plans/1/runs/$runId"
+    $runStatus = Invoke-Api -Method GET -Path "/executor/v1/plans/1"
     if ($null -eq $runStatus) {
-        Write-Fail "Could not get run status for runId=$runId"
+        Write-Fail "Could not get plan status for planId=1"
     } else {
-        Write-Pass "Run status: $($runStatus.status)"
+        Write-Pass "Plan status: $($runStatus.status)"
     }
 
     # ======================================================================
@@ -258,12 +260,12 @@ try {
             Write-Host "  [INFO] Callback counts: total=$total success=$success failed=$failed" -ForegroundColor Yellow
         }
 
-        # Verify each callback has exactly 6 fields
-        Write-Step "10b. Verifying callback payload has exactly 6 fields"
-        $requiredFields = @("planId", "deviceName", "taskName", "status", "updater", "errorMessage")
-        $forbiddenFields = @("job_id", "external_task_id", "executor_id", "duration_ms", "artifacts")
+        # Verify each item callback has the required planId-based fields.
+        Write-Step "10b. Verifying callback payload fields"
+        $requiredFields = @("planId", "deviceGroup", "deviceName", "taskName", "status", "updater", "errorMessage")
+        $forbiddenFields = @("runId", "job_id", "external_task_id", "executor_id", "duration_ms", "artifacts", "excelHash")
         $allFieldsOk = $true
-        foreach ($item in $cbResp.items) {
+        foreach ($item in @($cbResp.items | Where-Object { $_.type -eq "item" })) {
             $keys = $item.payload.PSObject.Properties.Name
             $missing = $requiredFields | Where-Object { $_ -notin $keys }
             $extra = $forbiddenFields | Where-Object { $_ -in $keys }
@@ -277,14 +279,15 @@ try {
             }
         }
         if ($allFieldsOk) {
-            Write-Pass "All callback payloads have exactly 6 required fields"
+            Write-Pass "All item callback payloads have required fields and no forbidden fields"
         }
 
-        # Verify total matches run summary total
-        if ($runStatus.summary.total -eq $total) {
-            Write-Pass "Run summary total ($($runStatus.summary.total)) matches callback count ($total)"
+        # Verify final item callbacks match plan summary total.
+        $finalCount = $success + $failed
+        if ($runStatus.summary.total -eq $finalCount) {
+            Write-Pass "Plan summary total ($($runStatus.summary.total)) matches final callback count ($finalCount)"
         } else {
-            Write-Fail "Run summary total ($($runStatus.summary.total)) does NOT match callback count ($total)"
+            Write-Fail "Plan summary total ($($runStatus.summary.total)) does NOT match final callback count ($finalCount)"
         }
     }
 
@@ -343,16 +346,16 @@ try {
                     }
                 }
 
-                # Verify debug callbacks for external plan include excelHash
+                # Verify external plan callbacks do not expose excelHash/runId.
                 $cbResp2 = Invoke-Api -Method GET -Path "/debug/plan-item-statuses"
-                $extCallbacks = @($cbResp2.items | Where-Object {
-                    $_.payload.PSObject.Properties.Name -contains "excelHash" -and
-                    $_.payload.excelHash -eq $excelHash
+                $badCallbacks = @($cbResp2.items | Where-Object {
+                    ($_.payload.PSObject.Properties.Name -contains "excelHash") -or
+                    ($_.payload.PSObject.Properties.Name -contains "runId")
                 })
-                if ($extCallbacks.Count -gt 0) {
-                    Write-Pass "External plan callbacks include excelHash ($($extCallbacks.Count) callbacks)"
+                if ($badCallbacks.Count -eq 0) {
+                    Write-Pass "External plan callbacks hide excelHash/runId"
                 } else {
-                    Write-Fail "No external plan callbacks found with excelHash"
+                    Write-Fail "External plan callbacks exposed forbidden fields"
                 }
             }
         }
@@ -393,7 +396,6 @@ try {
         Write-Host "  /executor/v1/plans/{plan_id}:run"
         Write-Host "  /executor/v1/plans/{plan_id}"
         Write-Host "  /executor/v1/plans/{plan_id}/items"
-        Write-Host "  /executor/v1/plans/{plan_id}/runs/{run_id}"
         Write-Host "  /debug/plan-item-statuses (built-in callback receiver)"
         exit 0
     }

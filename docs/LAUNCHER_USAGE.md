@@ -18,6 +18,8 @@ bmc-auto-capture/
 └── ...
 ```
 
+新增 SSH/BMC 任务时，请先阅读 [任务添加指南](TASK_ADDING_GUIDE.md)。
+
 ## 三、CMD 中文适配
 
 `启动.cmd` 会自动设置以下环境变量：
@@ -46,25 +48,31 @@ bmc-auto-capture/
 
 ```bash
 # 基本用法
-启动.cmd --excel 设备任务表.xlsx
+启动.bat --excel 设备任务表.xlsx
 
 # 指定输出目录
-启动.cmd --excel 设备任务表.xlsx --output my_output
+启动.bat --excel 设备任务表.xlsx --output my_output
 
-# 指定并发数
-启动.cmd --excel 设备任务表.xlsx --concurrency 3
+# 指定并发数（>1 会进入 full 动态调度，并同时映射 BMC/SSH worker）
+启动.bat --excel 设备任务表.xlsx --concurrency 3
+
+# 推荐显式写法
+runtime\bmc-engine.exe --app-dir app --excel 设备任务表.xlsx --mode full --max-bmc-workers 4 --max-ssh-workers 20
+
+# BMC 快速证据模式：只保存最终 PNG + HTML
+runtime\bmc-engine.exe --app-dir app --excel 设备任务表.xlsx --mode full --bmc-artifact-profile fast
 
 # 严格模式 (网络检测失败则中止)
-启动.cmd --excel 设备任务表.xlsx --strict
+启动.bat --excel 设备任务表.xlsx --strict
 
 # 仅预检查
-启动.cmd --excel 设备任务表.xlsx --precheck-only
+启动.bat --excel 设备任务表.xlsx --precheck-only
 
 # 跳过确认直接执行
-启动.cmd --excel 设备任务表.xlsx --yes
+启动.bat --excel 设备任务表.xlsx --yes
 
 # 显示帮助
-启动.cmd --help
+启动.bat --help
 ```
 
 ### 参数说明
@@ -73,7 +81,8 @@ bmc-auto-capture/
 |------|------|--------|
 | `--excel`, `-e` | Excel 文件路径 | 交互式输入 |
 | `--output`, `-o` | 输出目录 | `runtime/output/yyyyMMdd_HHmmss` |
-| `--concurrency`, `-c` | 并发数 | 1 |
+| `--concurrency`, `-c` | 兼容并发数；大于 1 时进入 full，并映射缺省的 BMC/SSH worker | 1 |
+| `--bmc-artifact-profile` | BMC 证据模式；`full` 保存完整证据，`fast` 只保存 PNG/HTML | `full` |
 | `--strict` | 严格模式 (网络失败中止) | False |
 | `--precheck-only` | 仅预检查，不执行 | False |
 | `--yes`, `-y` | 跳过确认直接执行 | False |

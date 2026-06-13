@@ -5,11 +5,9 @@
 ```
 1. POST /executor/v1/config/excel          -> 上传 Excel，得到 excelHash
 2. POST /executor/v1/plans                 -> 使用 excelHash + callback.planId 启动外部 plan
-3. POST callback.itemStatusUrl             -> executor 在所有 item 完成后发送状态回调
+3. POST callback.itemStatusUrl             -> executor 在 item 状态变化时立即发送状态回调
 4. GET  /executor/v1/plans/{planId}?excelHash=...
 5. GET  /executor/v1/plans/{planId}/items?excelHash=...
-6. GET  /executor/v1/runs/{runId}
-7. GET  /executor/v1/runs/{runId}/items
 ```
 
 兼容入口仍可使用：
@@ -60,11 +58,10 @@ Batch mode payload：
 ```json
 {
   "planId": "1",
-  "runId": "plan-1-run-...",
-  "summary": {"total": 2, "success": 2, "failed": 0, "in_progress": 0, "pending": 0},
   "items": [
     {
       "planId": "1",
+      "deviceGroup": "A3",
       "deviceName": "Switch-A",
       "taskName": "BMC login check",
       "status": "SUCCESS",
@@ -77,7 +74,26 @@ Batch mode payload：
 }
 ```
 
-Single mode sends the same 8 allowed item fields directly. Per-item payloads never include `excelHash`, `storedPath`, password, token, `runId`, job id, artifacts, or executor id. `runId` appears only in the batch wrapper and query responses.
+Single mode sends the same allowed item fields directly. Per-item payloads never include `excelHash`, `storedPath`, password, token, `runId`, job id, artifacts, executor id, or output directory.
+
+Plan 完成后发送批次总结 payload：
+
+```json
+{
+  "planId": "1",
+  "summary": {
+    "total": 2,
+    "success": 2,
+    "failed": 0,
+    "in_progress": 0,
+    "pending": 0,
+    "failureSummary": [],
+    "outputRoot": "executor_state/outputs/1/20260613T000000Z"
+  }
+}
+```
+
+`outputRoot` 只出现在批次总结中。任务状态更新包只表达任务状态，不携带单任务输出目录。
 
 ## Callback URL Policy
 
@@ -94,8 +110,6 @@ Loopback is allowed for local debug receiver.
 ```bash
 curl http://127.0.0.1:8080/executor/v1/plans/1
 curl http://127.0.0.1:8080/executor/v1/plans/1/items
-curl http://127.0.0.1:8080/executor/v1/runs/<runId>
-curl http://127.0.0.1:8080/executor/v1/runs/<runId>/items
 
 curl -X POST http://127.0.0.1:8080/executor/v1/plans/1/callbacks:retry \
   -H "Content-Type: application/json" \
@@ -103,3 +117,5 @@ curl -X POST http://127.0.0.1:8080/executor/v1/plans/1/callbacks:retry \
 ```
 
 Run/item query state is persisted under executor state storage and restored for querying after process restart. Interrupted in-flight runs are restored as interrupted query records; execution is not resumed automatically.
+
+`GET /executor/v1/runs/{runId}` and `GET /executor/v1/runs/{runId}/items` are internal/debug compatibility routes only. 调度端主链路按 `planId` 查询和归档。

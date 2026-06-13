@@ -335,10 +335,38 @@ class DynamicScheduler:
 
     def _adjust_pools(self, cpu: float, mem: float):
         scale = self._compute_scale(cpu, mem)
-        target_bmc = max(1, int(self._config.base_bmc_workers * scale))
-        target_ssh = max(1, int(self._config.base_ssh_workers * scale))
-        self._bmc_pool.resize(min(target_bmc, self._config.max_bmc_workers))
-        self._ssh_pool.resize(min(target_ssh, self._config.max_ssh_workers))
+        bmc_demand = self._endpoint_demand("BMC", self._bmc_pool)
+        ssh_demand = self._endpoint_demand("INBAND", self._ssh_pool)
+        target_bmc = self._compute_target_size(
+            self._config.base_bmc_workers, self._config.max_bmc_workers,
+            bmc_demand, scale,
+        )
+        target_ssh = self._compute_target_size(
+            self._config.base_ssh_workers, self._config.max_ssh_workers,
+            ssh_demand, scale,
+        )
+        self._bmc_pool.resize(target_bmc)
+        self._ssh_pool.resize(target_ssh)
+
+    def _endpoint_demand(self, ep_type: str, pool) -> int:
+        queued = 0
+        for q in self._endpoint_queues.values():
+            if not q:
+                continue
+            if q[0].endpoint_type == ep_type:
+                queued += 1
+        return len(pool._active_futures) + queued
+
+    @staticmethod
+    def _compute_target_size(base_workers: int, max_workers: int, demand: int, scale: float) -> int:
+        base_workers = max(1, int(base_workers))
+        max_workers = max(1, int(max_workers))
+        demand = max(0, int(demand))
+        if scale >= 1.0:
+            return min(max_workers, max(base_workers, demand))
+
+        resource_cap = max(1, int(max_workers * max(scale, 0.0)))
+        return min(max_workers, resource_cap, max(1, demand))
 
     def _compute_scale(self, cpu: float, mem: float) -> float:
         cfg = self._config
@@ -436,6 +464,7 @@ class DynamicScheduler:
                             output_root=self._config.output_root,
                             connect_timeout=self._config.tcp_connect_timeout,
                             page_timeout=self._config.bmc_page_timeout,
+                            artifact_profile=getattr(self._config, "bmc_artifact_profile", "full"),
                             on_plan_done=lambda plan, result: self._on_bmc_plan_in_group(plan, result),
                         )
                         return runner.run()
@@ -530,7 +559,8 @@ class DynamicScheduler:
         try:
             if plan.protocol == "BMC" and self._bm:
                 exec_ = BMCExecutor(self._bm, connect_timeout=self._config.tcp_connect_timeout,
-                             popup_timeout=self._config.popup_dismiss_selector_timeout)
+                             popup_timeout=self._config.popup_dismiss_selector_timeout,
+                             artifact_profile=getattr(self._config, "bmc_artifact_profile", "full"))
             elif plan.protocol == "SSH":
                 exec_ = SSHExecutor(
                     connect_timeout=self._config.tcp_connect_timeout,

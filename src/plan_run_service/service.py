@@ -1,6 +1,6 @@
 """
 PlanRunService — reads latest Excel, expands devices×tasks, executes with
-FakeRunner or RealRunnerAdapter, sends 8-field plan-item status callbacks.
+FakeRunner or RealRunnerAdapter, sends planId-keyed plan-item status callbacks.
 """
 
 from __future__ import annotations
@@ -87,6 +87,7 @@ class PlanRunItem:
     # Device/task raw refs for real runner conversion
     _device: Any = None
     _task: Any = None
+    _execution_result: Any = None
 
     def add_info_event(self, level: str, message: str):
         self.info_events.append({
@@ -108,6 +109,7 @@ class PlanRun:
     excel_hash: str = ""
     status: str = "ACCEPTED"
     runner_mode: str = "fake"
+    output_root: str = ""
     items: list[PlanRunItem] = field(default_factory=list)
     updater: str = "downstream-system"
     item_status_url: str = ""
@@ -118,13 +120,24 @@ class PlanRun:
     config_snapshot: RunConfigSnapshot | None = None
 
     @property
-    def summary(self) -> dict[str, int]:
+    def summary(self) -> dict[str, Any]:
+        failed_items = [
+            {
+                "deviceGroup": i.device_group,
+                "deviceName": i.device_name,
+                "taskName": i.task_name,
+                "errorMessage": redact_sensitive_text(i.error_message or "") if i.error_message else None,
+            }
+            for i in self.items if i.status == "FAILED"
+        ]
         return {
             "total": len(self.items),
             "success": sum(1 for i in self.items if i.status == "SUCCESS"),
             "failed": sum(1 for i in self.items if i.status == "FAILED"),
             "in_progress": sum(1 for i in self.items if i.status == "IN_PROGRESS"),
             "pending": sum(1 for i in self.items if i.status == "PENDING"),
+            "failureSummary": failed_items,
+            "outputRoot": self.output_root,
         }
 
     @property
@@ -281,6 +294,14 @@ class PlanRunService:
             return HttpCallbackTransport()
         return FakeCallbackTransport()
 
+    def _make_plan_output_root(self, plan_id: int | str) -> str:
+        """Create a stable per-plan output root for API-triggered execution."""
+        safe_plan_id = _safe_state_id(str(plan_id))
+        run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_root = self._state_root / "outputs" / safe_plan_id / run_ts
+        output_root.mkdir(parents=True, exist_ok=True)
+        return str(output_root)
+
     # ------------------------------------------------------------------
     # Latest Excel config
     # ------------------------------------------------------------------
@@ -387,10 +408,11 @@ class PlanRunService:
                 ))
 
         run_id = f"plan-{plan_id}-run-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        output_root = self._make_plan_output_root(plan_id)
 
         run = PlanRun(
             plan_id=plan_id, run_id=run_id, excel_hash=snapshot.excel_hash,
-            status="RUNNING", runner_mode=runner_mode,
+            status="RUNNING", runner_mode=runner_mode, output_root=output_root,
             items=items,
             updater=updater, item_status_url=item_status_url,
             callback_mode=callback_mode,
@@ -410,7 +432,7 @@ class PlanRunService:
         if item_status_url:
             transport_mode = "http" if isinstance(transport, HttpCallbackTransport) else "fake"
             logger.info(
-                "callback configured: url=%s mode=%s transport=%s planId=%s runId=%s itemCount=%d",
+                "callback configured: url=%s mode=%s transport=%s planId=%s internalRunId=%s itemCount=%d",
                 redact_url_for_log(item_status_url), callback_mode, transport_mode,
                 plan_id, run_id, len(items),
             )
@@ -422,7 +444,7 @@ class PlanRunService:
 
         return {
             "accepted": True, "excelHash": excel_hash,
-            "planId": plan_id, "runId": run_id, "status": "ACCEPTED",
+            "planId": plan_id, "status": "ACCEPTED",
         }
 
     def get_external_plan(self, plan_id: str, excel_hash: str) -> dict[str, Any] | None:
@@ -458,6 +480,7 @@ class PlanRunService:
 
     def _public_item(self, item: PlanRunItem) -> dict[str, Any]:
         return {
+            "deviceGroup": item.device_group,
             "deviceName": item.device_name,
             "taskName": item.task_name,
             "status": item.status,
@@ -470,10 +493,10 @@ class PlanRunService:
     def _public_plan(self, run: PlanRun, include_items: bool = False) -> dict[str, Any]:
         result = {
             "planId": run.plan_id,
-            "runId": run.run_id,
             "status": run.status,
             "summary": run.summary,
             "excelHash": run.excel_hash,
+            "outputRoot": run.output_root,
             "startedAt": _fmt_ts(run.started_at),
             "finishedAt": _fmt_ts(run.finished_at),
             "errorMessage": None,
@@ -503,6 +526,7 @@ class PlanRunService:
             "excelHash": run.excel_hash,
             "status": run.status,
             "runnerMode": run.runner_mode,
+            "outputRoot": run.output_root,
             "updater": run.updater,
             "callbackMode": run.callback_mode,
             "startedAt": run.started_at,
@@ -559,6 +583,7 @@ class PlanRunService:
             excel_hash=str(data.get("excelHash", "")),
             status=status or "UNKNOWN",
             runner_mode=str(data.get("runnerMode", "fake")),
+            output_root=str(data.get("outputRoot", "")),
             items=items,
             updater=str(data.get("updater", "downstream-system")),
             item_status_url="",
@@ -794,10 +819,11 @@ class PlanRunService:
                 ))
 
         run_id = f"plan-{plan_id}-run-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        output_root = self._make_plan_output_root(plan_id)
 
         run = PlanRun(
             plan_id=plan_id, run_id=run_id, status="RUNNING",
-            runner_mode=runner_mode,
+            runner_mode=runner_mode, output_root=output_root,
             items=items, updater=updater, item_status_url=item_status_url,
             callback_mode=callback_mode,
             started_at=time.time(),
@@ -817,7 +843,7 @@ class PlanRunService:
         if item_status_url:
             transport_mode = "http" if isinstance(transport, HttpCallbackTransport) else "fake"
             logger.info(
-                "callback configured: url=%s mode=%s transport=%s planId=%s runId=%s itemCount=%d",
+                "callback configured: url=%s mode=%s transport=%s planId=%s internalRunId=%s itemCount=%d",
                 redact_url_for_log(item_status_url), callback_mode, transport_mode,
                 plan_id, run_id, len(items),
             )
@@ -829,7 +855,6 @@ class PlanRunService:
 
         return {
             "accepted": True, "planId": plan_id,
-            "runId": run_id,
             "status": "ACCEPTED",
             "excelHash": snapshot.excel_hash,
             "message": "plan run accepted",
@@ -895,14 +920,15 @@ class PlanRunService:
         runner = None
         if is_real:
             from ..job_runner_adapter import RealRunnerAdapter
-            runner = RealRunnerAdapter()
+            runner = RealRunnerAdapter(output_root=run.output_root or "./output_api_direct")
 
-        # Execute each item (serial, same as before)
+        # Execute each item serially. Every status transition is reported.
         for item in run.items:
             item.status = "IN_PROGRESS"
             item.started_at = time.time()
             item.add_info_event("INFO", f"PlanItem started: device={item.device_name} task={item.task_name}")
             self._persist_run(run)
+            self._deliver_item_status(run, item, cb)
 
             # Lock
             if item.lock_uri:
@@ -912,6 +938,7 @@ class PlanRunService:
                     item.finished_at = time.time()
                     item.add_info_event("ERROR", f"Lock conflict: {item.lock_uri}")
                     self._persist_run(run)
+                    self._deliver_item_status(run, item, cb)
                     continue
 
             try:
@@ -929,134 +956,134 @@ class PlanRunService:
             else:
                 item.add_info_event("ERROR", f"PlanItem failed: status={item.status} error={item.error_message}")
             self._persist_run(run)
+            self._deliver_item_status(run, item, cb)
 
         run.finished_at = time.time()
-        self._persist_run(run)
-
-        # --- ISSUE-005: CallbackOutbox ---
-        # Write outbox + attempt delivery BEFORE marking run COMPLETED.
-        # Delivery failures NEVER change local plan/run status.
-        self._deliver_via_outbox(run, cb)
-
         run.status = "COMPLETED"
+        self._write_plan_result_reports(run)
         self._persist_run(run)
+        self._deliver_plan_summary(run, cb)
 
-    def _deliver_via_outbox(self, run: PlanRun, cb: PlanItemStatusCallbackClient):
-        """ISSUE-005: Write callback items to outbox, then attempt delivery.
-
-        Local plan/run status is never affected by callback outcome.
-        Callback body planId comes from run.plan_id (single business plan ID).
-        Batch payload includes runId, summary, and per-item startedAt/finishedAt.
-        """
-        from ..callback_outbox import (
-            CallbackOutbox, CallbackOutboxItem,
-            build_outbox_item_from_callback_body,
-            classify_callback_error,
+    def _build_callback_body(self, run: PlanRun, item: PlanRunItem) -> dict[str, Any]:
+        started_at_iso = (
+            datetime.fromtimestamp(item.started_at, tz=timezone.utc).isoformat()
+            if item.started_at else None
+        )
+        finished_at_iso = (
+            datetime.fromtimestamp(item.finished_at, tz=timezone.utc).isoformat()
+            if item.finished_at else None
+        )
+        return build_callback_item(
+            plan_id=str(run.plan_id),
+            device_group=item.device_group,
+            device_name=item.device_name,
+            task_name=item.task_name,
+            status=item.status,
+            updater=run.updater,
+            error_message=item.error_message,
+            started_at=started_at_iso,
+            finished_at=finished_at_iso,
         )
 
-        # --- Resolve callback URL ---
+    def _deliver_item_status(self, run: PlanRun, item: PlanRunItem,
+                             cb: PlanItemStatusCallbackClient) -> None:
+        """Persist and send one task status update keyed by planId."""
+        from ..callback_outbox import (
+            CallbackOutbox, build_outbox_item_from_callback_body,
+        )
+
         callback_url = self._resolve_callback_url(run)
         plan_id = str(run.plan_id)
         url_configured = bool(callback_url and plan_id)
-
         if not callback_url:
             logger.info("CALLBACK_URL_NOT_CONFIGURED: no callback URL resolved")
         if not plan_id:
             logger.warning("CALLBACK_PLAN_ID_MISSING: plan_id is empty")
 
-        # --- Build callback items with startedAt/finishedAt ---
         outbox = CallbackOutbox(plan_id, workspace_root=self._workspace_root)
-        outbox_items: list[CallbackOutboxItem] = []
-        cb_items: list[dict[str, Any]] = []
-
-        for item in run.items:
-            started_at_iso = (
-                datetime.fromtimestamp(item.started_at, tz=timezone.utc).isoformat()
-                if item.started_at else None
-            )
-            finished_at_iso = (
-                datetime.fromtimestamp(item.finished_at, tz=timezone.utc).isoformat()
-                if item.finished_at else None
-            )
-            cb_body = build_callback_item(
-                plan_id=plan_id,
-                device_name=item.device_name,
-                task_name=item.task_name,
-                status=item.status,
-                updater=run.updater,
-                error_message=item.error_message,
-                started_at=started_at_iso,
-                finished_at=finished_at_iso,
-            )
-            cb_items.append(cb_body)
-
-            oi = build_outbox_item_from_callback_body(
-                plan_id=cb_body["planId"],
-                device_name=cb_body["deviceName"],
-                task_name=cb_body["taskName"],
-                status=cb_body["status"],
-                updater=cb_body["updater"],
-                error_message=cb_body["errorMessage"],
-                callback_url=callback_url if url_configured else "",
-            )
-            if not url_configured:
-                oi.delivery_status = "URL_NOT_CONFIGURED"
-            outbox_items.append(oi)
-
-        if not outbox_items:
-            logger.info("No callback items to send (plan has zero items)")
-            return
-
-        outbox.append_batch(outbox_items)
+        cb_body = self._build_callback_body(run, item)
+        oi = build_outbox_item_from_callback_body(
+            plan_id=cb_body["planId"],
+            device_group=cb_body.get("deviceGroup", ""),
+            device_name=cb_body["deviceName"],
+            task_name=cb_body["taskName"],
+            status=cb_body["status"],
+            updater=cb_body["updater"],
+            error_message=cb_body["errorMessage"],
+            started_at=cb_body.get("startedAt"),
+            finished_at=cb_body.get("finishedAt"),
+            callback_url=callback_url if url_configured else "",
+        )
+        if not url_configured:
+            oi.delivery_status = "URL_NOT_CONFIGURED"
+        outbox.append(oi)
         transport_mode = "http" if isinstance(cb.transport, HttpCallbackTransport) else "fake"
         logger.info(
-            "CallbackOutbox: %d items written for planId=%s (url_configured=%s, transport=%s)",
-            len(outbox_items), plan_id, url_configured, transport_mode,
+            "CallbackOutbox: item written for planId=%s deviceGroup=%s status=%s (url_configured=%s, transport=%s)",
+            plan_id, item.device_group, item.status, url_configured, transport_mode,
         )
 
         if not url_configured:
             return
 
-        # --- Build summary ---
-        summary = {
-            "total": len(run.items),
-            "success": sum(1 for it in run.items if it.status == "SUCCESS"),
-            "failed": sum(1 for it in run.items if it.status == "FAILED"),
-            "in_progress": sum(1 for it in run.items if it.status in ("IN_PROGRESS", "RUNNING")),
-            "pending": sum(1 for it in run.items if it.status == "PENDING"),
-        }
-
-        # --- Attempt delivery ---
         logger.info(
-            "callback send start: runId=%s planId=%s itemCount=%d mode=%s url=%s",
-            run.run_id, plan_id, len(cb_items), run.callback_mode,
+            "callback item send start: internalRunId=%s planId=%s mode=%s url=%s",
+            run.run_id, plan_id, run.callback_mode,
             redact_url_for_log(callback_url),
         )
 
         try:
             if run.callback_mode == "batch":
                 result: CallbackResult = cb.send_batch(
-                    callback_url, cb_items,
-                    run_id=run.run_id, summary=summary,
+                    callback_url, [cb_body],
                 )
-                self._process_outbox_result(outbox, outbox_items, result, callback_url, run.run_id)
+                self._process_outbox_result(outbox, [oi], result, callback_url, run.run_id)
             else:
-                # P1-2: single mode sends the same 8-field items as batch mode
-                # (planId, deviceName, taskName, status, updater, errorMessage,
-                #  startedAt, finishedAt).  Do NOT use oi.to_callback_body()
-                # which only returns 6 fields — that is the internal outbox
-                # format, not the external callback payload.
-                for idx, oi in enumerate(outbox_items):
-                    r = cb.send_single(callback_url, cb_items[idx])
-                    single_result = CallbackResult(
-                        total=1, success=1 if r.ok else 0,
-                        failed=0 if r.ok else 1, batches=1,
-                        last_error=r.last_error,
-                    )
-                    self._process_outbox_result(outbox, [oi], single_result, callback_url, run.run_id)
+                result = cb.send_single(callback_url, cb_body)
+                self._process_outbox_result(outbox, [oi], result, callback_url, run.run_id)
         except Exception as e:
             logger.error(
-                "callback send failed: runId=%s exception=%s",
+                "callback item send failed: internalRunId=%s exception=%s",
+                run.run_id, redact_sensitive_text(str(e)[:200]),
+            )
+
+    def _deliver_plan_summary(self, run: PlanRun, cb: PlanItemStatusCallbackClient) -> None:
+        """Persist and send the final batch summary keyed by planId."""
+        from ..callback_outbox import (
+            CallbackOutbox,
+            build_outbox_summary_from_callback_body,
+        )
+
+        callback_url = self._resolve_callback_url(run)
+        plan_id = str(run.plan_id)
+        if not plan_id:
+            return
+
+        summary = run.summary
+        url_configured = bool(callback_url)
+        outbox = CallbackOutbox(plan_id, workspace_root=self._workspace_root)
+        oi = build_outbox_summary_from_callback_body(
+            plan_id=plan_id,
+            summary=summary,
+            callback_url=callback_url if url_configured else "",
+        )
+        if not url_configured:
+            oi.delivery_status = "URL_NOT_CONFIGURED"
+        outbox.append(oi)
+        if not url_configured:
+            logger.info("CALLBACK_URL_NOT_CONFIGURED: final summary stored but no callback URL resolved")
+            return
+
+        logger.info(
+            "callback summary send start: internalRunId=%s planId=%s url=%s",
+            run.run_id, plan_id, redact_url_for_log(callback_url),
+        )
+        try:
+            result = cb.send_summary(callback_url, plan_id, summary)
+            self._process_outbox_result(outbox, [oi], result, callback_url, run.run_id)
+        except Exception as e:
+            logger.error(
+                "callback summary send failed: internalRunId=%s exception=%s",
                 run.run_id, redact_sensitive_text(str(e)[:200]),
             )
 
@@ -1071,7 +1098,7 @@ class PlanRunService:
             for oi in outbox_items:
                 outbox.mark_sent(oi.outbox_id)
             logger.info(
-                "callback send success: runId=%s statusCode=200 itemCount=%d url=%s",
+                "callback send success: internalRunId=%s statusCode=200 itemCount=%d url=%s",
                 run_id, len(outbox_items), redact_url_for_log(callback_url),
             )
             return
@@ -1089,7 +1116,7 @@ class PlanRunService:
         status = "FAILED_RETRYABLE" if retryable else "FAILED_FINAL"
         from ..utils.sensitive import redact_sensitive_text
         logger.warning(
-            "callback send failed: runId=%s itemCount=%d status=%s url=%s error=%s",
+            "callback send failed: internalRunId=%s itemCount=%d status=%s url=%s error=%s",
             run_id, len(outbox_items), status, redact_url_for_log(callback_url),
             redact_sensitive_text((error_msg or "")[:120]),
         )
@@ -1129,14 +1156,17 @@ class PlanRunService:
         if result.status == "SUCCEEDED":
             item.status = "SUCCESS"
             item.error_message = None
+            item._execution_result = getattr(result, "execution_result", None)
             item.add_info_event("INFO", f"Real execution succeeded")
         elif result.status == "TIMEOUT":
             item.status = "FAILED"
             item.error_message = f"TIMEOUT: {result.error.get('message', '') if result.error else 'timeout'}"
+            item._execution_result = getattr(result, "execution_result", None)
             item.add_info_event("ERROR", item.error_message)
         else:
             item.status = "FAILED"
             item.error_message = result.error.get("message", "FAILED") if result.error else "FAILED"
+            item._execution_result = getattr(result, "execution_result", None)
             item.add_info_event("ERROR", item.error_message)
 
     def _build_job_payload(self, item: PlanRunItem) -> dict[str, Any]:
@@ -1151,6 +1181,7 @@ class PlanRunService:
         task_type = getattr(task, "task_type", "")
         exec_mode = getattr(task, "execution_mode", "")
         cmd = getattr(task, "command_or_url", "") or ""
+        raw_cmd = cmd
 
         # Check for per_group_commands override
         try:
@@ -1160,9 +1191,10 @@ class PlanRunService:
         except Exception:
             pass
 
-        # Derive ssh_type for secrets
+        # Derive ssh_type for secrets and lock semantics.
         dg = (getattr(device, "device_group", "") or "").upper()
-        st = "SSH_VRP" if dg in ("L1", "L2") else "SSH"
+        st = "SSH_VRP" if dg in ("L1", "L2") else "SSH_LINUX"
+        ssh_profile = "vrp" if st == "SSH_VRP" else "linux"
 
         # secret_ref from device — never log plaintext
         bmc_user = getattr(device, "bmc_username", "") or ""
@@ -1191,11 +1223,17 @@ class PlanRunService:
 
         task_snapshot = {
             "task_name": item.task_name,
+            "sequence": int(getattr(task, "sequence", 0) or 0),
+            "sequence_str": str(getattr(task, "sequence_str", "") or ""),
             "task_type": task_type,
             "execution_mode": exec_mode,
+            "match_group": getattr(task, "match_group", "") or "",
             "url": cmd,
             "command_or_url": cmd,
+            "raw_command_or_url": raw_cmd,
             "ssh_cmd": cmd,
+            "actions_json": getattr(task, "actions_json", "") or "",
+            "rules_json": getattr(task, "rules_json", "") or "",
             "timeout_seconds": int(getattr(task, "timeout_seconds", 60) or 60),
             "retry_count": int(getattr(task, "retry_count", 0) or 0),
             "output_dir_template": getattr(task, "output_dir_template", "{device_name}/{task_name}") or "{device_name}/{task_name}",
@@ -1203,11 +1241,123 @@ class PlanRunService:
             "full_screenshot": bool(getattr(task, "full_screenshot", False)),
             "screenshot_mode": getattr(task, "screenshot_mode", "auto") or "auto",
         }
+        if task_type.upper() in ("SSH", "TELNET") or exec_mode.upper() == "SSH_CMD":
+            task_snapshot["ssh_profile"] = ssh_profile
+            task_snapshot["ssh_evidence_mode"] = "terminal"
+        task_def = getattr(task, "_task_def", None) or {}
+        if isinstance(task_def, dict) and task_def:
+            task_snapshot["task_def"] = task_def
+        per_group_commands = getattr(task, "_per_group_commands", None) or {}
+        if isinstance(per_group_commands, dict) and per_group_commands:
+            task_snapshot["per_group_commands"] = per_group_commands
+        per_group_no_split = getattr(task, "_per_group_no_split", None) or {}
+        if isinstance(per_group_no_split, dict) and per_group_no_split:
+            task_snapshot["per_group_no_split"] = per_group_no_split
+        per_group_timeout_seconds = getattr(task, "_per_group_timeout_seconds", None) or {}
+        if isinstance(per_group_timeout_seconds, dict) and per_group_timeout_seconds:
+            task_snapshot["per_group_timeout_seconds"] = per_group_timeout_seconds
+        if getattr(task, "_no_split", False):
+            task_snapshot["no_split"] = True
 
         return {
             "device_snapshot": device_snapshot,
             "task_snapshot": task_snapshot,
         }
+
+    def _write_plan_result_reports(self, run: PlanRun) -> None:
+        """Write batch-level report files into outputRoot after all items finish."""
+        if not run.output_root:
+            return
+        try:
+            output_root = Path(run.output_root)
+            output_root.mkdir(parents=True, exist_ok=True)
+            results = [self._execution_result_for_item(run, item) for item in run.items]
+            if not results:
+                return
+
+            from ..out.collector import write_result_csv, write_final_result_csv
+            from ..out.summary import build_pivot_csv, write_failure_csv
+            from ..out.timing import write_all_timing_reports
+            from ..out.evidence_audit import write_evidence_audit_csv
+
+            write_result_csv(results, str(output_root))
+            write_final_result_csv(results, str(output_root))
+            try:
+                build_pivot_csv(results, str(output_root))
+            except Exception as exc:
+                logger.warning("PlanRun pivot report failed: %s", redact_sensitive_text(str(exc)))
+            try:
+                write_failure_csv(results, str(output_root))
+            except Exception as exc:
+                logger.warning("PlanRun failure report failed: %s", redact_sensitive_text(str(exc)))
+            try:
+                write_all_timing_reports(results, str(output_root), execution_started_at=run.started_at)
+            except Exception as exc:
+                logger.warning("PlanRun timing reports failed: %s", redact_sensitive_text(str(exc)))
+            try:
+                write_evidence_audit_csv(results, str(output_root))
+            except Exception as exc:
+                logger.warning("PlanRun evidence audit failed: %s", redact_sensitive_text(str(exc)))
+        except Exception as exc:
+            logger.warning("PlanRun report generation failed: %s", redact_sensitive_text(str(exc)))
+
+    def _execution_result_for_item(self, run: PlanRun, item: PlanRunItem):
+        from ..models.execution_result import ExecutionResult
+
+        result = item._execution_result
+        if result is None:
+            status = "EXEC_SUCCESS" if item.status == "SUCCESS" else "EXEC_FAILED"
+            if item.status in ("PENDING", "IN_PROGRESS"):
+                status = f"EXEC_{item.status}"
+            started_at = item.started_at or run.started_at
+            ended_at = item.finished_at or run.finished_at or started_at
+            device = item._device
+            task = item._task
+            return ExecutionResult(
+                plan_id=str(run.plan_id),
+                device_name=item.device_name,
+                device_group=item.device_group,
+                bmc_ip=getattr(device, "bmc_ip", "") if device is not None else "",
+                inband_ip=getattr(device, "inband_ip", "") if device is not None else "",
+                task_name=item.task_name,
+                task_type=item.task_type,
+                execution_mode=item.execution_mode,
+                task_sequence=str(
+                    getattr(task, "sequence_str", "")
+                    or getattr(task, "sequence", "")
+                    or ""
+                ),
+                execution_status=status,
+                execution_failure_reason=item.error_message or "",
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_seconds=max(0.0, ended_at - started_at),
+                output_dir=run.output_root,
+            )
+
+        # Normalize adapter-owned results to the business batch identity.
+        result.plan_id = str(run.plan_id)
+        result.device_name = result.device_name or item.device_name
+        result.device_group = result.device_group or item.device_group
+        result.task_name = result.task_name or item.task_name
+        result.task_type = result.task_type or item.task_type
+        result.execution_mode = result.execution_mode or item.execution_mode
+        task = item._task
+        if not getattr(result, "task_sequence", ""):
+            result.task_sequence = str(
+                getattr(task, "sequence_str", "")
+                or getattr(task, "sequence", "")
+                or ""
+            )
+        if not getattr(result, "started_at", 0):
+            result.started_at = item.started_at
+        if not getattr(result, "ended_at", 0):
+            result.ended_at = item.finished_at
+        if not getattr(result, "duration_seconds", 0) and result.started_at and result.ended_at:
+            result.duration_seconds = max(0.0, result.ended_at - result.started_at)
+        if not getattr(result, "output_dir", ""):
+            result.output_dir = run.output_root
+        return result
 
     # ------------------------------------------------------------------
     # Query
@@ -1283,7 +1433,6 @@ class PlanRunService:
         if not pending:
             return {
                 "accepted": True, "planId": plan_id,
-                "runId": run.run_id if run else "",
                 "attempted": 0, "sent": 0, "failed": 0,
                 "pendingAfter": 0, "status": "NO_PENDING",
                 "message": "no pending callbacks",
@@ -1291,27 +1440,24 @@ class PlanRunService:
 
         transport = self._resolve_transport(resolved_url)
         cb = PlanItemStatusCallbackClient(transport=transport)
-        bodies = [it.to_callback_body() for it in pending]
+        item_pending = [it for it in pending if getattr(it, "payload_type", "item") != "summary"]
+        summary_pending = [it for it in pending if getattr(it, "payload_type", "item") == "summary"]
+        bodies = [it.to_callback_body() for it in item_pending]
         attempted = len(pending)
         sent = 0
         failed = 0
-        summary = run.summary if run else None
 
-        if mode == "batch":
-            result = cb.send_batch(
-                resolved_url, bodies,
-                run_id=run.run_id if run else "",
-                summary=summary,
-            )
+        if item_pending and mode == "batch":
+            result = cb.send_batch(resolved_url, bodies)
             if result.ok:
-                for item in pending:
+                for item in item_pending:
                     outbox.mark_sent(item.outbox_id)
-                sent = attempted
+                sent += len(item_pending)
             else:
-                self._process_outbox_result(outbox, pending, result, resolved_url, run.run_id if run else "")
-                failed = attempted
-        else:
-            for item in pending:
+                self._process_outbox_result(outbox, item_pending, result, resolved_url, run.run_id if run else "")
+                failed += len(item_pending)
+        elif item_pending:
+            for item in item_pending:
                 result = cb.send_single(resolved_url, item.to_callback_body())
                 if result.ok:
                     outbox.mark_sent(item.outbox_id)
@@ -1320,11 +1466,20 @@ class PlanRunService:
                     self._process_outbox_result(outbox, [item], result, resolved_url, run.run_id if run else "")
                     failed += 1
 
+        for item in summary_pending:
+            body = item.to_callback_body()
+            result = cb.send_summary(resolved_url, body["planId"], body.get("summary", {}))
+            if result.ok:
+                outbox.mark_sent(item.outbox_id)
+                sent += 1
+            else:
+                self._process_outbox_result(outbox, [item], result, resolved_url, run.run_id if run else "")
+                failed += 1
+
         pending_after = len(outbox.get_pending())
         return {
             "accepted": True,
             "planId": plan_id,
-            "runId": run.run_id if run else "",
             "attempted": attempted,
             "sent": sent,
             "failed": failed,
@@ -1368,5 +1523,5 @@ def _derive_lock_uri(device: Any, task: Any) -> str:
         dg = (getattr(device, "device_group", "") or "").upper()
         if dg in ("L1", "L2"):
             return f"ssh-vrp://{inband_ip}"
-        return f"ssh://{inband_ip}"
+        return f"ssh-linux://{inband_ip}"
     return ""

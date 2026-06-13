@@ -15,6 +15,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+try:
+    from .args import resolve_execution_cli
+except ImportError:  # pragma: no cover - direct script execution fallback
+    from src.cli.args import resolve_execution_cli
+
 # 尝试导入 openpyxl
 try:
     import openpyxl
@@ -372,6 +377,7 @@ def run_execution(
     excel_path: str,
     output_dir: Path,
     concurrency: int,
+    mode: str,
     precheck_only: bool = False
 ) -> int:
     """执行 BMC 任务"""
@@ -395,20 +401,26 @@ def run_execution(
 
     cmd.extend([
         "--excel", excel_path,
+        "--mode", mode,
     ])
 
     # Pass CLI overrides to run.py
     if output_dir is not None:
         cmd.extend(["--output", str(output_dir)])
     if concurrency and concurrency > 1:
-        # --concurrency deprecated: map to max_bmc_workers if no explicit worker args given
-        if args.max_bmc_workers is None and args.max_ssh_workers is None:
+        # --concurrency deprecated: map missing worker pools for compatibility
+        if args.max_bmc_workers is None:
             cmd.extend(["--max-bmc-workers", str(concurrency)])
             log(f"[兼容] --concurrency {concurrency} → 映射为 --max-bmc-workers {concurrency}", "WARN")
+        if args.max_ssh_workers is None:
+            cmd.extend(["--max-ssh-workers", str(concurrency)])
+            log(f"[兼容] --concurrency {concurrency} → 映射为 --max-ssh-workers {concurrency}", "WARN")
     if args.max_bmc_workers is not None:
         cmd.extend(["--max-bmc-workers", str(args.max_bmc_workers)])
     if args.max_ssh_workers is not None:
         cmd.extend(["--max-ssh-workers", str(args.max_ssh_workers)])
+    if args.bmc_artifact_profile is not None:
+        cmd.extend(["--bmc-artifact-profile", args.bmc_artifact_profile])
 
     if precheck_only:
         cmd.append("--preflight-only")
@@ -504,8 +516,10 @@ def main():
     parser.add_argument("--excel", "-e", help="Excel 文件路径")
     parser.add_argument("--output", "-o", help="输出目录")
     parser.add_argument("--concurrency", "-c", type=int, default=1, help="(已弃用) 并发数 — 建议使用 --max-bmc-workers / --max-ssh-workers")
+    parser.add_argument("--mode", choices=["sequential", "full"], default=None, help="执行模式：sequential 或 full")
     parser.add_argument("--max-bmc-workers", type=int, default=None, help="BMC 最大并发数")
     parser.add_argument("--max-ssh-workers", type=int, default=None, help="SSH 最大并发数")
+    parser.add_argument("--bmc-artifact-profile", choices=["full", "fast"], default=None, help="BMC 证据模式：full 完整，fast 仅 PNG/HTML")
     parser.add_argument("--strict", action="store_true", help="严格模式 (网络检测失败则中止)")
     parser.add_argument("--precheck-only", action="store_true", help="仅预检查模式")
     parser.add_argument("--yes", "-y", action="store_true", help="跳过确认直接执行")
@@ -573,12 +587,15 @@ def main():
     concurrency = args.concurrency
     if concurrency < 1:
         concurrency = 1
+    args.concurrency = concurrency
+    mode, resolved_bmc_workers, resolved_ssh_workers, concurrency = resolve_execution_cli(args, sys.argv[1:])
     log(f"并发数 (--concurrency, 已弃用): {concurrency}", "WARN")
-    if args.max_bmc_workers is not None:
-        log(f"BMC 最大并发用户: {args.max_bmc_workers}", "INFO")
-    if args.max_ssh_workers is not None:
-        log(f"SSH 最大并发用户: {args.max_ssh_workers}", "INFO")
-    if args.max_bmc_workers is None and args.max_ssh_workers is None:
+    log(f"执行模式: {mode}", "INFO")
+    if resolved_bmc_workers is not None:
+        log(f"BMC 最大并发用户: {resolved_bmc_workers}", "INFO")
+    if resolved_ssh_workers is not None:
+        log(f"SSH 最大并发用户: {resolved_ssh_workers}", "INFO")
+    if resolved_bmc_workers is None and resolved_ssh_workers is None:
         log(f"未指定 --max-bmc-workers / --max-ssh-workers，将使用 YAML config 默认值", "INFO")
     log("提示: 大规模运行建议 --max-bmc-workers 4 --max-ssh-workers 20", "INFO")
 
@@ -599,7 +616,7 @@ def main():
         return 0
 
     # 九、任务执行
-    return_code = run_execution(excel_path, output_dir, concurrency, args.precheck_only)
+    return_code = run_execution(excel_path, output_dir, concurrency, mode, args.precheck_only)
 
     # 十、结果汇总
     if return_code == 0:

@@ -30,6 +30,7 @@ from .bmc_health_check import (
     HealthResult,
 )
 from ..models.task_plan import TaskPlan
+from ..models.task import resolve_task_timeout_seconds
 from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
 from ..rules.condition_evaluator import (
@@ -129,12 +130,28 @@ class BMCExecutor(AbstractExecutor):
         page_timeout: float = 60.0,
         screenshot_policy: str = "final_only",
         popup_timeout: int = 1000,
+        artifact_profile: str = "full",
     ):
         self._bm = browser_manager
         self._screenshot_policy = screenshot_policy
         self._connect_timeout = connect_timeout
         self._page_timeout = page_timeout
         self._popup_timeout = popup_timeout
+        self._artifact_profile = self._normalise_artifact_profile(artifact_profile)
+
+    @staticmethod
+    def _normalise_artifact_profile(value: object) -> str:
+        raw = str(value or "full").strip().lower()
+        if raw in ("fast", "light", "lite", "minimal", "basic"):
+            return "fast"
+        return "full"
+
+    def _resolve_artifact_profile(self, task) -> str:
+        task_def = getattr(task, "_task_def", None) or {}
+        value = task_def.get("artifact_profile") or task_def.get("bmc_artifact_profile")
+        if value not in ("", None):
+            return self._normalise_artifact_profile(value)
+        return self._artifact_profile
 
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         from .browser_manager import _get_thread_loop
@@ -209,10 +226,8 @@ class BMCExecutor(AbstractExecutor):
         _health_results: list[HealthResult] = []
 
         # task.timeout_seconds is the task hard timeout; page timeout is only fallback.
-        task_timeout = (
-            float(task.timeout_seconds)
-            if task.timeout_seconds > 0
-            else float(self._page_timeout)
+        task_timeout = resolve_task_timeout_seconds(
+            task, device.device_group, fallback=self._page_timeout,
         )
 
         async def _check_health(stage: str, target_url: str = "") -> HealthResult:
@@ -1236,6 +1251,7 @@ class BMCExecutor(AbstractExecutor):
             pass
 
         errors = []
+        artifact_profile = self._resolve_artifact_profile(task)
 
         # html/ subdirectory for non-visual evidence
         html_dir = safe_join_under_root(output_dir, "html")
@@ -1282,6 +1298,36 @@ class BMCExecutor(AbstractExecutor):
                 status="FAILED",
                 details=str(e),
             ))
+
+        if artifact_profile == "fast":
+            logger.info(
+                "BMC artifact profile fast: skipped evidence.html/state_json/MHTML for %s",
+                file_base,
+            )
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="bmc_artifact_profile",
+                status="SUCCESS",
+                details="fast: saved final PNG/HTML only; skipped evidence.html, state JSON, MHTML",
+            ))
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="evidence_summary",
+                status="SUCCESS",
+                details=(
+                    f"profile=fast png={ss_path} html={getattr(result, 'html_file', '')} "
+                    "state_json=skipped mhtml=skipped state_mirror=skipped"
+                ),
+            ))
+            if not errors:
+                result.artifact_status = "ARTIFACT_SAVED"
+            elif ss_path or result.html_file:
+                result.artifact_status = "ARTIFACT_PARTIAL"
+                result.artifact_failure_reason = "; ".join(errors)
+            else:
+                result.artifact_status = "ARTIFACT_FAILED"
+                result.artifact_failure_reason = "; ".join(errors)
+            return
 
         # evidence.html — rendered DOM with computed styles inlined (offline-viewable)
         evidence_path = ""

@@ -116,6 +116,48 @@ def test_build_parser_preflight_auth_choices():
     raise AssertionError("--preflight-auth not found")
 
 
+def test_build_parser_accepts_legacy_concurrency():
+    """--concurrency remains accepted for Windows launcher compatibility."""
+    from src.cli.args import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["--excel", "x.xlsx", "--concurrency", "3"])
+    assert args.concurrency == 3
+
+
+def test_build_parser_accepts_bmc_artifact_profile():
+    from src.cli.args import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["--excel", "x.xlsx", "--bmc-artifact-profile", "fast"])
+    assert args.bmc_artifact_profile == "fast"
+
+
+def test_legacy_concurrency_implies_full_and_both_worker_pools():
+    from src.cli.args import build_parser, resolve_execution_cli
+
+    parser = build_parser()
+    argv = ["--excel", "x.xlsx", "--concurrency", "3"]
+    args = parser.parse_args(argv)
+    mode, max_bmc, max_ssh, legacy = resolve_execution_cli(args, argv)
+    assert mode == "full"
+    assert max_bmc == 3
+    assert max_ssh == 3
+    assert legacy == 3
+
+
+def test_explicit_mode_overrides_legacy_concurrency_auto_full():
+    from src.cli.args import build_parser, resolve_execution_cli
+
+    parser = build_parser()
+    argv = ["--excel", "x.xlsx", "--mode=sequential", "--concurrency", "3"]
+    args = parser.parse_args(argv)
+    mode, max_bmc, max_ssh, legacy = resolve_execution_cli(args, argv)
+    assert mode == "sequential"
+    assert max_bmc == 3
+    assert max_ssh == 3
+    assert legacy == 3
+
+
 # ── Test: run.py --help parity ─────────────────────────────
 
 def test_run_py_help_has_preflight_auth():

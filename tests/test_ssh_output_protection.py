@@ -98,6 +98,43 @@ class TestReadTerminalUntilIdle:
         )
         assert meta["last_non_empty_line"] == "line3"
 
+    def test_sentinel_stops_without_idle_wait(self):
+        """Linux terminal sessions stop as soon as the internal sentinel appears."""
+        executor = SSHExecutor()
+        sentinel = "__BMC_AUTO_CAPTURE_DONE_TEST__"
+        chunks = [
+            b"uname -a\n",
+            b"Linux test-host\n",
+            f"{sentinel}:0\n".encode("utf-8"),
+            b"this should not be read\n",
+        ]
+        channel = FakeChannel(chunks=chunks)
+        output, meta = executor._read_terminal_until_idle(
+            channel,
+            timeout=5,
+            idle_timeout=5,
+            stop_pattern=executor._terminal_sentinel_pattern(sentinel),
+        )
+        assert "Linux test-host" in output
+        assert "this should not be read" not in output
+        assert meta["timeout_reason"] == "sentinel_detected"
+        assert meta["sentinel_detected"] is True
+        assert executor._extract_terminal_sentinel_exit_code(output, sentinel) == 0
+
+    def test_terminal_sentinel_is_stripped_from_transcript(self):
+        executor = SSHExecutor()
+        sentinel = "__BMC_AUTO_CAPTURE_DONE_TEST__"
+        output = (
+            "uname -a\n"
+            "Linux test-host\n"
+            f"printf '\\n{sentinel}:%s\\n' \"$?\"\n"
+            f"{sentinel}:0\n"
+            "$ "
+        )
+        stripped = executor._strip_terminal_sentinel(output, sentinel)
+        assert sentinel not in stripped
+        assert "Linux test-host" in stripped
+
 
 class TestReadChannel:
     """TI-002: _read_channel large output protection."""

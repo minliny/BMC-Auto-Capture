@@ -33,11 +33,11 @@ class Device:
 
     @property
     def ssh_type(self) -> str:
-        """Derive SSH sub-type from device_group. L1/L2 -> VRP, else generic SSH."""
+        """Derive SSH sub-type from device_group. L1/L2 -> VRP, else Linux."""
         group = (self.device_group or "").upper().strip()
         if group in ("L1", "L2"):
             return "SSH_VRP"
-        return "SSH"
+        return "SSH_LINUX"
 
     @property
     def lock_uri_bmc(self) -> str:

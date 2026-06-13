@@ -99,24 +99,13 @@ def main():
     )
     service.start_background_worker()
 
-    # Run dispatch service (plan + run API)
-    from src.run_dispatch_service import RunDispatchService
-    run_service = RunDispatchService(
-        executor_id=args.executor_id,
-        runner_mode="real" if use_real else "fake",
-        use_http_callback=use_http,
-        callback_timeout_seconds=args.callback_timeout,
-        output_root=args.output,
-        allow_real_runner=args.enable_real_runner,
-    )
-
     from src.plan_run_service import PlanRunService
     plan_run_service = PlanRunService(
         use_http_callback=use_http,
         allow_real_runner=args.enable_real_runner,
     )
 
-    app = create_app(service, run_service=run_service, plan_run_service=plan_run_service)
+    app = create_app(service, plan_run_service=plan_run_service)
 
     transport_label = "HTTP (real)" if use_http else "Fake (test)"
     runner_label = "RealRunnerAdapter (BMC/SSH)" if use_real else "FakeRunner (dry-run)"
@@ -128,15 +117,10 @@ def main():
     print(f"  Real runner : {args.enable_real_runner}")
     print(f"  Docs        : http://{args.host}:{args.port}/docs")
     print(f"  Endpoints:")
-    print(f"    POST /executor/v1/jobs              — receive dispatched job")
-    print(f"    GET  /executor/v1/jobs/{{job_id}}     — query job status")
+    print(f"    POST /executor/v1/plans/{{id}}:run      — start plan batch")
+    print(f"    GET  /executor/v1/plans/{{id}}          — query plan status")
+    print(f"    GET  /executor/v1/plans/{{id}}/items    — query plan items")
     print(f"    GET  /executor/v1/status             — executor health")
-    print(f"    POST /executor/v1/plans:import       — import plan from Excel+JSON")
-    print(f"    GET  /executor/v1/plans/{{id}}         — query plan")
-    print(f"    GET  /executor/v1/plans/{{id}}/tasks   — list plan tasks")
-    print(f"    POST /executor/v1/runs               — dispatch run")
-    print(f"    GET  /executor/v1/runs/{{id}}          — query run")
-    print(f"    GET  /executor/v1/runs/{{id}}/tasks/{{tid}} — query task status")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 

@@ -306,6 +306,10 @@ class TestExcelFallbackSafety:
                     "command_or_url": "display interface transceiver",
                     "per_group_commands": {
                         "A3": "hccn_tool -i 0 -optical -g"
+                    },
+                    "per_group_timeout_seconds": {
+                        "A3": 900,
+                        "L1": 60
                     }
                 }
             }
@@ -320,6 +324,7 @@ class TestExcelFallbackSafety:
         pgc = getattr(tasks[0], '_per_group_commands', None)
         assert pgc is not None
         assert "A3" in pgc
+        assert getattr(tasks[0], '_per_group_timeout_seconds', None) == {"A3": 900, "L1": 60}
 
     def test_legacy_format_no_tdef_still_enabled(self, tmp_path):
         """Legacy (14-col) Excel without tasks.json: still enabled (has command column)."""
@@ -381,6 +386,102 @@ class TestPlanRunServicePerGroupCommands:
         # The command in task_snapshot should be the resolved one
         assert payload["task_snapshot"]["command_or_url"] == "a3_special_cmd"
 
+    def test_actual_a3_optical_no_split_survives_api_adapter_chain(self):
+        """Actual task 17 must keep A3 no_split after PlanRunService -> adapter."""
+        from src.loader.excel_reader import load_all
+        from src.models.device import Device
+        from src.plan_run_service.service import PlanRunService, PlanRunItem
+        from src.job_runner_adapter import RealRunnerAdapter
+        from src.executor.ssh_executor import SSHExecutor, resolve_task_no_split
+
+        _, tasks = load_all(
+            str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx"),
+            tasks_json_path=str(Path(__file__).resolve().parent.parent / "tasks.json"),
+        )
+        task = next(t for t in tasks if getattr(t, "sequence_str", "") == "17")
+        device = Device(
+            row_index=1, device_name="redacted-device", device_group="A3",
+            bmc_ip="", bmc_username="", bmc_password="",
+            inband_ip="192.0.2.1", inband_username="u", inband_password="p",
+        )
+        item = PlanRunItem(
+            plan_id="p1", device_name=device.device_name, task_name=task.task_name,
+            device_group="A3", task_type=task.task_type, execution_mode=task.execution_mode,
+            _device=device, _task=task,
+        )
+
+        payload = PlanRunService()._build_job_payload(item)
+        assert payload["task_snapshot"]["per_group_timeout_seconds"] == {"A3": 900, "L1": 60, "L2": 60}
+        rebuilt = RealRunnerAdapter()._task_from_snapshot(payload["task_snapshot"])
+        assert resolve_task_no_split(rebuilt, "A3") is True
+        assert getattr(rebuilt, "_task_def", {}).get("stderr_fail_patterns")
+        assert SSHExecutor(command_timeout=60)._resolve_execution_options(rebuilt, "A3").command_timeout == 900
+        assert SSHExecutor(command_timeout=60)._resolve_execution_options(rebuilt, "L1").command_timeout == 60
+
+        spec = SSHExecutor()._parse_command_spec(
+            rebuilt,
+            override_command=rebuilt.command_or_url,
+            no_split=resolve_task_no_split(rebuilt, "A3"),
+        )
+        assert len(spec["commands"]) == 1
+
+    def test_actual_bmc_actions_survives_api_adapter_chain(self):
+        """Actual BMC_ACTIONS task must keep actions_json through API real path."""
+        from src.loader.excel_reader import load_all
+        from src.models.device import Device
+        from src.plan_run_service.service import PlanRunService, PlanRunItem
+        from src.job_runner_adapter import RealRunnerAdapter
+
+        _, tasks = load_all(
+            str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx"),
+            tasks_json_path=str(Path(__file__).resolve().parent.parent / "tasks.json"),
+        )
+        task = next(t for t in tasks if getattr(t, "sequence_str", "") == "1")
+        device = Device(
+            row_index=1, device_name="redacted-device", device_group="A3",
+            bmc_ip="192.0.2.2", bmc_username="u", bmc_password="p",
+            inband_ip="", inband_username="", inband_password="",
+        )
+        item = PlanRunItem(
+            plan_id="p1", device_name=device.device_name, task_name=task.task_name,
+            device_group="A3", task_type=task.task_type, execution_mode=task.execution_mode,
+            _device=device, _task=task,
+        )
+
+        payload = PlanRunService()._build_job_payload(item)
+        rebuilt = RealRunnerAdapter()._task_from_snapshot(payload["task_snapshot"])
+        assert rebuilt.actions_json
+        flow = rebuilt.to_capture_flow()
+        assert flow.get("target_url") or flow.get("pre_capture_actions")
+
+    def test_actual_rules_survive_api_adapter_chain(self):
+        """Actual rule-bearing tasks must not lose rules_json or task_def."""
+        from src.loader.excel_reader import load_all
+        from src.models.device import Device
+        from src.plan_run_service.service import PlanRunService, PlanRunItem
+        from src.job_runner_adapter import RealRunnerAdapter
+
+        _, tasks = load_all(
+            str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx"),
+            tasks_json_path=str(Path(__file__).resolve().parent.parent / "tasks.json"),
+        )
+        task = next(t for t in tasks if getattr(t, "sequence_str", "") == "16")
+        device = Device(
+            row_index=1, device_name="redacted-device", device_group="L1",
+            bmc_ip="", bmc_username="", bmc_password="",
+            inband_ip="192.0.2.1", inband_username="u", inband_password="p",
+        )
+        item = PlanRunItem(
+            plan_id="p1", device_name=device.device_name, task_name=task.task_name,
+            device_group="L1", task_type=task.task_type, execution_mode=task.execution_mode,
+            _device=device, _task=task,
+        )
+
+        payload = PlanRunService()._build_job_payload(item)
+        rebuilt = RealRunnerAdapter()._task_from_snapshot(payload["task_snapshot"])
+        assert len(rebuilt.parsed_rules()) == len(task.parsed_rules())
+        assert getattr(rebuilt, "_task_def", {}).get("rules")
+
 
 # ===========================================================================
 # API infoEvents / timestamp tests
@@ -392,9 +493,29 @@ class TestApiInfoTimestamp:
 
     EXCEL_FILE = str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx")
 
+    def _service(self):
+        from src.plan_item_status_callback_client import FakeCallbackTransport
+        from src.plan_run_service.service import PlanRunService
+        return PlanRunService(callback_transport=FakeCallbackTransport())
+
+    def _wait_external_completed(self, svc, plan_id, excel_hash):
+        for _ in range(60):
+            plan = svc.get_external_plan(plan_id, excel_hash)
+            if plan and plan.get("status") == "COMPLETED":
+                return plan
+            time.sleep(0.1)
+        return svc.get_external_plan(plan_id, excel_hash)
+
+    def _wait_plan_completed(self, svc, plan_id):
+        for _ in range(60):
+            plan = svc.get_plan(plan_id)
+            if plan and plan.get("status") == "COMPLETED":
+                return plan
+            time.sleep(0.1)
+        return svc.get_plan(plan_id)
+
     def test_plan_query_has_started_at_finished_at(self):
-        from src.plan_run_service.service import PlanRunService, _excel_store, _store_lock
-        svc = PlanRunService()
+        svc = self._service()
         svc.set_latest_excel(self.EXCEL_FILE)
         excel_hash = svc.set_latest_excel(self.EXCEL_FILE)["excelHash"]
         r = svc.start_external_plan({
@@ -402,16 +523,14 @@ class TestApiInfoTimestamp:
             "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        time.sleep(3)
-        plan = svc.get_external_plan(r["planId"], excel_hash)
+        plan = self._wait_external_completed(svc, r["planId"], excel_hash)
         assert plan is not None
         assert "startedAt" in plan
         assert "finishedAt" in plan
         assert plan["startedAt"] != ""
 
     def test_plan_query_has_info_events(self):
-        from src.plan_run_service.service import PlanRunService
-        svc = PlanRunService()
+        svc = self._service()
         svc.set_latest_excel(self.EXCEL_FILE)
         excel_hash = svc.set_latest_excel(self.EXCEL_FILE)["excelHash"]
         r = svc.start_external_plan({
@@ -419,14 +538,12 @@ class TestApiInfoTimestamp:
             "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        time.sleep(3)
-        plan = svc.get_external_plan(r["planId"], excel_hash)
+        plan = self._wait_external_completed(svc, r["planId"], excel_hash)
         assert "infoEvents" in plan
         assert isinstance(plan["infoEvents"], list)
 
     def test_item_query_has_timestamps(self):
-        from src.plan_run_service.service import PlanRunService
-        svc = PlanRunService()
+        svc = self._service()
         svc.set_latest_excel(self.EXCEL_FILE)
         excel_hash = svc.set_latest_excel(self.EXCEL_FILE)["excelHash"]
         r = svc.start_external_plan({
@@ -434,7 +551,7 @@ class TestApiInfoTimestamp:
             "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        self._wait_external_completed(svc, r["planId"], excel_hash)
         items_data = svc.get_external_plan_items(r["planId"], excel_hash)
         for item in items_data["items"]:
             assert "startedAt" in item, f"Item missing startedAt: {item}"
@@ -443,8 +560,7 @@ class TestApiInfoTimestamp:
             assert item["finishedAt"] is not None
 
     def test_item_query_has_info_events(self):
-        from src.plan_run_service.service import PlanRunService
-        svc = PlanRunService()
+        svc = self._service()
         svc.set_latest_excel(self.EXCEL_FILE)
         excel_hash = svc.set_latest_excel(self.EXCEL_FILE)["excelHash"]
         r = svc.start_external_plan({
@@ -452,7 +568,7 @@ class TestApiInfoTimestamp:
             "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        self._wait_external_completed(svc, r["planId"], excel_hash)
         items_data = svc.get_external_plan_items(r["planId"], excel_hash)
         for item in items_data["items"]:
             assert "infoEvents" in item
@@ -460,8 +576,7 @@ class TestApiInfoTimestamp:
             assert len(item["infoEvents"]) >= 1, f"Item should have at least 1 infoEvent: {item}"
 
     def test_info_event_has_timestamp_level_message(self):
-        from src.plan_run_service.service import PlanRunService
-        svc = PlanRunService()
+        svc = self._service()
         svc.set_latest_excel(self.EXCEL_FILE)
         excel_hash = svc.set_latest_excel(self.EXCEL_FILE)["excelHash"]
         r = svc.start_external_plan({
@@ -469,7 +584,7 @@ class TestApiInfoTimestamp:
             "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        self._wait_external_completed(svc, r["planId"], excel_hash)
         items_data = svc.get_external_plan_items(r["planId"], excel_hash)
         for item in items_data["items"]:
             for evt in item["infoEvents"]:
@@ -891,14 +1006,85 @@ class TestNoSplit:
         assert spec["commands"][0][1] == "display interface transceiver"
 
     def test_legacy_run_items_also_have_timestamps(self):
+        from src.plan_item_status_callback_client import FakeCallbackTransport
         from src.plan_run_service.service import PlanRunService
         excel = str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx")
-        svc = PlanRunService()
+        svc = PlanRunService(callback_transport=FakeCallbackTransport())
         svc.set_latest_excel(excel)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
-        time.sleep(3)
+        for _ in range(60):
+            plan = svc.get_plan(r["planId"])
+            if plan and plan.get("status") == "COMPLETED":
+                break
+            time.sleep(0.1)
         items_data = svc.get_plan_items(r["planId"])
         for item in items_data["items"]:
             assert "startedAt" in item
             assert "finishedAt" in item
             assert "infoEvents" in item
+
+
+class TestSSHStrategyProfiles:
+    """User-facing SSH model is Linux terminal vs VRP interactive."""
+
+    def _device(self, group: str):
+        from src.models.device import Device
+
+        return Device(
+            row_index=1,
+            device_name=f"{group}-dev",
+            device_group=group,
+            bmc_ip="",
+            bmc_username="",
+            bmc_password="",
+            inband_ip="10.0.0.1",
+        )
+
+    def _task(self, task_def=None):
+        from src.models.task import Task
+
+        task = Task(
+            row_index=1,
+            sequence=1,
+            task_name="SSH profile test",
+            task_type="SSH",
+            execution_mode="SSH_CMD",
+            command_or_url="uname -a",
+        )
+        if task_def:
+            object.__setattr__(task, "_task_def", task_def)
+        return task
+
+    def test_linux_group_defaults_to_terminal_session(self):
+        from src.executor.ssh_executor import SSHExecutor
+
+        executor = SSHExecutor()
+        assert executor._get_ssh_strategy(self._device("A3"), self._task()) == "terminal_session"
+
+    def test_vrp_group_defaults_to_interactive_shell(self):
+        from src.executor.ssh_executor import SSHExecutor
+
+        executor = SSHExecutor()
+        assert executor._get_ssh_strategy(self._device("L1"), self._task()) == "interactive_shell"
+        assert executor._get_ssh_strategy(self._device("L2"), self._task()) == "interactive_shell"
+
+    def test_structured_evidence_mode_keeps_exec_command_available(self):
+        from src.executor.ssh_executor import SSHExecutor
+
+        executor = SSHExecutor()
+        task = self._task({"evidence_mode": "structured"})
+        assert executor._get_ssh_strategy(self._device("A3"), task) == "exec_command"
+
+    def test_explicit_transport_overrides_profile(self):
+        from src.executor.ssh_executor import SSHExecutor
+
+        executor = SSHExecutor()
+        task = self._task({"ssh_profile": "vrp", "ssh_transport": "terminal_session"})
+        assert executor._get_ssh_strategy(self._device("L1"), task) == "terminal_session"
+
+    def test_per_group_profile_override(self):
+        from src.executor.ssh_executor import SSHExecutor
+
+        executor = SSHExecutor()
+        task = self._task({"per_group_ssh_profile": {"A3": "vrp"}})
+        assert executor._get_ssh_strategy(self._device("A3"), task) == "interactive_shell"

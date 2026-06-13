@@ -159,21 +159,25 @@ class TestCallbackOutboxIntegration:
             assert key not in forbidden, f"Forbidden key in outbox: {key}"
         # Only allowed fields
         allowed = {"outboxId", "planId", "deviceName", "taskName", "status",
-                   "updater", "errorMessage", "callbackUrl", "deliveryStatus",
+                   "deviceGroup", "updater", "errorMessage", "startedAt",
+                   "finishedAt", "callbackUrl", "deliveryStatus",
                    "attemptCount", "lastErrorCode", "lastErrorMessage",
                    "nextRetryAt", "createdAt", "updatedAt"}
         for key in d:
             assert key in allowed, f"Unknown key in outbox: {key}"
 
-    def test_callback_body_strict_6_fields_from_outbox(self):
-        """to_callback_body() returns exactly 6 fields."""
+    def test_callback_body_public_fields_from_outbox(self):
+        """to_callback_body() returns public item callback fields."""
         from src.callback_outbox import CallbackOutboxItem, build_outbox_item_from_callback_body
         item = build_outbox_item_from_callback_body(
             plan_id="1", device_name="D1", task_name="T1",
             status="SUCCESS", callback_url="http://cb",
         )
         body = item.to_callback_body()
-        assert set(body.keys()) == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage"}
+        assert set(body.keys()) == {
+            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "updater", "errorMessage", "startedAt", "finishedAt",
+        }
 
     def test_outbox_append_and_read_roundtrip(self, tmp_path):
         """Append items, read them back, verify integrity."""

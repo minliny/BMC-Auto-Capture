@@ -30,6 +30,22 @@ from src.plan_item_status_callback_client import FakeCallbackTransport
 
 EXCEL_FILE = str(Path(__file__).parent.parent / "examples" / "task_template.xlsx")
 
+CALLBACK_ITEM_FIELDS = {
+    "planId", "deviceGroup", "deviceName", "taskName", "status",
+    "updater", "errorMessage", "startedAt", "finishedAt",
+}
+CALLBACK_FORBIDDEN_FIELDS = {
+    "job_id", "external_task_id", "executor_id", "duration_ms", "artifacts",
+    "excelHash", "runId",
+}
+
+
+def _callback_success_response(total: int = 1) -> str:
+    return (
+        '{"code":0,"message":"success","data":'
+        f'{{"total":{total},"success":{total},"failed":0,"errors":[]}}}}'
+    )
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -56,7 +72,7 @@ def clear_shared_state(tmp_path, monkeypatch):
 
 @pytest.fixture
 def prs():
-    return PlanRunService()
+    return PlanRunService(callback_transport=FakeCallbackTransport())
 
 
 @pytest.fixture
@@ -235,10 +251,22 @@ class TestRunItems:
                 self.calls = []
             def post(self, url, payload, headers):
                 self.calls.append(payload)
-                entry = {"receivedAt": time.time(), "payload": dict(payload)}
+                if "items" in payload:
+                    entries = [
+                        {"receivedAt": time.time(), "type": "item", "payload": dict(item)}
+                        for item in payload["items"]
+                    ]
+                elif "summary" in payload and "taskName" not in payload:
+                    entries = [{
+                        "receivedAt": time.time(),
+                        "type": "summary",
+                        "payload": {"planId": payload.get("planId"), "summary": payload.get("summary", {})},
+                    }]
+                else:
+                    entries = [{"receivedAt": time.time(), "type": "item", "payload": dict(payload)}]
                 with _debug_callback_lock:
-                    _debug_callback_store.append(entry)
-                return 200, '{"ok":true}'
+                    _debug_callback_store.extend(entries)
+                return 200, _callback_success_response(len(entries))
 
         prs2 = PlanRunService(callback_transport=DebugStoreTransport())
         app = create_app(svc, plan_run_service=prs2, debug_callback_receiver=True)
@@ -280,14 +308,22 @@ class TestRunItems:
                 # Handle batch payload: expand items into individual entries
                 if "items" in payload:
                     for item in payload["items"]:
-                        entry = {"receivedAt": time.time(), "payload": dict(item)}
+                        entry = {"receivedAt": time.time(), "type": "item", "payload": dict(item)}
                         with _debug_callback_lock:
                             _debug_callback_store.append(entry)
-                else:
-                    entry = {"receivedAt": time.time(), "payload": dict(payload)}
+                elif "summary" in payload and "taskName" not in payload:
+                    entry = {
+                        "receivedAt": time.time(),
+                        "type": "summary",
+                        "payload": {"planId": payload.get("planId"), "summary": payload.get("summary", {})},
+                    }
                     with _debug_callback_lock:
                         _debug_callback_store.append(entry)
-                return 200, '{"ok":true}'
+                else:
+                    entry = {"receivedAt": time.time(), "type": "item", "payload": dict(payload)}
+                    with _debug_callback_lock:
+                        _debug_callback_store.append(entry)
+                return 200, _callback_success_response(1)
 
         prs2 = PlanRunService(callback_transport=DebugTransport())
         app = create_app(svc, plan_run_service=prs2, debug_callback_receiver=True)
@@ -560,14 +596,22 @@ class TestDebugCallbackStillWorks:
                 # Handle batch payload: expand items into individual entries
                 if "items" in payload:
                     for item in payload["items"]:
-                        entry = {"receivedAt": time.time(), "payload": dict(item)}
+                        entry = {"receivedAt": time.time(), "type": "item", "payload": dict(item)}
                         with _debug_callback_lock:
                             _debug_callback_store.append(entry)
-                else:
-                    entry = {"receivedAt": time.time(), "payload": dict(payload)}
+                elif "summary" in payload and "taskName" not in payload:
+                    entry = {
+                        "receivedAt": time.time(),
+                        "type": "summary",
+                        "payload": {"planId": payload.get("planId"), "summary": payload.get("summary", {})},
+                    }
                     with _debug_callback_lock:
                         _debug_callback_store.append(entry)
-                return 200, '{"ok":true}'
+                else:
+                    entry = {"receivedAt": time.time(), "type": "item", "payload": dict(payload)}
+                    with _debug_callback_lock:
+                        _debug_callback_store.append(entry)
+                return 200, _callback_success_response(1)
 
         prs = PlanRunService(callback_transport=DebugTransport())
         app = create_app(svc, plan_run_service=prs, debug_callback_receiver=True)
@@ -585,8 +629,8 @@ class TestDebugCallbackStillWorks:
         data = resp.json()
         assert data["summary"]["total"] > 0
 
-    def test_debug_callback_payload_strict_6_fields(self, client):
-        """Callback payload has exactly 6 required fields."""
+    def test_debug_callback_payload_public_fields(self, client):
+        """Callback item payload has exactly the public fields."""
         from src.executor_api_server.app import _debug_callback_lock, _debug_callback_store
 
         class DebugTransport:
@@ -594,14 +638,22 @@ class TestDebugCallbackStillWorks:
                 # Handle batch payload: expand items into individual entries
                 if "items" in payload:
                     for item in payload["items"]:
-                        entry = {"receivedAt": time.time(), "payload": dict(item)}
+                        entry = {"receivedAt": time.time(), "type": "item", "payload": dict(item)}
                         with _debug_callback_lock:
                             _debug_callback_store.append(entry)
-                else:
-                    entry = {"receivedAt": time.time(), "payload": dict(payload)}
+                elif "summary" in payload and "taskName" not in payload:
+                    entry = {
+                        "receivedAt": time.time(),
+                        "type": "summary",
+                        "payload": {"planId": payload.get("planId"), "summary": payload.get("summary", {})},
+                    }
                     with _debug_callback_lock:
                         _debug_callback_store.append(entry)
-                return 200, '{"ok":true}'
+                else:
+                    entry = {"receivedAt": time.time(), "type": "item", "payload": dict(payload)}
+                    with _debug_callback_lock:
+                        _debug_callback_store.append(entry)
+                return 200, _callback_success_response(1)
 
         prs = PlanRunService(callback_transport=DebugTransport())
         app = create_app(DirectDispatchService(executor_id="test-cb6"),
@@ -618,12 +670,12 @@ class TestDebugCallbackStillWorks:
 
         resp = c.get("/debug/plan-item-statuses")
         data = resp.json()
-        required = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
-        forbidden = {"job_id", "external_task_id", "executor_id", "duration_ms", "artifacts"}
         for item in data["items"]:
+            if item.get("type") != "item":
+                continue
             keys = set(item["payload"].keys())
-            assert keys == required, f"Expected 8 fields, got {keys}"
-            assert not (keys & forbidden), f"Has forbidden: {keys & forbidden}"
+            assert keys == CALLBACK_ITEM_FIELDS, f"Expected public item fields, got {keys}"
+            assert not (keys & CALLBACK_FORBIDDEN_FIELDS), f"Has forbidden: {keys & CALLBACK_FORBIDDEN_FIELDS}"
 
 
 # ===========================================================================
