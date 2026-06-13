@@ -20,7 +20,7 @@ def _post(url: str, data: dict) -> dict | None:
 
 def main():
     p = argparse.ArgumentParser(description="Submit plan run to executor")
-    p.add_argument("--executor-url", default="http://127.0.0.1:18000")
+    p.add_argument("--executor-url", default="http://127.0.0.1:8080")
     p.add_argument("--plan-id", type=int, required=True)
     p.add_argument("--item-status-url", default="http://127.0.0.1:18080/api/plans/items/status")
     p.add_argument("--updater", default="downstream-system")
@@ -36,7 +36,7 @@ def main():
     print(f"POST {base}/executor/v1/plans/{args.plan_id}:run")
     result = _post(f"{base}/executor/v1/plans/{args.plan_id}:run", payload)
     if result:
-        print(f"  runId={result.get('runId')} status={result.get('status')} items={result.get('summary',{}).get('total','?')}")
+        print(f"  planId={result.get('planId')} status={result.get('status')} items={result.get('summary',{}).get('total','?')}")
 
 
 if __name__ == "__main__":

@@ -74,6 +74,7 @@ export BMC_PASS="真实BMC密码"
 python3 scripts/start_executor_api_server.py \
   --host 0.0.0.0 --port 18000 \
   --runner real \
+  --enable-real-runner \
   --callback-transport http \
   --executor-id exec-win-001 \
   --output ./output_api_direct

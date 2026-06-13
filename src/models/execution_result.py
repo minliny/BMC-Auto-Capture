@@ -55,6 +55,13 @@ class ExecutionResult:
     resource_wait_seconds: float = 0.0
     executor_duration_seconds: float = 0.0
     retry_count: int = 0
+    attempt_records: list = field(default_factory=list)  # list[AttemptRecord] — AUDIT-007
+    attempt_count: int = 1
+    max_attempts: int = 1
+    final_attempt_index: int = 1
+    retry_reasons: list[str] = field(default_factory=list)
+    unknown_status: bool = False
+    raw_execution_status: str = ""
 
     def _checkpoint_summary(self) -> str:
         if not self.checkpoint_results:
@@ -106,6 +113,12 @@ class ExecutionResult:
             str(round(self.duration_seconds, 1)),
             str(round(self.resource_wait_seconds, 1)),
             str(round(self.executor_duration_seconds, 1)),
+            str(self.attempt_count),
+            str(self.max_attempts),
+            str(self.final_attempt_index),
+            " | ".join(self.retry_reasons),
+            str(self.unknown_status).lower(),
+            self.raw_execution_status,
         ]
 
     @staticmethod
@@ -126,6 +139,8 @@ class ExecutionResult:
             "endpoint_key", "endpoint_type",
             "started_at", "ended_at",
             "duration_seconds", "resource_wait_seconds", "executor_duration_seconds",
+            "attempt_count", "max_attempts", "final_attempt_index", "retry_reasons",
+            "unknown_status", "raw_execution_status",
         ]
 
 def _fmt_time(ts: float) -> str:

@@ -1,17 +1,20 @@
 """
 PlanRunService — reads latest Excel, expands devices×tasks, executes with
-FakeRunner or RealRunnerAdapter, sends per-item 6-field status callbacks.
+FakeRunner or RealRunnerAdapter, sends 8-field plan-item status callbacks.
 """
 
 from __future__ import annotations
 import hashlib
+import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from ..plan_item_status_callback_client import (
@@ -20,10 +23,10 @@ from ..plan_item_status_callback_client import (
     HttpCallbackTransport,
     CallbackResult,
     build_callback_item,
-    map_status_to_server,
+    validate_callback_url,
 )
 from ..resource_lock_manager import ResourceLockManager
-from ..utils.sensitive import redact_url_for_log
+from ..utils.sensitive import redact_sensitive_text, redact_url_for_log
 
 logger = logging.getLogger("bmc_auto_capture.plan_run")
 
@@ -137,6 +140,24 @@ _excel_store: dict[str, Any] = {}
 _store_lock = threading.Lock()
 
 
+def _safe_state_id(value: str) -> str:
+    """Return a path-safe id for run/plan state files."""
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("state id is empty")
+    if ".." in raw or raw.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[/\\]", raw):
+        raise ValueError("state id contains path traversal")
+    if any(sep and sep in raw for sep in (os.sep, os.altsep)):
+        raise ValueError("state id contains path separator")
+    return raw
+
+
+def _fmt_ts(ts: float) -> str:
+    if not ts:
+        return ""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
 def _set_latest_excel(path: str) -> dict[str, Any]:
     from ..loader.excel_reader import load_all
     devices, tasks = load_all(path)
@@ -161,6 +182,10 @@ def _get_latest_excel() -> dict[str, Any] | None:
         return _excel_store.get("latest")
 
 
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 # ---------------------------------------------------------------------------
 # PlanRunService
 # ---------------------------------------------------------------------------
@@ -170,15 +195,22 @@ class PlanRunService:
 
     def __init__(self, use_http_callback: bool = False, callback_transport: Any = None,
                  lock_manager: ResourceLockManager | None = None,
-                 workspace_root: str | None = None):
+                 workspace_root: str | None = None,
+                 allow_real_runner: bool = False):
         if workspace_root is None:
             from ..excel_config_store import _resolve_workspace
             workspace_root = str(_resolve_workspace())
         self._runs: dict[str, PlanRun] = {}
+        self._runs_by_run_id: dict[str, PlanRun] = {}
         self._runs_lock = threading.Lock()
         self._cb_transport = callback_transport
         self._lock_mgr = lock_manager or ResourceLockManager()
         self._workspace_root = workspace_root
+        self._allow_real_runner = allow_real_runner or _env_truthy("EXECUTOR_ENABLE_REAL_RUNNER")
+        self._state_root = Path(self._workspace_root) / "executor_state"
+        self._runs_state_dir = self._state_root / "runs"
+        self._plans_state_dir = self._state_root / "plans"
+        self._load_persisted_runs()
 
         # P1-4: use_http_callback is deprecated — transport selection now uses
         # _resolve_transport() which auto-detects HttpCallbackTransport when
@@ -200,6 +232,36 @@ class PlanRunService:
     @property
     def lock_manager(self) -> ResourceLockManager:
         return self._lock_mgr
+
+    @property
+    def allow_real_runner(self) -> bool:
+        return self._allow_real_runner
+
+    def _validate_runner_mode(self, runner_mode: str) -> dict[str, Any]:
+        if runner_mode not in ("fake", "real"):
+            return {"ok": False, "reason": f"INVALID_RUNNER: {runner_mode}"}
+        if runner_mode == "real" and not self._allow_real_runner:
+            return {
+                "ok": False,
+                "reason": "REAL_RUNNER_NOT_ENABLED",
+                "message": (
+                    "runner=real requires server-side enablement via "
+                    "PlanRunService(allow_real_runner=True) or "
+                    "EXECUTOR_ENABLE_REAL_RUNNER=1"
+                ),
+            }
+        return {"ok": True}
+
+    @staticmethod
+    def _validate_callback_url(url: str) -> dict[str, Any]:
+        ok, reason = validate_callback_url(url)
+        if ok:
+            return {"ok": True}
+        return {
+            "ok": False,
+            "reason": reason,
+            "message": "callback.itemStatusUrl is not allowed by executor callback URL policy",
+        }
 
     # ------------------------------------------------------------------
     # Transport resolution: auto HTTP when itemStatusUrl is provided
@@ -275,6 +337,11 @@ class PlanRunService:
         callback = request.get("callback", {})
         item_status_url = callback.get("itemStatusUrl", "")
         callback_mode = callback.get("mode", "batch")
+        callback_url_check = self._validate_callback_url(item_status_url)
+        if not callback_url_check.get("ok"):
+            return {"accepted": False, "status": "FAILED",
+                    "errorMessage": callback_url_check.get("reason", "INVALID_CALLBACK_URL"),
+                    "message": callback_url_check.get("message", "")}
         # planId from callback.planId IS the single business plan ID
         plan_id = str(callback.get("planId", ""))
         if not plan_id:
@@ -285,8 +352,11 @@ class PlanRunService:
                     "errorMessage": f"INVALID_CALLBACK_MODE: {callback_mode}"}
         updater = request.get("updater", "downstream-system")
         runner_mode = request.get("runner", "fake")
-        if runner_mode not in ("fake", "real"):
-            return {"accepted": False, "reason": f"INVALID_RUNNER: {runner_mode}"}
+        runner_check = self._validate_runner_mode(runner_mode)
+        if not runner_check.get("ok"):
+            return {"accepted": False, "status": "FAILED",
+                    "errorMessage": runner_check.get("reason", "INVALID_RUNNER"),
+                    "message": runner_check.get("message", "")}
 
         # Check for duplicate — planId already running
         with self._runs_lock:
@@ -330,6 +400,8 @@ class PlanRunService:
 
         with self._runs_lock:
             self._runs[str(plan_id)] = run
+            self._runs_by_run_id[run_id] = run
+        self._persist_run(run)
 
         transport = self._resolve_transport(item_status_url)
         cb = PlanItemStatusCallbackClient(transport=transport)
@@ -362,21 +434,7 @@ class PlanRunService:
             return None
         if run.excel_hash != excel_hash:
             return None
-        return {
-            "excelHash": run.excel_hash, "planId": run.plan_id,
-            "runId": run.run_id,
-            "status": run.status,
-            "summary": run.summary,
-            "startedAt": datetime.fromtimestamp(run.started_at, tz=timezone.utc).isoformat() if run.started_at else "",
-            "finishedAt": datetime.fromtimestamp(run.finished_at, tz=timezone.utc).isoformat() if run.finished_at else "",
-            "errorMessage": None,
-            "infoEvents": [
-                {"timestamp": datetime.fromtimestamp(run.started_at, tz=timezone.utc).isoformat(), "level": "INFO",
-                 "message": f"Plan started: planId={run.plan_id}"} if run.started_at else None,
-                {"timestamp": datetime.fromtimestamp(run.finished_at, tz=timezone.utc).isoformat(), "level": "INFO",
-                 "message": f"Plan finished: status={run.status}"} if run.finished_at else None,
-            ] if run.started_at or run.finished_at else [],
-        }
+        return self._public_plan(run, include_items=False)
 
     def get_external_plan_items(self, plan_id: str, excel_hash: str) -> dict[str, Any] | None:
         """Get external plan items. Validates excelHash. Returns None if not found."""
@@ -387,29 +445,168 @@ class PlanRunService:
             return None
         if run.excel_hash != excel_hash:
             return None
-        items = [
-            {
-                "deviceName": i.device_name, "taskName": i.task_name,
-                "status": i.status, "errorMessage": i.error_message,
-                "startedAt": datetime.fromtimestamp(i.started_at, tz=timezone.utc).isoformat() if i.started_at else None,
-                "finishedAt": datetime.fromtimestamp(i.finished_at, tz=timezone.utc).isoformat() if i.finished_at else None,
-                "infoEvents": i.info_events,
-            }
-            for i in run.items
-        ]
-        return {
-            "excelHash": run.excel_hash, "planId": run.plan_id,
-            "runId": run.run_id,
-            "status": run.status,
-            "summary": run.summary, "items": items,
-            "startedAt": datetime.fromtimestamp(run.started_at, tz=timezone.utc).isoformat() if run.started_at else "",
-            "finishedAt": datetime.fromtimestamp(run.finished_at, tz=timezone.utc).isoformat() if run.finished_at else "",
-        }
+        return self._public_plan(run, include_items=True)
 
     def _get_plan(self, plan_id: str) -> PlanRun | None:
         """Find plan by plan_id (direct key lookup, O(1))."""
         with self._runs_lock:
             return self._runs.get(str(plan_id))
+
+    def _get_run_by_id(self, run_id: str) -> PlanRun | None:
+        with self._runs_lock:
+            return self._runs_by_run_id.get(str(run_id))
+
+    def _public_item(self, item: PlanRunItem) -> dict[str, Any]:
+        return {
+            "deviceName": item.device_name,
+            "taskName": item.task_name,
+            "status": item.status,
+            "errorMessage": redact_sensitive_text(item.error_message or "") if item.error_message else None,
+            "startedAt": _fmt_ts(item.started_at) if item.started_at else None,
+            "finishedAt": _fmt_ts(item.finished_at) if item.finished_at else None,
+            "infoEvents": item.info_events,
+        }
+
+    def _public_plan(self, run: PlanRun, include_items: bool = False) -> dict[str, Any]:
+        result = {
+            "planId": run.plan_id,
+            "runId": run.run_id,
+            "status": run.status,
+            "summary": run.summary,
+            "excelHash": run.excel_hash,
+            "startedAt": _fmt_ts(run.started_at),
+            "finishedAt": _fmt_ts(run.finished_at),
+            "errorMessage": None,
+            "infoEvents": [
+                {
+                    "timestamp": _fmt_ts(run.started_at),
+                    "level": "INFO",
+                    "message": f"Plan started: planId={run.plan_id}",
+                } if run.started_at else None,
+                {
+                    "timestamp": _fmt_ts(run.finished_at),
+                    "level": "INFO",
+                    "message": f"Plan finished: status={run.status}",
+                } if run.finished_at else None,
+            ],
+        }
+        result["infoEvents"] = [ev for ev in result["infoEvents"] if ev]
+        if include_items:
+            result["items"] = [self._public_item(item) for item in run.items]
+        return result
+
+    def _run_to_state(self, run: PlanRun) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "planId": str(run.plan_id),
+            "runId": run.run_id,
+            "excelHash": run.excel_hash,
+            "status": run.status,
+            "runnerMode": run.runner_mode,
+            "updater": run.updater,
+            "callbackMode": run.callback_mode,
+            "startedAt": run.started_at,
+            "finishedAt": run.finished_at,
+            "items": [
+                {
+                    "planId": str(item.plan_id),
+                    "deviceName": item.device_name,
+                    "taskName": item.task_name,
+                    "deviceGroup": item.device_group,
+                    "taskType": item.task_type,
+                    "executionMode": item.execution_mode,
+                    "status": item.status,
+                    "errorMessage": redact_sensitive_text(item.error_message or "") if item.error_message else None,
+                    "startedAt": item.started_at,
+                    "finishedAt": item.finished_at,
+                    "infoEvents": item.info_events,
+                }
+                for item in run.items
+            ],
+        }
+
+    def _state_to_run(self, data: dict[str, Any]) -> PlanRun | None:
+        plan_id = data.get("planId", "")
+        run_id = data.get("runId", "")
+        if not plan_id or not run_id:
+            return None
+        status = str(data.get("status", ""))
+        if status in ("ACCEPTED", "RUNNING"):
+            status = "INTERRUPTED"
+        items: list[PlanRunItem] = []
+        for raw in data.get("items", []) or []:
+            if not isinstance(raw, dict):
+                continue
+            item_status = str(raw.get("status", "PENDING"))
+            if item_status in ("PENDING", "IN_PROGRESS", "RUNNING"):
+                item_status = "FAILED" if status == "INTERRUPTED" else item_status
+            items.append(PlanRunItem(
+                plan_id=plan_id,
+                device_name=str(raw.get("deviceName", "")),
+                task_name=str(raw.get("taskName", "")),
+                device_group=str(raw.get("deviceGroup", "")),
+                task_type=str(raw.get("taskType", "")),
+                execution_mode=str(raw.get("executionMode", "")),
+                status=item_status,
+                error_message=raw.get("errorMessage"),
+                started_at=float(raw.get("startedAt", 0.0) or 0.0),
+                finished_at=float(raw.get("finishedAt", 0.0) or 0.0),
+                info_events=list(raw.get("infoEvents", []) or []),
+            ))
+        return PlanRun(
+            plan_id=plan_id,
+            run_id=str(run_id),
+            excel_hash=str(data.get("excelHash", "")),
+            status=status or "UNKNOWN",
+            runner_mode=str(data.get("runnerMode", "fake")),
+            items=items,
+            updater=str(data.get("updater", "downstream-system")),
+            item_status_url="",
+            callback_mode=str(data.get("callbackMode", "batch")),
+            started_at=float(data.get("startedAt", 0.0) or 0.0),
+            finished_at=float(data.get("finishedAt", 0.0) or 0.0),
+        )
+
+    def _persist_run(self, run: PlanRun) -> None:
+        if not run.run_id:
+            return
+        try:
+            safe_run_id = _safe_state_id(run.run_id)
+            safe_plan_id = _safe_state_id(str(run.plan_id))
+            self._runs_state_dir.mkdir(parents=True, exist_ok=True)
+            (self._plans_state_dir / safe_plan_id).mkdir(parents=True, exist_ok=True)
+            payload = json.dumps(self._run_to_state(run), ensure_ascii=False, indent=2)
+            for target in (
+                self._runs_state_dir / f"{safe_run_id}.json",
+                self._plans_state_dir / safe_plan_id / "latest_run.json",
+            ):
+                tmp = target.with_suffix(target.suffix + ".tmp")
+                tmp.write_text(payload, encoding="utf-8")
+                os.replace(tmp, target)
+        except Exception as exc:
+            logger.warning("PlanRun state persist failed: %s", redact_sensitive_text(str(exc)))
+
+    def _load_persisted_runs(self) -> None:
+        if not self._runs_state_dir.exists():
+            return
+        loaded = 0
+        for path in self._runs_state_dir.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    continue
+                run = self._state_to_run(data)
+                if run is None:
+                    continue
+                self._runs_by_run_id[run.run_id] = run
+                current = self._runs.get(str(run.plan_id))
+                if current is None or run.started_at >= current.started_at:
+                    self._runs[str(run.plan_id)] = run
+                loaded += 1
+            except Exception as exc:
+                logger.warning("PlanRun state load skipped for %s: %s", path.name, redact_sensitive_text(str(exc)))
+        if loaded:
+            logger.info("PlanRun state restored: %d run(s)", loaded)
 
     # ------------------------------------------------------------------
     # Config snapshot validation (ISSUE-001)
@@ -432,10 +629,10 @@ class PlanRunService:
         except Exception:
             meta = None
 
-        # NEW-005: Check get_latest() error codes (CONFIG_CORRUPTED, LATEST_EXCEL_MISSING)
-        if isinstance(meta, dict) and meta.get("code") in ("CONFIG_CORRUPTED", "LATEST_EXCEL_MISSING"):
+        # NEW-005: Check get_latest() error codes (CONFIG_CORRUPTED, LATEST_EXCEL_MISSING, HASH mismatch, etc.)
+        if isinstance(meta, dict) and meta.get("code"):
             reason = meta["code"]
-            msg = meta.get("message", f"Config error: {reason}")
+            msg = "Latest Excel config is unavailable or inconsistent"
             return {"ok": False, "reason": reason, "message": msg}
 
         # 2. Fallback to in-memory _get_latest_excel (legacy path)
@@ -454,7 +651,7 @@ class PlanRunService:
             # Validate storedPath exists
             if not stored_path or not os.path.isfile(stored_path):
                 return {"ok": False, "reason": "LATEST_EXCEL_MISSING",
-                        "message": f"Latest Excel storedPath missing: {stored_path}"}
+                        "message": "Latest Excel config file is missing"}
 
             # Validate sha256 matches
             try:
@@ -464,10 +661,10 @@ class PlanRunService:
                 actual_hash = actual_sha.hexdigest()
                 if actual_hash != excel_hash:
                     return {"ok": False, "reason": "LATEST_EXCEL_HASH_MISMATCH",
-                            "message": f"Excel hash mismatch: expected {excel_hash[:12]}..., got {actual_hash[:12]}..."}
+                            "message": "Latest Excel config hash mismatch"}
             except OSError as e:
                 return {"ok": False, "reason": "LATEST_EXCEL_READ_ERROR",
-                        "message": f"Cannot read storedPath for hash validation: {e}"}
+                        "message": "Cannot read latest Excel config for hash validation"}
 
             snapshot = RunConfigSnapshot.from_latest_meta(meta)
 
@@ -487,7 +684,7 @@ class PlanRunService:
                 }
             except Exception as e:
                 return {"ok": False, "reason": "LATEST_EXCEL_PARSE_ERROR",
-                        "message": f"Cannot parse storedPath: {e}"}
+                        "message": "Cannot parse latest Excel config"}
 
             return {"ok": True, "snapshot": snapshot, "devices": excel["devices"],
                     "tasks": excel["tasks"], "excel": excel}
@@ -503,7 +700,7 @@ class PlanRunService:
         # Validate file exists
         if not stored_path or not os.path.isfile(stored_path):
             return {"ok": False, "reason": "LATEST_EXCEL_MISSING",
-                    "message": f"Excel file missing: {stored_path}"}
+                    "message": "Excel file is missing"}
 
         # Build a minimal snapshot from in-memory state
         snapshot = RunConfigSnapshot(
@@ -539,10 +736,20 @@ class PlanRunService:
         callback = request.get("callback", {})
         item_status_url = callback.get("itemStatusUrl", "")
         callback_mode = callback.get("mode", "batch")
+        callback_url_check = self._validate_callback_url(item_status_url)
+        if not callback_url_check.get("ok"):
+            return {"accepted": False,
+                    "reason": callback_url_check.get("reason", "INVALID_CALLBACK_URL"),
+                    "message": callback_url_check.get("message", "")}
         if callback_mode not in ("batch", "single"):
             return {"accepted": False, "reason": f"INVALID_CALLBACK_MODE: {callback_mode}"}
         updater = request.get("updater", "downstream-system")
         runner_mode = request.get("runner", "fake")
+        runner_check = self._validate_runner_mode(runner_mode)
+        if not runner_check.get("ok"):
+            return {"accepted": False,
+                    "reason": runner_check.get("reason", "INVALID_RUNNER"),
+                    "message": runner_check.get("message", "")}
 
         # P1-1: path plan_id is authoritative.  If callback.planId is provided
         # and differs from path plan_id, warn but do NOT change run ownership.
@@ -553,9 +760,6 @@ class PlanRunService:
                 "path plan_id is authoritative, callback.planId ignored",
                 callback_plan_id, plan_id,
             )
-
-        if runner_mode not in ("fake", "real"):
-            return {"accepted": False, "reason": f"INVALID_RUNNER: {runner_mode}"}
 
         # Check for duplicate — plan_id already running
         with self._runs_lock:
@@ -603,6 +807,8 @@ class PlanRunService:
 
         with self._runs_lock:
             self._runs[str(plan_id)] = run
+            self._runs_by_run_id[run_id] = run
+        self._persist_run(run)
 
         transport = self._resolve_transport(item_status_url)
         cb = PlanItemStatusCallbackClient(transport=transport)
@@ -647,6 +853,10 @@ class PlanRunService:
                 from ..server_registry_client import discover_callback_url
                 discovered = discover_callback_url()
                 if discovered:
+                    check = self._validate_callback_url(discovered)
+                    if not check.get("ok"):
+                        logger.warning("Callback URL from registry rejected: %s", check.get("reason", "INVALID_CALLBACK_URL"))
+                        return ""
                     logger.info(
                         "Callback URL resolved via registry: %s",
                         redact_url_for_log(discovered),
@@ -657,6 +867,10 @@ class PlanRunService:
 
         # Priority 2: request callback.itemStatusUrl
         if run.item_status_url:
+            check = self._validate_callback_url(run.item_status_url)
+            if not check.get("ok"):
+                logger.warning("Callback URL from request rejected: %s", check.get("reason", "INVALID_CALLBACK_URL"))
+                return ""
             logger.info(
                 "Callback URL from request: %s",
                 redact_url_for_log(run.item_status_url),
@@ -666,6 +880,10 @@ class PlanRunService:
         # Priority 3: environment variable
         env_url = os.environ.get("EXECUTOR_PLAN_ITEM_STATUS_URL", "")
         if env_url:
+            check = self._validate_callback_url(env_url)
+            if not check.get("ok"):
+                logger.warning("Callback URL from env rejected: %s", check.get("reason", "INVALID_CALLBACK_URL"))
+                return ""
             logger.info("Callback URL from env: %s", redact_url_for_log(env_url))
             return env_url
 
@@ -684,6 +902,7 @@ class PlanRunService:
             item.status = "IN_PROGRESS"
             item.started_at = time.time()
             item.add_info_event("INFO", f"PlanItem started: device={item.device_name} task={item.task_name}")
+            self._persist_run(run)
 
             # Lock
             if item.lock_uri:
@@ -692,6 +911,7 @@ class PlanRunService:
                     item.error_message = f"LOCK_CONFLICT: {item.lock_uri}"
                     item.finished_at = time.time()
                     item.add_info_event("ERROR", f"Lock conflict: {item.lock_uri}")
+                    self._persist_run(run)
                     continue
 
             try:
@@ -708,8 +928,10 @@ class PlanRunService:
                 item.add_info_event("INFO", f"PlanItem completed: status={item.status}")
             else:
                 item.add_info_event("ERROR", f"PlanItem failed: status={item.status} error={item.error_message}")
+            self._persist_run(run)
 
         run.finished_at = time.time()
+        self._persist_run(run)
 
         # --- ISSUE-005: CallbackOutbox ---
         # Write outbox + attempt delivery BEFORE marking run COMPLETED.
@@ -717,6 +939,7 @@ class PlanRunService:
         self._deliver_via_outbox(run, cb)
 
         run.status = "COMPLETED"
+        self._persist_run(run)
 
     def _deliver_via_outbox(self, run: PlanRun, cb: PlanItemStatusCallbackClient):
         """ISSUE-005: Write callback items to outbox, then attempt delivery.
@@ -787,8 +1010,8 @@ class PlanRunService:
         outbox.append_batch(outbox_items)
         transport_mode = "http" if isinstance(cb.transport, HttpCallbackTransport) else "fake"
         logger.info(
-            "CallbackOutbox: %d items written to %s (url_configured=%s, transport=%s)",
-            len(outbox_items), outbox._outbox_path, url_configured, transport_mode,
+            "CallbackOutbox: %d items written for planId=%s (url_configured=%s, transport=%s)",
+            len(outbox_items), plan_id, url_configured, transport_mode,
         )
 
         if not url_configured:
@@ -974,7 +1197,11 @@ class PlanRunService:
             "command_or_url": cmd,
             "ssh_cmd": cmd,
             "timeout_seconds": int(getattr(task, "timeout_seconds", 60) or 60),
-            "retry_count": 0,
+            "retry_count": int(getattr(task, "retry_count", 0) or 0),
+            "output_dir_template": getattr(task, "output_dir_template", "{device_name}/{task_name}") or "{device_name}/{task_name}",
+            "image_name_template": getattr(task, "image_name_template", "{device_name}_{task_name}_{step}_{timestamp}") or "{device_name}_{task_name}_{step}_{timestamp}",
+            "full_screenshot": bool(getattr(task, "full_screenshot", False)),
+            "screenshot_mode": getattr(task, "screenshot_mode", "auto") or "auto",
         }
 
         return {
@@ -988,34 +1215,122 @@ class PlanRunService:
 
     def get_plan(self, plan_id: int) -> dict[str, Any] | None:
         """Get plan summary by plan_id. Returns None if not found."""
-        run = self._runs.get(str(plan_id))
+        run = self._get_plan(str(plan_id))
         if run is None:
             return None
-        return {"planId": run.plan_id, "runId": run.run_id, "status": run.status, "summary": run.summary}
+        return self._public_plan(run, include_items=False)
 
     def get_plan_items(self, plan_id: int) -> dict[str, Any] | None:
         """Get plan items with per-item details. Returns None if plan not found."""
-        run = self._runs.get(str(plan_id))
+        run = self._get_plan(str(plan_id))
         if run is None:
             return None
-        items = [
-            {
-                "deviceName": item.device_name,
-                "taskName": item.task_name,
-                "status": item.status,
-                "errorMessage": item.error_message,
-                "startedAt": datetime.fromtimestamp(item.started_at, tz=timezone.utc).isoformat() if item.started_at else None,
-                "finishedAt": datetime.fromtimestamp(item.finished_at, tz=timezone.utc).isoformat() if item.finished_at else None,
-                "infoEvents": item.info_events,
+        return self._public_plan(run, include_items=True)
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        """Get plan summary by run_id. Returns None if not found."""
+        run = self._get_run_by_id(run_id)
+        if run is None:
+            return None
+        return self._public_plan(run, include_items=False)
+
+    def get_run_items(self, run_id: str) -> dict[str, Any] | None:
+        """Get plan items by run_id. Returns None if not found."""
+        run = self._get_run_by_id(run_id)
+        if run is None:
+            return None
+        return self._public_plan(run, include_items=True)
+
+    def retry_pending_callbacks(
+        self,
+        plan_id: int | str,
+        callback_url: str = "",
+        mode: str = "batch",
+    ) -> dict[str, Any]:
+        """Retry due callback outbox items for a plan.
+
+        The outbox persists redacted callbackUrl values. For safety, retry uses
+        the explicit callback_url argument first, then the current run/env/registry
+        URL resolution path. No local run status changes on retry failure.
+        """
+        if mode not in ("batch", "single"):
+            return {"accepted": False, "planId": plan_id, "status": "FAILED",
+                    "message": f"INVALID_CALLBACK_MODE: {mode}"}
+
+        run = self._get_plan(str(plan_id))
+        resolved_url = callback_url
+        if resolved_url:
+            check = self._validate_callback_url(resolved_url)
+            if not check.get("ok"):
+                return {"accepted": False, "planId": plan_id,
+                        "status": "FAILED",
+                        "message": check.get("message", "Invalid callback URL")}
+        elif run is not None:
+            resolved_url = self._resolve_callback_url(run)
+        elif os.environ.get("EXECUTOR_PLAN_ITEM_STATUS_URL", ""):
+            resolved_url = os.environ.get("EXECUTOR_PLAN_ITEM_STATUS_URL", "")
+            check = self._validate_callback_url(resolved_url)
+            if not check.get("ok"):
+                resolved_url = ""
+
+        if not resolved_url:
+            return {"accepted": False, "planId": plan_id, "status": "FAILED",
+                    "message": "No valid callback URL available for retry"}
+
+        from ..callback_outbox import CallbackOutbox
+        outbox = CallbackOutbox(str(plan_id), workspace_root=self._workspace_root)
+        pending = outbox.get_pending()
+        if not pending:
+            return {
+                "accepted": True, "planId": plan_id,
+                "runId": run.run_id if run else "",
+                "attempted": 0, "sent": 0, "failed": 0,
+                "pendingAfter": 0, "status": "NO_PENDING",
+                "message": "no pending callbacks",
             }
-            for item in run.items
-        ]
+
+        transport = self._resolve_transport(resolved_url)
+        cb = PlanItemStatusCallbackClient(transport=transport)
+        bodies = [it.to_callback_body() for it in pending]
+        attempted = len(pending)
+        sent = 0
+        failed = 0
+        summary = run.summary if run else None
+
+        if mode == "batch":
+            result = cb.send_batch(
+                resolved_url, bodies,
+                run_id=run.run_id if run else "",
+                summary=summary,
+            )
+            if result.ok:
+                for item in pending:
+                    outbox.mark_sent(item.outbox_id)
+                sent = attempted
+            else:
+                self._process_outbox_result(outbox, pending, result, resolved_url, run.run_id if run else "")
+                failed = attempted
+        else:
+            for item in pending:
+                result = cb.send_single(resolved_url, item.to_callback_body())
+                if result.ok:
+                    outbox.mark_sent(item.outbox_id)
+                    sent += 1
+                else:
+                    self._process_outbox_result(outbox, [item], result, resolved_url, run.run_id if run else "")
+                    failed += 1
+
+        pending_after = len(outbox.get_pending())
         return {
-            "planId": run.plan_id,
-            "runId": run.run_id,
-            "status": run.status,
-            "summary": run.summary,
-            "items": items,
+            "accepted": True,
+            "planId": plan_id,
+            "runId": run.run_id if run else "",
+            "attempted": attempted,
+            "sent": sent,
+            "failed": failed,
+            "pendingAfter": pending_after,
+            "status": "RETRIED",
+            "message": "pending callbacks retried",
         }
 
     def run_by_plan_id(self, plan_id: int):
@@ -1025,7 +1340,7 @@ class PlanRunService:
         Uses _resolve_transport() for transport selection, matching the
         production code path in start_plan_run().
         """
-        run = self._runs.get(str(plan_id))
+        run = self._get_plan(str(plan_id))
         if run is None:
             return
         if run.status == "COMPLETED":

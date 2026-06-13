@@ -10,6 +10,7 @@ Thread-safe. Uses:
 
 from __future__ import annotations
 import logging
+import os
 import threading
 import time
 import uuid
@@ -24,6 +25,7 @@ from ..server_callback_client import (
     HttpCallbackTransport,
 )
 from ..api_models.lock_uri import derive_lock_uri, LockUriDerivationError
+from ..plan_item_status_callback_client import validate_callback_url
 
 logger = logging.getLogger("bmc_auto_capture.dispatch")
 
@@ -45,6 +47,11 @@ INVALID_TASK_SNAPSHOT = "INVALID_TASK_SNAPSHOT"
 MISSING_LOCK_URI = "MISSING_LOCK_URI"
 DUPLICATE_COMMAND = "DUPLICATE_COMMAND"
 MISSING_COMMAND_ID = "MISSING_COMMAND_ID"
+REAL_RUNNER_NOT_ENABLED = "REAL_RUNNER_NOT_ENABLED"
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +82,7 @@ class DirectDispatchService:
         callback_timeout_seconds: float = 30.0,
         runner_mode: str = "fake",
         output_root: str = "./output_api_direct",
+        allow_real_runner: bool = False,
     ):
         self.executor_id = executor_id
         self._store = store or DirectDispatchStore()
@@ -84,6 +92,11 @@ class DirectDispatchService:
         if runner is not None:
             self._runner = runner
         elif runner_mode == "real":
+            if not (allow_real_runner or _env_truthy("EXECUTOR_ENABLE_REAL_RUNNER")):
+                raise ValueError(
+                    "runner_mode=real requires DirectDispatchService(allow_real_runner=True) "
+                    "or EXECUTOR_ENABLE_REAL_RUNNER=1"
+                )
             self._runner = RealRunnerAdapter(output_root=output_root)
         else:
             self._runner = FakeRunner()
@@ -147,6 +160,9 @@ class DirectDispatchService:
         status_url = callback.get("status_url", "") if isinstance(callback, dict) else ""
         if not status_url:
             raise ValidationError(INVALID_CALLBACK_URL, "callback.status_url is required")
+        ok, reason = validate_callback_url(status_url)
+        if not ok:
+            raise ValidationError(INVALID_CALLBACK_URL, reason)
 
         task_snapshot = job_payload.get("task_snapshot", {}) if isinstance(job_payload, dict) else {}
         if not task_snapshot or not isinstance(task_snapshot, dict):

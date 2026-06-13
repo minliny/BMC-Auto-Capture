@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -17,6 +18,8 @@ from typing import Callable
 from .models.app_config import AppConfig
 from .models.task_plan import TaskPlan
 from .models.execution_result import ExecutionResult
+from .models.verdict import compute_verdict
+from .executor.retry import execute_with_retry
 from .loader.excel_reader import load_all
 from .loader.schema_validator import validate, ValidationReport
 from .scheduler.plan_generator import generate_plans
@@ -58,16 +61,42 @@ class App:
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
         self._pause_event.set()
+        # P0-3: save reference to current scheduler for stop/pause/resume forwarding
+        self._active_scheduler: object | None = None
+        self._run_lock = threading.Lock()
+        self._stop_reason = "scheduler_stop"
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     def run(self, excel_path: str | Path, mode: str = "sequential") -> list[ExecutionResult]:
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("RUN_ALREADY_ACTIVE")
+        try:
+            return self._run(excel_path, mode)
+        finally:
+            self._active_scheduler = None
+            self._run_lock.release()
+
+    def _run(self, excel_path: str | Path, mode: str = "sequential") -> list[ExecutionResult]:
         """Full pipeline: load → validate → plan → preflight → routeguard → execute → collect."""
+        # P1-4: clear state before each run to support App instance reuse
+        self._results = []
+        self._stop_event.clear()
+        self._pause_event.set()
+        self._stop_reason = "scheduler_stop"
+
         excel_path = Path(excel_path)
 
         # 0. Set up timestamped output root to avoid cross-run overwrites
         run_ts = time.strftime("%Y%m%d_%H%M%S")
+        # P1-4: strip previous timestamp suffix if present to avoid nested dirs
+        base_root = str(self.config.output_root)
+        # Check if output_root already ends with a timestamp (from previous run)
+        # Pattern: YYYYMMDD_HHMMSS
+        if re.match(r'.*/\d{8}_\d{6}$', base_root):
+            base_root = str(Path(base_root).parent)
+            self.config.output_root = base_root
         self.config.output_root = str(Path(self.config.output_root) / run_ts)
         logger.info("输出目录:  %s", self.config.output_root)
 
@@ -237,28 +266,57 @@ class App:
         raise OSError("No writable output directory found")
 
     def stop(self):
+        self._stop_reason = "scheduler_stop"
         self._stop_event.set()
         self._pause_event.set()  # Unblock pause so stop can take effect
+        # P0-3: forward to active scheduler if running in full mode
+        if self._active_scheduler is not None:
+            try:
+                self._active_scheduler.stop()
+            except Exception:
+                pass
 
     def pause(self):
         self._pause_event.clear()
+        # P0-3: forward to active scheduler if running in full mode
+        if self._active_scheduler is not None:
+            try:
+                self._active_scheduler.pause()
+            except Exception:
+                pass
 
     def resume(self):
         self._pause_event.set()
+        # P0-3: forward to active scheduler if running in full mode
+        if self._active_scheduler is not None:
+            try:
+                self._active_scheduler.resume()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Route guard callback
     # ------------------------------------------------------------------
     def _on_route_change(self, changes: list[str]):
-        logger.warning("RouteGuard: %d route changes detected — pausing dispatch", len(changes))
+        logger.warning("RouteGuard: %d route changes detected — stopping dispatch", len(changes))
+        self._stop_reason = "route_change"
         self._stop_event.set()
+        self._pause_event.set()  # unblock pause so stop can take effect
+        # AUDIT-003: forward to active scheduler with route_change reason
+        if self._active_scheduler is not None:
+            try:
+                self._active_scheduler.stop(reason="route_change")
+            except Exception:
+                pass
         self.event_bus.emit("route_changed", changes=changes)
 
     # ------------------------------------------------------------------
     # Sequential executor
     # ------------------------------------------------------------------
     def _execute_sequential(self, plans: list[TaskPlan]):
-        ssh_exec = SSHExecutor(connect_timeout=self.config.tcp_connect_timeout)
+        ssh_exec = SSHExecutor(connect_timeout=self.config.tcp_connect_timeout,
+                               command_timeout=self.config.ssh_command_timeout,
+                               idle_timeout=self.config.ssh_idle_timeout)
         bm = BrowserManager(headless=self.config.browser_headless)
         bmc_exec = BMCExecutor(bm, connect_timeout=self.config.tcp_connect_timeout,
                                  popup_timeout=self.config.popup_dismiss_selector_timeout)
@@ -270,7 +328,33 @@ class App:
             if self._stop_event.is_set():
                 logger.info("Stop requested — %d plans remaining", total - i)
                 for remaining in plans[i:]:
-                    remaining.status = "EXEC_SKIPPED_ROUTE_CHANGED"
+                    remaining.status = (
+                        "EXEC_SKIPPED_ROUTE_CHANGED"
+                        if self._stop_reason == "route_change"
+                        else "EXEC_SKIPPED_STOPPED"
+                    )
+                    now = time.time()
+                    skipped_result = ExecutionResult(
+                        plan_id=remaining.plan_id,
+                        task_id=remaining.task_id,
+                        client_task_id=remaining.client_task_id,
+                        device_name=remaining.device.device_name,
+                        device_group=remaining.device.device_group,
+                        bmc_ip=remaining.device.bmc_ip,
+                        inband_ip=remaining.device.inband_ip,
+                        task_name=remaining.task.task_name,
+                        task_type=remaining.task.task_type,
+                        execution_mode=remaining.task.execution_mode,
+                        execution_status=remaining.status,
+                        execution_failure_reason=f"顺序执行停止: {self._stop_reason}",
+                        started_at=now,
+                        ended_at=now,
+                        duration_seconds=0.001,
+                        endpoint_key=remaining.endpoint_key,
+                        endpoint_type=remaining.endpoint_type,
+                    )
+                    self._compute_verdict(skipped_result)
+                    self._results.append(skipped_result)
                 break
 
             self._pause_event.wait()
@@ -284,9 +368,9 @@ class App:
 
             try:
                 if plan.protocol == "BMC":
-                    result = bmc_exec.execute(plan, self.config.output_root)
+                    result = execute_with_retry(bmc_exec, plan, self.config.output_root)
                 elif plan.protocol == "SSH":
-                    result = ssh_exec.execute(plan, self.config.output_root)
+                    result = execute_with_retry(ssh_exec, plan, self.config.output_root)
                 else:
                     result = ExecutionResult(
                         plan_id=plan.plan_id,
@@ -317,6 +401,27 @@ class App:
                 logger.error("Plan %s crashed: %s", plan.plan_id, e)
                 plan.status = "EXEC_ERROR"
                 plan.completed_at = time.time()
+                error_result = ExecutionResult(
+                    plan_id=plan.plan_id,
+                    task_id=plan.task_id,
+                    client_task_id=plan.client_task_id,
+                    device_name=plan.device.device_name,
+                    device_group=plan.device.device_group,
+                    bmc_ip=plan.device.bmc_ip,
+                    inband_ip=plan.device.inband_ip,
+                    task_name=plan.task.task_name,
+                    task_type=plan.task.task_type,
+                    execution_mode=plan.task.execution_mode,
+                    execution_status="EXEC_ERROR",
+                    execution_failure_reason=f"Sequential executor exception: {e}",
+                    started_at=plan.started_at,
+                    ended_at=plan.completed_at,
+                    duration_seconds=max(0.0, plan.completed_at - plan.started_at),
+                    endpoint_key=plan.endpoint_key,
+                    endpoint_type=plan.endpoint_type,
+                )
+                self._compute_verdict(error_result)
+                self._results.append(error_result)
 
         try:
             asyncio.run(bm.teardown())
@@ -329,9 +434,19 @@ class App:
     def _execute_dynamic(self, plans: list[TaskPlan]):
         from .scheduler.dynamic_scheduler import DynamicScheduler
 
-        scheduler = DynamicScheduler(self.config, event_bus=self.event_bus)
-        results = scheduler.run(plans)
-        self._results.extend(results)
+        # P0-3: save scheduler reference so App.stop/pause/resume can forward
+        scheduler = DynamicScheduler(
+            self.config,
+            event_bus=self.event_bus,
+            stop_event=self._stop_event,
+            pause_event=self._pause_event,
+        )
+        self._active_scheduler = scheduler
+        try:
+            results = scheduler.run(plans)
+            self._results.extend(results)
+        finally:
+            self._active_scheduler = None
 
     # ------------------------------------------------------------------
     def _print_validation(self, report: ValidationReport):
@@ -344,60 +459,42 @@ class App:
 
     # ------------------------------------------------------------------
     def _compute_verdict(self, result: ExecutionResult) -> None:
-        """Derive final_verdict from execution + artifact + checkpoint + ready status.
-
-        Rollup priority: FAIL > WARN > PASS.
-
-        FAIL triggers:
-          - EXEC_FAILED / EXEC_ERROR / EXEC_TIMEOUT
-          - ARTIFACT_FAILED
-          - CHECK_FAIL
-
-        WARN triggers:
-          - EXEC_PARTIAL
-          - READY_NOT_READY
-          - CHECK_WARN
-          - ARTIFACT_PARTIAL
+        """Derive final_verdict from execution/artifact/checkpoint/ready status.
+        Delegates to standalone compute_verdict() for consistency across all modes.
         """
-        # FAIL conditions
-        if result.execution_status in ("EXEC_FAILED", "EXEC_ERROR", "EXEC_TIMEOUT"):
-            result.final_verdict = "FAIL"
-            return
-        if result.artifact_status == "ARTIFACT_FAILED":
-            result.final_verdict = "FAIL"
-            return
-        if result.checkpoint_status == "CHECK_FAIL":
-            result.final_verdict = "FAIL"
-            return
-
-        # WARN conditions
-        if result.execution_status == "EXEC_PARTIAL":
-            result.final_verdict = "WARN"
-            return
-        if result.ready_status == "READY_NOT_READY":
-            result.final_verdict = "WARN"
-            return
-        if result.checkpoint_status == "CHECK_WARN":
-            result.final_verdict = "WARN"
-            return
-        if result.artifact_status == "ARTIFACT_PARTIAL":
-            result.final_verdict = "WARN"
-            return
-
-        # PASS — everything went fine
-        result.final_verdict = "PASS"
+        result.final_verdict = compute_verdict(result)
 
     # ------------------------------------------------------------------
     # Run with pre-parsed plans (in-memory execution via API)
     # ------------------------------------------------------------------
     def run_with_plans(self, plans: list[TaskPlan], mode: str = "full") -> list[ExecutionResult]:
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("RUN_ALREADY_ACTIVE")
+        try:
+            return self._run_with_plans(plans, mode)
+        finally:
+            self._active_scheduler = None
+            self._run_lock.release()
+
+    def _run_with_plans(self, plans: list[TaskPlan], mode: str = "full") -> list[ExecutionResult]:
         """Execute pre-parsed plans directly without loading Excel.
         Called by the API when plans_json is provided to /execute/start.
 
         mode: "sequential" = one-by-one; "full" = endpoint-aware dynamic scheduler.
         """
+        # AUDIT-003: clear state before each run to support App instance reuse
+        self._results = []
+        self._stop_event.clear()
+        self._pause_event.set()
+        self._stop_reason = "scheduler_stop"
+
         # Set up timestamped output root
         run_ts = time.strftime("%Y%m%d_%H%M%S")
+        # AUDIT-003: strip previous timestamp suffix if present to avoid nested dirs
+        base_root = str(self.config.output_root)
+        if re.match(r'.*/\d{8}_\d{6}$', base_root):
+            base_root = str(Path(base_root).parent)
+            self.config.output_root = base_root
         execution_started_at = time.time()
         self.config.output_root = str(Path(self.config.output_root) / run_ts)
         logger.info("输出目录 (in-memory):  %s", self.config.output_root)

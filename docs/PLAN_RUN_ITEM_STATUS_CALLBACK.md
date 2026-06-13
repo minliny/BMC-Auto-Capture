@@ -1,221 +1,105 @@
 # Plan Run Item Status Callback
 
-## 外部 Plan API 调用流程（推荐）
+## 推荐流程
 
 ```
-1. POST /executor/v1/config/excel          → 上传 Excel，得到 excelHash
-2. POST /executor/v1/plans with excelHash  → 启动任务批次，得到 planId
-3. 每 pair 完成 → POST itemStatusUrl       → 状态回调（含 excelHash + planId）
-4. GET /executor/v1/plans/{planId}?excelHash=...  → 查询批次汇总
-5. GET /executor/v1/plans/{planId}/items?excelHash=...  → 查询任务明细
+1. POST /executor/v1/config/excel          -> 上传 Excel，得到 excelHash
+2. POST /executor/v1/plans                 -> 使用 excelHash + callback.planId 启动外部 plan
+3. POST callback.itemStatusUrl             -> executor 在所有 item 完成后发送状态回调
+4. GET  /executor/v1/plans/{planId}?excelHash=...
+5. GET  /executor/v1/plans/{planId}/items?excelHash=...
+6. GET  /executor/v1/runs/{runId}
+7. GET  /executor/v1/runs/{runId}/items
 ```
 
-## 旧兼容调用流程
+兼容入口仍可使用：
 
 ```
-1. POST /executor/v1/config/excel:path → 设置最新 Excel
-2. POST /executor/v1/plans/{planId}:run    → 启动全量执行
-3. 每 pair 完成 → POST itemStatusUrl       → 状态回调
-4. GET /executor/v1/plans/{planId}/runs/{runId} → 查询进度
+POST /executor/v1/config/excel:path
+POST /executor/v1/plans/{plan_id}:run
 ```
 
-## 客户执行端开箱即用（推荐）
+## 启动 Executor API
 
-客户执行端**不需要安装 Python**。`python scripts/*.py` 只是开发态命令。
-正式执行端使用 `runtime\bmc-engine.exe` 或 `启动.bat`。
-
-### 方式 1：使用内置 debug callback receiver（推荐）
-
-Executor API 内置调试回调接收器，不需要额外启动 Python mock 服务器：
+默认绑定 loopback，端口 8080：
 
 ```powershell
-# Terminal: 启动 Executor API，自带 debug callback receiver
-.\runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --runner fake --enable-debug-callback-receiver
+.\runtime\bmc-engine.exe --server --host 127.0.0.1 --port 8080 --runner fake --enable-debug-callback-receiver
 ```
 
-然后将 `itemStatusUrl` 指向本机 Executor API 的 `/debug/plan-item-statuses`：
-
-```bash
-curl -X POST http://127.0.0.1:18000/executor/v1/config/excel:path \
-  -H "Content-Type: application/json" \
-  -d '{"excelPath": "C:\\path\\to\\config.xlsx"}'
-
-curl -X POST http://127.0.0.1:18000/executor/v1/plans/1:run \
-  -H "Content-Type: application/json" \
-  -d '{"callback":{"itemStatusUrl":"http://127.0.0.1:18000/debug/plan-item-statuses"},"updater":"downstream-system","runner":"fake"}'
-
-# 查询收到的回调
-curl http://127.0.0.1:18000/debug/plan-item-statuses
-```
-
-内置 debug callback receiver 提供三个路由：
-
-| 方法 | 路由 | 描述 |
-|------|------|------|
-| POST | `/debug/plan-item-statuses` | 接收 plan item 状态回调 |
-| GET | `/debug/plan-item-statuses` | 查询已收到的所有回调 |
-| DELETE | `/debug/plan-item-statuses` | 清空已收到的回调 |
-
-### 方式 2：旧版 Python mock 服务器（仅开发态，已废弃）
+真实 BMC/SSH 执行需要服务端显式开闸：
 
 ```powershell
-python scripts/mock_plan_status_server.py --port 18080
+.\runtime\bmc-engine.exe --server --runner real --enable-real-runner
 ```
 
-## 启动方式选择
+仅在受控网络和受信任 Excel/tasks.json 配置下使用 real runner。
 
-| 启动方式 | 命令 | 需要 Python | 适用场景 |
-|----------|------|------------|----------|
-| **Recommended** | `.\runtime\bmc-engine.exe --server ...` | 否 | 客户执行端 |
-| **Recommended** | `启动.bat --server` | 否 | 客户执行端 |
-| 开发调试 | `python run.py --server ...` | 是 | 开发者 |
-| 已废弃 | `python scripts/start_executor_api_server.py` | 是 | 兼容旧脚本 |
+## Config 响应
 
-## 上传 Excel / 设置 latest Excel
-
-```bash
-curl -X POST http://127.0.0.1:18000/executor/v1/config/excel:path \
-  -H "Content-Type: application/json" \
-  -d '{"excelPath": "C:\\path\\to\\config.xlsx"}'
-```
-
-响应：
-```json
-{"accepted":true,"configVersion":"excel-20260609-152009","deviceCount":10,"enabledDeviceCount":10,"taskCount":29,"enabledTaskCount":29}
-```
-
-## 启动 planId 全量执行
-
-```bash
-curl -X POST http://127.0.0.1:18000/executor/v1/plans/1:run \
-  -H "Content-Type: application/json" \
-  -d '{"callback":{"itemStatusUrl":"http://server/api/plans/items/status"},"updater":"downstream-system","runner":"fake"}'
-```
-
-## 每任务状态回调 payload
+`/executor/v1/config/excel` 和 `/executor/v1/config/excel:path` 的响应不会暴露 executor 本地 `storedPath`。
 
 ```json
 {
-  "planId": 1,
-  "deviceName": "Switch-A",
-  "taskName": "BMC 登录检查",
-  "status": "SUCCESS",
-  "updater": "downstream-system",
-  "errorMessage": null
+  "accepted": true,
+  "deviceCount": 10,
+  "enabledDeviceCount": 10,
+  "taskCount": 29,
+  "enabledTaskCount": 29,
+  "filename": "config.xlsx",
+  "excelHash": "<sha256>",
+  "sha256": "<sha256>",
+  "message": "excel config uploaded and accepted as latest"
 }
 ```
 
-严格 6 字段，不包含 job_id/external_task_id/executor_id/duration_ms/artifacts。
+## Callback Payload
 
-### 外部 Plan API callback payload（7 字段）
-
-外部 Plan API（`POST /executor/v1/plans`）触发的 callback 带 `excelHash`：
+Batch mode payload：
 
 ```json
 {
-  "excelHash": "d62eaec1deb688f6066e8a4814cbe7a24f57f794b389c1490af6019732399717",
-  "planId": "plan-d62eaec1-000001",
-  "deviceName": "Switch-A",
-  "taskName": "BMC 登录检查",
-  "status": "SUCCESS",
-  "updater": "downstream-system",
-  "errorMessage": null
+  "planId": "1",
+  "runId": "plan-1-run-...",
+  "summary": {"total": 2, "success": 2, "failed": 0, "in_progress": 0, "pending": 0},
+  "items": [
+    {
+      "planId": "1",
+      "deviceName": "Switch-A",
+      "taskName": "BMC login check",
+      "status": "SUCCESS",
+      "updater": "downstream-system",
+      "errorMessage": null,
+      "startedAt": "2026-06-13T00:00:00+00:00",
+      "finishedAt": "2026-06-13T00:00:01+00:00"
+    }
+  ]
 }
 ```
 
-旧接口（`POST /executor/v1/plans/{planId}:run`）触发的 callback 仍为 6 字段（不含 excelHash）。
-debug callback receiver 会保存收到的所有字段，包括 excelHash。
+Single mode sends the same 8 allowed item fields directly. Per-item payloads never include `excelHash`, `storedPath`, password, token, `runId`, job id, artifacts, or executor id. `runId` appears only in the batch wrapper and query responses.
 
-## 状态枚举分层
+## Callback URL Policy
 
-| 上下文 | 字段 | 允许值 |
-|--------|------|--------|
-| Plan Run 级别 | `status` | `ACCEPTED` / `RUNNING` / `COMPLETED` / `FAILED` |
-| Run Item 查询 | `items[].status` | `PENDING` / `RUNNING` / `SUCCESS` / `FAILED` |
-| Item 状态回调（callback payload） | `status` | `SUCCESS` / `FAILED` |
-| Debug Callback | `payload.status` | `SUCCESS` / `FAILED` |
-
-说明：
-- `COMPLETED` 不代表全部成功，是否全成功需检查 `summary.failed`
-- Item 查询可处于任意阶段（PENDING/RUNNING/SUCCESS/FAILED），查询时可能仍在执行中
-- Item 回调（callback）和 debug callback 仅上报终态 SUCCESS / FAILED
-
-## fake E2E 验收命令
-
-### 使用内置 debug callback receiver（推荐）
-
-```powershell
-# Terminal 1: Executor API server with debug callback receiver
-.\runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --runner fake --callback-transport fake --enable-debug-callback-receiver
-
-# Terminal 2: Set Excel + submit plan run + verify
-python3 -c "
-import urllib.request, json
-# Set latest Excel
-urllib.request.urlopen(urllib.request.Request(
-    'http://127.0.0.1:18000/executor/v1/config/excel:path',
-    data=json.dumps({'excelPath':'examples/task_template.xlsx'}).encode(),
-    headers={'Content-Type':'application/json'}, method='POST'
-))
-# Start plan run — use built-in debug callback URL
-urllib.request.urlopen(urllib.request.Request(
-    'http://127.0.0.1:18000/executor/v1/plans/1:run',
-    data=json.dumps({'callback':{'itemStatusUrl':'http://127.0.0.1:18000/debug/plan-item-statuses'}}).encode(),
-    headers={'Content-Type':'application/json'}, method='POST'
-))
-"
-# Verify
-curl http://127.0.0.1:18000/debug/plan-item-statuses
-```
-
-### 使用旧版 Python mock server（仅开发态）
+Callback URL must be `http` or `https`, must not contain URL userinfo, and private/link-local literal IPs are rejected unless explicitly allow-listed:
 
 ```bash
-# Terminal 1: Mock plan status server
-python3 scripts/mock_plan_status_server.py --port 18080
-
-# Terminal 2: Executor API server
-.\runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --runner fake --callback-transport fake
-
-# Terminal 3: Set Excel + submit plan run
-curl -X POST http://127.0.0.1:18000/executor/v1/config/excel:path \
-  -H "Content-Type: application/json" \
-  -d '{"excelPath":"examples/task_template.xlsx"}'
-
-curl -X POST http://127.0.0.1:18000/executor/v1/plans/1:run \
-  -H "Content-Type: application/json" \
-  -d '{"callback":{"itemStatusUrl":"http://127.0.0.1:18080/api/plans/items/status"}}'
-
-# Verify
-curl http://127.0.0.1:18080/plan-item-statuses
+EXECUTOR_CALLBACK_ALLOWED_HOSTS=10.0.99.1,callback.internal
 ```
 
-## 开箱即用验证脚本
+Loopback is allowed for local debug receiver.
 
-```powershell
-.\scripts\smoke_executor_runtime.ps1 -ExcelPath "C:\path\to\_test_one_per_group.xlsx"
+## Query And Retry
+
+```bash
+curl http://127.0.0.1:8080/executor/v1/plans/1
+curl http://127.0.0.1:8080/executor/v1/plans/1/items
+curl http://127.0.0.1:8080/executor/v1/runs/<runId>
+curl http://127.0.0.1:8080/executor/v1/runs/<runId>/items
+
+curl -X POST http://127.0.0.1:8080/executor/v1/plans/1/callbacks:retry \
+  -H "Content-Type: application/json" \
+  -d '{"callbackUrl":"http://127.0.0.1:8080/debug/plan-item-statuses","mode":"batch"}'
 ```
 
-该脚本使用 `runtime\bmc-engine.exe`，不调用 `python`。验证流程：
-1. 启动 Executor API（带 debug callback receiver）
-2. 检查 `/executor/v1/status`
-3. 检查 openapi routes（含新旧 Plan API 路由）
-4. 设置 latest Excel
-5. 下发旧 PlanId=1 fake run
-6. 查询 run status 和 callback received
-7. 验证 total/success/failed/callback count
-8. 上传 Excel 并测试外部 Plan API（excelHash + planId）
-9. 验证外部 Plan 响应不暴露 runId
-10. 验证外部 Plan callback 包含 excelHash
-
-## 当前不做的能力
-
-- real runner（仅 fake runner）
-- artifact 上传
-- 并发执行（串行）
-- jobs:poll / WebSocket
-- plan_catalog 复杂规划
-
-## 后续 real runner 接入
-
-PlanRunService 的 `_execute_run` 中替换 `time.sleep(0.001)` 为 `RealRunnerAdapter.run_job()` 调用。
+Run/item query state is persisted under executor state storage and restored for querying after process restart. Interrupted in-flight runs are restored as interrupted query records; execution is not resumed automatically.

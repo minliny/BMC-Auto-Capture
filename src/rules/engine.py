@@ -61,8 +61,9 @@ class RuleContext:
         self.artifacts: dict[str, str] = {}
 
     def resolve_path(self, filename: str) -> str:
-        import os
-        return os.path.join(self.output_dir, filename)
+        from ..utils.path_safety import resolve_under_output_root
+
+        return resolve_under_output_root(self.output_dir, filename)
 
     def resolve_var(self, template: str) -> str:
         """Replace {{var.X}} placeholders with extracted variable values."""

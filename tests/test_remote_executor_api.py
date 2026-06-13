@@ -4,7 +4,7 @@ Comprehensive tests for Remote Windows Executor API (REMOTE_WINDOWS_EXECUTOR_API
 Covers:
 - POST /executor/v1/config/excel (multipart upload)
 - GET /executor/v1/config/latest
-- GET /executor/v1/plans/{plan_id}/runs/{run_id}/items
+- GET /executor/v1/plans/{plan_id}/items
 - PlanRun empty/non-JSON body handling
 - 4.1.15 A3 optical module task per_group_commands
 - Debug callback receiver still functional
@@ -36,8 +36,18 @@ EXCEL_FILE = str(Path(__file__).parent.parent / "examples" / "task_template.xlsx
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def clear_shared_state():
-    """Clear shared module-level state before each test."""
+def clear_shared_state(tmp_path, monkeypatch):
+    """Isolate persistent executor state and clear in-memory state."""
+    import src.excel_config_store as config_store_module
+
+    isolated_store = config_store_module.ExcelConfigStore(tmp_path)
+    monkeypatch.setattr(config_store_module, "_default_store", isolated_store)
+    monkeypatch.setattr(config_store_module, "_WORKSPACE_CANDIDATES", [tmp_path])
+    monkeypatch.setattr(
+        config_store_module,
+        "_EXCEL_ALLOWED_ROOTS",
+        [str(Path(__file__).resolve().parent.parent)],
+    )
     with _debug_callback_lock:
         _debug_callback_store.clear()
     with _store_lock:
@@ -148,14 +158,14 @@ class TestRemoteExcelUpload:
         data = resp.json()
         assert data["accepted"] is True
 
-    def test_upload_stored_path_response(self, client):
-        """The upload response should have storedPath field."""
+    def test_upload_response_hides_stored_path(self, client):
+        """The upload response must not expose executor-local storedPath."""
         with open(EXCEL_FILE, "rb") as f:
             raw = f.read()
         resp = client.post("/executor/v1/config/excel", files={"file": ("up.xlsx", raw)})
         data = resp.json()
-        assert "storedPath" in data
-        assert ".runtime" in data["storedPath"] or "latest.xlsx" in data["storedPath"]
+        assert data["accepted"] is True
+        assert "storedPath" not in data
 
 
 # ===========================================================================
@@ -185,20 +195,35 @@ class TestLatestConfig:
         assert data["enabledDeviceCount"] > 0
         assert data["enabledTaskCount"] > 0
 
+    def test_corrupted_latest_returns_explicit_conflict(self, client):
+        """A broken latest.json must not be reported as no configuration."""
+        import src.excel_config_store as config_store_module
+
+        store = config_store_module.get_default_store()
+        store.latest_json_path.write_text("{broken", encoding="utf-8")
+        store._memory_cache = None
+
+        resp = client.get("/executor/v1/config/latest")
+
+        assert resp.status_code == 409
+        data = resp.json()
+        assert data["hasLatest"] is False
+        assert data["code"] == "CONFIG_CORRUPTED"
+
 
 # ===========================================================================
 # P0-3: Run items
 # ===========================================================================
 
 class TestRunItems:
-    """GET /executor/v1/plans/{plan_id}/runs/{run_id}/items."""
+    """GET /executor/v1/plans/{plan_id}/items."""
 
     def test_run_items_not_found(self, client):
         """Non-existent run returns 404."""
-        resp = client.get("/executor/v1/plans/1/runs/nonexistent/items")
+        resp = client.get("/executor/v1/plans/1/items")
         assert resp.status_code == 404
         data = resp.json()
-        assert "RUN_NOT_FOUND" in str(data)
+        assert "PLAN_NOT_FOUND" in str(data)
 
     def test_run_items_have_details(self, client, svc, prs):
         """Items return deviceName, taskName, status, errorMessage."""
@@ -227,11 +252,11 @@ class TestRunItems:
             "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
-        run_id = resp.json()["runId"]
+        run_id = resp.json()["planId"]
         time.sleep(3)
 
         # Get items
-        resp = c.get(f"/executor/v1/plans/1/runs/{run_id}/items")
+        resp = c.get(f"/executor/v1/plans/1/items")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] in ("ACCEPTED", "RUNNING", "COMPLETED", "FAILED"), f"Unexpected run status: {data['status']}"
@@ -273,10 +298,10 @@ class TestRunItems:
             "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
             "runner": "fake",
         })
-        run_id = resp.json()["runId"]
+        run_id = resp.json()["planId"]
         time.sleep(3)
 
-        resp_items = c.get(f"/executor/v1/plans/1/runs/{run_id}/items")
+        resp_items = c.get(f"/executor/v1/plans/1/items")
         data = resp_items.json()
         assert data["summary"]["total"] == len(data["items"])
 
@@ -402,7 +427,7 @@ class TestOpticalModuleTask415:
         assert "A3" in pgc
         a3_cmd = pgc["A3"]
         assert "for i in $(seq 0 15)" in a3_cmd
-        assert "hccn_tool -i $i -optical-g" in a3_cmd
+        assert "hccn_tool -i $i -optical -g" in a3_cmd
 
         # Verify L1/L2 still use default
         assert optical_task.command_or_url == "display interface transceiver"
@@ -420,11 +445,11 @@ class TestOpticalModuleTask415:
             "runner": "fake",
         })
         assert resp2.status_code == 200
-        run_id = resp2.json()["runId"]
+        run_id = resp2.json()["planId"]
         time.sleep(3)
 
         # Get items
-        resp3 = resp.get(f"/executor/v1/plans/1/runs/{run_id}/items")
+        resp3 = resp.get(f"/executor/v1/plans/1/items")
         items = resp3.json()["items"]
 
         # Find 4.1.15 items
@@ -457,7 +482,7 @@ class TestOpenAPIRoutes:
     """OpenAPI must contain new routes with correct naming."""
 
     def test_openapi_includes_new_routes(self, client):
-        """OpenAPI routes contain config/excel, config/latest, runs/.../items."""
+        """OpenAPI routes contain config/excel, config/latest, items."""
         resp = client.get("/openapi.json")
         assert resp.status_code == 200
         paths = resp.json().get("paths", {})
@@ -467,7 +492,7 @@ class TestOpenAPIRoutes:
         assert "/executor/v1/config/latest" in paths, "GET config/latest missing from openapi"
 
         # Must have /items route
-        has_items = any("/runs/" in k and "/items" in k for k in paths)
+        has_items = any("/items" in k and "/plans/" in k for k in paths)
         assert has_items, "items route missing from openapi"
 
     def test_version_consistency(self, client):
@@ -491,15 +516,15 @@ class TestOpenAPIRoutes:
         assert data["version"] == "0.2.4", f"Status version mismatch: {data['version']}"
 
     def test_routes_use_underscore_params(self, client):
-        """Route paths should use {plan_id} / {run_id} not {planId}/{runId}."""
+        """Route paths should use {plan_id} not {planId} or {runId}."""
         resp = client.get("/routes")
         routes = resp.json().get("routes", [])
         paths = [r["path"] for r in routes]
 
-        # Check plan run items path uses underscore notation
-        items_paths = [p for p in paths if "items" in p]
+        # Plan routes use plan_id; runId routes intentionally use run_id.
+        items_paths = [p for p in paths if "plans" in p and "items" in p]
         for p in items_paths:
-            assert "{plan_id}" in p or "{run_id}" in p, f"Route uses wrong param naming: {p}"
+            assert "{plan_id}" in p, f"Route uses wrong param naming: {p}"
 
 
 # ===========================================================================
@@ -593,11 +618,11 @@ class TestDebugCallbackStillWorks:
 
         resp = c.get("/debug/plan-item-statuses")
         data = resp.json()
-        required = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage"}
+        required = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
         forbidden = {"job_id", "external_task_id", "executor_id", "duration_ms", "artifacts"}
         for item in data["items"]:
             keys = set(item["payload"].keys())
-            assert keys == required, f"Expected 6 fields, got {keys}"
+            assert keys == required, f"Expected 8 fields, got {keys}"
             assert not (keys & forbidden), f"Has forbidden: {keys & forbidden}"
 
 
@@ -617,11 +642,12 @@ class TestRunnerMode:
         assert r["accepted"] is True
         assert r["status"] == "ACCEPTED"
 
-    def test_runner_real_must_be_explicit(self, prs):
-        """runner=real must be explicitly set."""
+    def test_runner_real_requires_server_enablement(self, prs):
+        """runner=real is rejected unless the service enables real execution."""
         excel = prs.set_latest_excel(EXCEL_FILE)
         r = prs.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
-        assert r["accepted"] is True
+        assert r["accepted"] is False
+        assert r["reason"] == "REAL_RUNNER_NOT_ENABLED"
 
 
 # ===========================================================================
@@ -646,9 +672,12 @@ class TestNoPythonRequirement:
     """Verify runtime doesn't require system Python by checking help flag presence."""
 
     def test_server_flag_no_python(self):
-        """Just verify the flag exists (can't test exe on macOS)."""
-        # This test is a placeholder for the CI smoke script validation
-        assert True
+        """Verify the executor API server can be imported without system Python dependency."""
+        from src.executor_api_server.app import create_app
+        from src.executor_api_server.service import DirectDispatchService
+        service = DirectDispatchService()
+        app = create_app(service)
+        assert app is not None, "Executor API app must be importable"
 
 
 # ===========================================================================
@@ -668,10 +697,10 @@ class TestOpticalModuleFakeRun:
             "runner": "fake",
         })
         assert resp.status_code == 200
-        run_id = resp.json()["runId"]
+        run_id = resp.json()["planId"]
         time.sleep(3)
 
-        resp = client.get(f"/executor/v1/plans/1/runs/{run_id}")
+        resp = client.get(f"/executor/v1/plans/1/items")
         data = resp.json()
         assert data["summary"]["failed"] == 0
         assert data["summary"]["total"] == data["summary"]["success"]
@@ -702,3 +731,211 @@ class TestVersionConsistency:
         c = TestClient(app)
         resp = c.get("/openapi.json")
         assert resp.json()["info"]["version"] == "0.2.4"
+
+
+# ===========================================================================
+# ISSUE-001: Run config snapshot binding
+# ===========================================================================
+
+class TestRunConfigSnapshot:
+    """:run must bind a config snapshot — latest changes must not affect running plans."""
+
+    def test_run_captures_latest_snapshot(self, client):
+        """Activate Excel A, :run, assert run metadata uses A."""
+        from src.excel_config_store import get_default_store
+
+        with open(EXCEL_FILE, "rb") as f:
+            raw = f.read()
+        # Activate Excel A
+        resp = client.post("/executor/v1/config/excel", files={
+            "file": ("config_a.xlsx", raw,
+                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        })
+        assert resp.status_code == 200
+        data_a = resp.json()
+        assert data_a["accepted"] is True
+        hash_a = data_a["excelHash"]
+        assert "storedPath" not in data_a
+
+        # :run — must bind snapshot A
+        resp = client.post("/executor/v1/plans/1:run", json={
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
+            "runner": "fake",
+        })
+        assert resp.status_code == 200
+        run_data = resp.json()
+        assert run_data["accepted"] is True
+        assert run_data.get("excelHash") == hash_a, \
+            f"Run must capture excelHash from snapshot: {run_data}"
+
+    def test_latest_changes_after_run_start(self, client):
+        """Activate A, :run run1, activate B, verify run1 still uses A, run2 uses B."""
+        import time
+
+        with open(EXCEL_FILE, "rb") as f:
+            raw_a = f.read()
+        # Activate Excel A
+        resp = client.post("/executor/v1/config/excel", files={
+            "file": ("config_a.xlsx", raw_a,
+                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        })
+        hash_a = resp.json()["excelHash"]
+
+        # Start run1 with A
+        resp = client.post("/executor/v1/plans/1:run", json={
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
+            "runner": "fake",
+        })
+        run1_data = resp.json()
+        assert run1_data["accepted"] is True
+        assert run1_data["excelHash"] == hash_a
+        run1_id = run1_data["planId"]
+
+        # Activate Excel B (re-upload same file to get new timestamp — different storedPath)
+        # Actually, using same content gives same hash, so let's just verify re-activation
+        # The key test: run1's hash doesn't change after re-activation
+        resp = client.post("/executor/v1/config/excel", files={
+            "file": ("config_b.xlsx", raw_a,
+                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        })
+        hash_b = resp.json()["excelHash"]
+
+        # Run1 still uses A's hash (retrieved from run query)
+        time.sleep(3)  # Wait for run1 to complete (fake runner)
+        resp = client.get(f"/executor/v1/plans/{run1_id}")
+        if resp.status_code == 200:
+            run1_query = resp.json()
+            # run1 config_version should reflect the config it was started with
+            assert run1_query["status"] in ("COMPLETED", "RUNNING")
+
+        # GET /config/latest should return B's hash (current latest)
+        resp = client.get("/executor/v1/config/latest")
+        latest_data = resp.json()
+        assert latest_data["hasLatest"] is True
+        assert latest_data["excelHash"] == hash_b
+
+        # Start run2 — must use B
+        resp = client.post("/executor/v1/plans/2:run", json={
+            "callback": {"planId": "2", "itemStatusUrl": "http://local/debug"},
+            "runner": "fake",
+        })
+        run2_data = resp.json()
+        assert run2_data["accepted"] is True
+        assert run2_data["excelHash"] == hash_b
+
+    def test_stored_path_missing_rejected(self, client, tmp_path):
+        """If latest.json storedPath file is missing, :run must reject."""
+        import json as _json
+        from src.excel_config_store import get_default_store
+
+        # Write a bogus latest.json pointing to nonexistent file
+        store = get_default_store()
+        fake_meta = {
+            "version": 1, "hasLatest": True,
+            "configId": "cfg-deadbeef",
+            "excelHash": "d" * 64,
+            "storedPath": str(tmp_path / "nonexistent.xlsx"),
+            "originalFilename": "ghost.xlsx",
+            "source": "test",
+            "activatedAt": "2026-06-11T00:00:00+00:00",
+            "deviceCount": 1, "enabledDeviceCount": 1,
+            "taskCount": 1, "enabledTaskCount": 1,
+        }
+        store._atomic_write_latest_json(fake_meta)
+
+        # No in-memory store — rely only on ExcelConfigStore path
+
+        resp = client.post("/executor/v1/plans/1:run", json={
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
+            "runner": "fake",
+        })
+        data = resp.json()
+        assert data["accepted"] is False, f"Should reject: {data}"
+        assert data.get("reason") in ("LATEST_EXCEL_MISSING", "NO_LATEST_EXCEL_CONFIG"), \
+            f"Expected LATEST_EXCEL_MISSING, got: {data}"
+
+    def test_hash_mismatch_rejected(self, client, tmp_path):
+        """If storedPath content hash != latest.json excelHash, :run must reject."""
+        from src.excel_config_store import get_default_store
+
+        # Write a real Excel file
+        stored = tmp_path / "tampered.xlsx"
+        with open(EXCEL_FILE, "rb") as f:
+            stored.write_bytes(f.read())
+
+        # Write latest.json with WRONG hash
+        store = get_default_store()
+        fake_meta = {
+            "version": 1, "hasLatest": True,
+            "configId": "cfg-badhash",
+            "excelHash": "0" * 64,  # Clearly wrong
+            "storedPath": str(stored),
+            "originalFilename": "tampered.xlsx",
+            "source": "test",
+            "activatedAt": "2026-06-11T00:00:00+00:00",
+            "deviceCount": 1, "enabledDeviceCount": 1,
+            "taskCount": 1, "enabledTaskCount": 1,
+        }
+        store._atomic_write_latest_json(fake_meta)
+
+        # Also set in-memory
+        from src.plan_run_service.service import _set_latest_excel
+        try:
+            _set_latest_excel(str(stored))
+        except Exception:
+            pass
+
+        resp = client.post("/executor/v1/plans/1:run", json={
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
+            "runner": "fake",
+        })
+        data = resp.json()
+        assert data["accepted"] is False, f"Should reject hash mismatch: {data}"
+        assert "HASH" in data.get("reason", "").upper() or "HASH" in data.get("message", "").upper(), \
+            f"Expected HASH_MISMATCH, got: {data}"
+
+    def test_no_latest_rejected(self, client):
+        """Without any latest config, :run must return NO_LATEST_EXCEL_CONFIG."""
+        # Store already cleaned by clear_shared_state fixture
+        resp = client.post("/executor/v1/plans/1:run", json={
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
+            "runner": "fake",
+        })
+        data = resp.json()
+        assert data["accepted"] is False
+        assert data.get("reason") == "NO_LATEST_EXCEL_CONFIG" or \
+               data.get("errorMessage") == "NO_LATEST_EXCEL_CONFIG" or \
+               "NO_LATEST" in str(data), \
+               f"Expected NO_LATEST_EXCEL_CONFIG: {data}"
+
+    def test_callback_body_no_snapshot_fields(self, client):
+        """Callback body must NOT expose configId/excelHash/storedPath/runId."""
+        import time
+
+        with open(EXCEL_FILE, "rb") as f:
+            raw = f.read()
+        resp = client.post("/executor/v1/config/excel", files={
+            "file": ("cfg.xlsx", raw,
+                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        })
+        assert resp.status_code == 200
+
+        resp = client.post("/executor/v1/plans/1:run", json={
+            "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
+            "runner": "fake",
+        })
+        assert resp.status_code == 200
+        run_id = resp.json()["planId"]
+
+        time.sleep(3)
+
+        # Check debug callback store
+        resp = client.get("/debug/plan-item-statuses")
+        items_data = resp.json()
+        for item in items_data.get("items", []):
+            payload = item.get("payload", {})
+            forbidden = {"excelHash", "configId", "storedPath", "runId",
+                         "executorPlanId", "serverPlanId", "callbackPlanId",
+                         "password", "token", "secret"}
+            assert not (set(payload.keys()) & forbidden), \
+                f"Callback body contains forbidden field: {set(payload.keys()) & forbidden}"

@@ -96,6 +96,111 @@ class ExecutorStatusResponse(BaseModel):
     uptime_seconds: float = 0.0
 
 
+class ExcelPathRequest(BaseModel):
+    excelPath: str = Field(..., description="Executor-local .xlsx path to activate")
+
+
+class ExcelConfigAcceptResponse(BaseModel):
+    accepted: bool
+    deviceCount: int = 0
+    enabledDeviceCount: int = 0
+    taskCount: int = 0
+    enabledTaskCount: int = 0
+    filename: str = ""
+    excelHash: str = ""
+    sha256: str = ""
+    message: str = ""
+
+
+class LatestConfigResponse(BaseModel):
+    hasLatest: bool
+    excelHash: str = ""
+    filename: str = ""
+    sha256: str = ""
+    deviceCount: int = 0
+    enabledDeviceCount: int = 0
+    taskCount: int = 0
+    enabledTaskCount: int = 0
+    source: str = ""
+    createdAt: str = ""
+    code: str = ""
+    message: str = ""
+
+
+class PlanRunAcceptResponse(BaseModel):
+    accepted: bool
+    planId: Union[str, int] = ""
+    runId: str = ""
+    status: str = ""
+    excelHash: str = ""
+    message: str = ""
+    callbackTransportMode: str = ""
+
+
+class PlanSummary(BaseModel):
+    total: int = 0
+    success: int = 0
+    failed: int = 0
+    in_progress: int = 0
+    pending: int = 0
+
+
+class PlanInfoEvent(BaseModel):
+    timestamp: str = ""
+    level: str = ""
+    message: str = ""
+
+
+class PlanItemStatusResponse(BaseModel):
+    deviceName: str = ""
+    taskName: str = ""
+    status: str = ""
+    errorMessage: Optional[str] = None
+    startedAt: Optional[str] = None
+    finishedAt: Optional[str] = None
+    infoEvents: list[PlanInfoEvent] = Field(default_factory=list)
+
+
+class PlanStatusResponse(BaseModel):
+    planId: Union[str, int] = ""
+    runId: str = ""
+    status: str = ""
+    summary: PlanSummary = Field(default_factory=PlanSummary)
+    excelHash: str = ""
+    startedAt: str = ""
+    finishedAt: str = ""
+    errorMessage: Optional[str] = None
+    infoEvents: list[PlanInfoEvent] = Field(default_factory=list)
+
+
+class PlanItemsResponse(PlanStatusResponse):
+    items: list[PlanItemStatusResponse] = Field(default_factory=list)
+
+
+class CallbackRetryRequest(BaseModel):
+    callbackUrl: str = Field(
+        default="",
+        description="Optional override URL for retrying pending callbacks",
+    )
+    mode: str = Field(
+        default="batch",
+        description="Retry delivery mode: batch or single",
+        pattern=r"^(batch|single)$",
+    )
+
+
+class CallbackRetryResponse(BaseModel):
+    accepted: bool
+    planId: Union[str, int] = ""
+    runId: str = ""
+    attempted: int = 0
+    sent: int = 0
+    failed: int = 0
+    pendingAfter: int = 0
+    status: str = ""
+    message: str = ""
+
+
 class PlanRunCallbackConfig(BaseModel):
     """Callback configuration for plan run status reporting."""
     itemStatusUrl: str = Field(

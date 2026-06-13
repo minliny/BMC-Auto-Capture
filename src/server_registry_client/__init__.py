@@ -16,6 +16,8 @@ import json
 import logging
 import os
 
+from ..utils.sensitive import redact_sensitive_text, redact_sensitive_url
+
 logger = logging.getLogger("bmc_auto_capture.server_registry")
 
 # Active value aliases (case-insensitive)
@@ -69,8 +71,12 @@ def discover_callback_url() -> str | None:
     import urllib.request
     import urllib.error
 
-    redacted_auth = f"{auth[:6]}***<redacted>" if len(auth) > 6 else "<redacted>"
-    logger.info("Registry request: url=%s auth=%s", registry_url, redacted_auth)
+    redacted_auth = "***REDACTED***" if auth else ""
+    logger.info(
+        "Registry request: url=%s auth=%s",
+        redact_sensitive_url(registry_url),
+        redacted_auth,
+    )
 
     req = urllib.request.Request(registry_url, data=body_bytes, headers=headers, method="POST")
     try:
@@ -79,17 +85,28 @@ def discover_callback_url() -> str | None:
             status_code = resp.status
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        logger.error("CALLBACK_REGISTRY_HTTP_ERROR: HTTP %d body=%s", e.code, body[:500])
+        logger.error(
+            "CALLBACK_REGISTRY_HTTP_ERROR: HTTP %d body=%s",
+            e.code,
+            redact_sensitive_text(body)[:500],
+        )
         return None
     except Exception as e:
-        logger.error("CALLBACK_REGISTRY_HTTP_ERROR: %s", e)
+        logger.error(
+            "CALLBACK_REGISTRY_HTTP_ERROR: %s",
+            redact_sensitive_text(str(e)),
+        )
         return None
 
     # --- Parse JSON ---
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as e:
-        logger.error("CALLBACK_REGISTRY_PARSE_ERROR: %s body=%s", e, raw[:500])
+        logger.error(
+            "CALLBACK_REGISTRY_PARSE_ERROR: %s body=%s",
+            redact_sensitive_text(str(e)),
+            redact_sensitive_text(raw)[:500],
+        )
         return None
 
     # --- Extract records ---

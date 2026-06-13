@@ -27,7 +27,7 @@ from src.out.timing import write_all_timing_reports
 
 
 @pytest.fixture(autouse=True)
-def reset_and_mock():
+def reset_and_mock(monkeypatch):
     """Reset registry + mock BMC session runner + SSH executor."""
     reg = ResourceRegistry()
     reg._reset_for_test()
@@ -35,26 +35,27 @@ def reset_and_mock():
     # Mock BMC session runner (no browser)
     import src.scheduler.bmc_session_runner as bsr
     from tests.fakes import FakeBMCSessionRunner
-    _orig_bsr = bsr.BMCEndpointSessionRunner
-    bsr.BMCEndpointSessionRunner = lambda **kw: FakeBMCSessionRunner(
+    monkeypatch.setattr(bsr, "BMCEndpointSessionRunner", lambda **kw: FakeBMCSessionRunner(
         browser_manager=None, endpoint_key=kw.get("endpoint_key", ""),
         plans=kw.get("plans", []), output_root=kw.get("output_root", ""),
         on_plan_done=kw.get("on_plan_done"),
         on_group_done=kw.get("on_group_done"),
-    )
+    ))
 
     # Mock SSH executor (no paramiko)
     from tests.fakes import FakeSSHExecutor
-    import src.executor.ssh_executor as sshe
-    _orig_ssh = sshe.SSHExecutor
+    import src.scheduler.dynamic_scheduler as dynamic_scheduler
     class _MockSSH(FakeSSHExecutor):
         pass
-    sshe.SSHExecutor = lambda *a, **kw: _MockSSH(
-        sleep_seconds=0.05, result_status="EXEC_SUCCESS")
+    monkeypatch.setattr(
+        dynamic_scheduler,
+        "SSHExecutor",
+        lambda *a, **kw: _MockSSH(
+            sleep_seconds=0.05, result_status="EXEC_SUCCESS"
+        ),
+    )
 
     yield
-    bsr.BMCEndpointSessionRunner = _orig_bsr
-    sshe.SSHExecutor = _orig_ssh
     reg._reset_for_test()
 
 

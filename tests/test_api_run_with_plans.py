@@ -86,10 +86,10 @@ def _make_fake_dynamic_app(config, plans, results_list):
 # ---------------------------------------------------------------------------
 def test_two_executions_same_endpoint_serial():
     """Two run_with_plans calls on same endpoint → registry enforces serial."""
-    plans_a = [TaskPlan(device=make_device("DA", bmc_ip="10.0.0.1"),
-                        task=make_bmc_task("BMC_T1"))]
-    plans_b = [TaskPlan(device=make_device("DB", bmc_ip="10.0.0.1"),  # Same IP!
-                        task=make_bmc_task("BMC_T1"))]
+    plans_a = [TaskPlan(device=make_device("DA", inband_ip="10.0.0.1"),
+                        task=make_inband_task("SSH_T1"))]
+    plans_b = [TaskPlan(device=make_device("DB", inband_ip="10.0.0.1"),  # Same IP!
+                        task=make_inband_task("SSH_T1"))]
 
     config = AppConfig()
     config.max_bmc_workers = 2
@@ -123,10 +123,10 @@ def test_two_executions_same_endpoint_serial():
 # ---------------------------------------------------------------------------
 def test_two_executions_different_endpoint_concurrent():
     """Two run_with_plans calls on different endpoints → concurrent."""
-    plans_a = [TaskPlan(device=make_device("DA", bmc_ip="10.0.0.1"),
-                        task=make_bmc_task("BMC_T1"))]
-    plans_b = [TaskPlan(device=make_device("DB", bmc_ip="10.0.0.2"),  # Different IP
-                        task=make_bmc_task("BMC_T1"))]
+    plans_a = [TaskPlan(device=make_device("DA", inband_ip="10.0.0.1"),
+                        task=make_inband_task("SSH_T1"))]
+    plans_b = [TaskPlan(device=make_device("DB", inband_ip="10.0.0.2"),  # Different IP
+                        task=make_inband_task("SSH_T1"))]
 
     config = AppConfig()
     config.max_bmc_workers = 2

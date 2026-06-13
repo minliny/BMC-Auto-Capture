@@ -425,7 +425,7 @@ class TestServiceRunnerMode:
             "src.executor.bmc_executor.BMCExecutor.execute", _fake_bmc
         )
 
-        svc = DirectDispatchService(runner_mode="real")
+        svc = DirectDispatchService(runner_mode="real", allow_real_runner=True)
         from src.job_runner_adapter import RealRunnerAdapter
         assert isinstance(svc._runner, RealRunnerAdapter)
 
@@ -437,7 +437,7 @@ class TestServiceRunnerMode:
             "src.executor.bmc_executor.BMCExecutor.execute", _fake_bmc
         )
 
-        svc = DirectDispatchService(runner_mode="real")
+        svc = DirectDispatchService(runner_mode="real", allow_real_runner=True)
         svc.submit_job(_make_req())
         svc.run_all_pending()
 
@@ -454,7 +454,7 @@ class TestServiceRunnerMode:
             "src.executor.bmc_executor.BMCExecutor.execute", _fake_bmc
         )
 
-        svc = DirectDispatchService(runner_mode="real")
+        svc = DirectDispatchService(runner_mode="real", allow_real_runner=True)
         svc.submit_job(_make_req())
         svc.run_all_pending()
 
@@ -471,7 +471,10 @@ class TestServiceRunnerMode:
         )
 
         lock_mgr = ResourceLockManager()
-        svc = DirectDispatchService(runner_mode="real", lock_manager=lock_mgr)
+        svc = DirectDispatchService(
+            runner_mode="real", lock_manager=lock_mgr,
+            allow_real_runner=True,
+        )
         svc.submit_job(_make_req())
         svc.run_all_pending()
 
@@ -493,6 +496,7 @@ class TestServiceRunnerMode:
         svc = DirectDispatchService(
             runner_mode="real", lock_manager=lock_mgr,
             callback_transport=transport,
+            allow_real_runner=True,
         )
         svc.submit_job(_make_req())
         svc.run_all_pending()
@@ -507,7 +511,7 @@ class TestServiceRunnerMode:
             "src.executor.bmc_executor.BMCExecutor.execute", _fake_bmc
         )
 
-        svc = DirectDispatchService(runner_mode="real")
+        svc = DirectDispatchService(runner_mode="real", allow_real_runner=True)
         svc.submit_job(_make_req())
         svc.run_all_pending()
 

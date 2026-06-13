@@ -100,7 +100,7 @@ class TestResolveTaskCommand:
 
         task = FakeTask()
         object.__setattr__(task, '_per_group_commands', {
-            "A3": "for i in $(seq 0 15); do echo \"==============> $i\"; hccn_tool -i $i -optical-g;done",
+            "A3": "for i in $(seq 0 15); do echo \"==============> $i\"; hccn_tool -i $i -optical -g;done",
         })
 
         cmd = resolve_task_command(task, "A3")
@@ -118,7 +118,7 @@ class TestResolveTaskCommand:
 
         task = FakeTask()
         object.__setattr__(task, '_per_group_commands', {
-            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical-g;done",
+            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical -g;done",
         })
 
         cmd = resolve_task_command(task, "L1")
@@ -506,7 +506,8 @@ class TestDynamicPathResolution:
         module_file = Path(er.__file__).resolve()
         project_root = module_file.parent.parent.parent
         # Must be relative to the actual source tree
-        assert (project_root / "tasks.json").exists() or True  # at least derives correctly
+        # project_root must be derived from __file__, not hardcoded
+        assert project_root.is_dir(), f"project_root must be a directory: {project_root}"
         # The resolver must NOT contain any absolute path like E:\ or C:\Users
         assert "E:\\" not in str(project_root)
         assert "C:\\Users" not in str(project_root)
@@ -532,7 +533,9 @@ class TestDynamicPathResolution:
         resolved = _resolve_playwright_browsers_dir()
         if resolved is not None:
             # Must not be an absolute user-specific path
-            assert "\\Users\\" not in str(resolved) or True  # CI may have /Users/
+            # On macOS/Linux, /Users/ is a valid path; only reject Windows-style user paths
+            if "\\" in str(resolved):
+                assert "\\Users\\" not in str(resolved), f"Windows user-specific path: {resolved}"
             assert "p_OccRemoteDesk" not in str(resolved)
 
     def test_release_root_from_exe_in_runtime_dir(self, monkeypatch, tmp_path):
@@ -646,7 +649,7 @@ class TestParseCommandSpecWithOverride:
         task = FakeTask()
 
         # A3 override (semicolons split into multiple commands)
-        a3_cmd = "for i in $(seq 0 15); do echo \"> $i\"; hccn_tool -i $i -optical-g;done"
+        a3_cmd = "for i in $(seq 0 15); do echo \"> $i\"; hccn_tool -i $i -optical -g;done"
         spec = executor._parse_command_spec(task, override_command=a3_cmd)
         commands = spec["commands"]
         assert len(commands) >= 3  # split by ;
@@ -696,7 +699,7 @@ class TestParseCommandSpecWithOverride:
 
         task = FakeTask()
         object.__setattr__(task, '_per_group_commands', {
-            "A3": "for i in $(seq 0 15); do echo \"==============> $i\"; hccn_tool -i $i -optical-g;done",
+            "A3": "for i in $(seq 0 15); do echo \"==============> $i\"; hccn_tool -i $i -optical -g;done",
         })
 
         # Step 1: resolve
@@ -712,7 +715,7 @@ class TestParseCommandSpecWithOverride:
         # Step 3: verify the actual commands that will execute
         all_cmds = " ".join(c[1] for c in commands)
         assert "hccn_tool" in all_cmds, f"Expected hccn_tool in commands, got: {all_cmds[:120]}"
-        assert "-optical-g" in all_cmds, f"Expected -optical-g flag in commands, got: {all_cmds[:120]}"
+        assert "-optical -g" in all_cmds, f"Expected -optical -g flag in commands, got: {all_cmds[:120]}"
         assert "display interface transceiver" not in all_cmds
 
     def test_full_4_1_15_l1_resolution_chain(self):
@@ -727,7 +730,7 @@ class TestParseCommandSpecWithOverride:
 
         task = FakeTask()
         object.__setattr__(task, '_per_group_commands', {
-            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical-g;done",
+            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical -g;done",
         })
 
         resolved = resolve_task_command(task, "L1")
@@ -748,7 +751,7 @@ class TestParseCommandSpecWithOverride:
 
         task = FakeTask()
         object.__setattr__(task, '_per_group_commands', {
-            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical-g;done",
+            "A3": "for i in $(seq 0 15); do hccn_tool -i $i -optical -g;done",
         })
 
         resolved = resolve_task_command(task, "L2")
@@ -808,7 +811,7 @@ class TestNoSplit:
     def test_parse_commands_no_split_keeps_for_loop_intact(self):
         from src.executor.ssh_executor import SSHExecutor
         e = SSHExecutor()
-        cmd = 'for i in $(seq 0 15); do echo "==============> $i"; hccn_tool -i $i -optical-g;done'
+        cmd = 'for i in $(seq 0 15); do echo "==============> $i"; hccn_tool -i $i -optical -g;done'
         result = e._parse_commands(cmd, no_split=True)
         assert len(result) == 1, f"Expected 1 command, got {len(result)}: {result}"
         assert result[0] == cmd
@@ -816,7 +819,7 @@ class TestNoSplit:
     def test_parse_commands_normal_split_by_semicolon(self):
         from src.executor.ssh_executor import SSHExecutor
         e = SSHExecutor()
-        cmd = 'for i in $(seq 0 15); do echo "> $i"; hccn_tool -i $i -optical-g;done'
+        cmd = 'for i in $(seq 0 15); do echo "> $i"; hccn_tool -i $i -optical -g;done'
         result = e._parse_commands(cmd, no_split=False)
         # Without no_split, ; causes splitting
         assert len(result) > 1
@@ -847,7 +850,7 @@ class TestNoSplit:
 
         task = FakeTask()
         object.__setattr__(task, '_per_group_commands', {
-            "A3": 'for i in $(seq 0 15); do echo "==============> $i"; hccn_tool -i $i -optical-g;done',
+            "A3": 'for i in $(seq 0 15); do echo "==============> $i"; hccn_tool -i $i -optical -g;done',
         })
         object.__setattr__(task, '_per_group_no_split', {"A3": True})
 
@@ -860,7 +863,7 @@ class TestNoSplit:
         commands = spec["commands"]
         assert len(commands) == 1, f"Expected 1 command with no_split, got {len(commands)}"
         assert "hccn_tool" in commands[0][1]
-        assert "-optical-g" in commands[0][1]
+        assert "-optical -g" in commands[0][1]
         assert "display interface transceiver" not in commands[0][1]
 
     def test_4_1_15_l1_no_no_split_fallback(self):
@@ -874,7 +877,7 @@ class TestNoSplit:
 
         task = FakeTask()
         object.__setattr__(task, '_per_group_commands', {
-            "A3": 'for i in $(seq 0 15); do hccn_tool -i $i -optical-g;done',
+            "A3": 'for i in $(seq 0 15); do hccn_tool -i $i -optical -g;done',
         })
         object.__setattr__(task, '_per_group_no_split', {"A3": True})
 
@@ -894,7 +897,7 @@ class TestNoSplit:
         svc.set_latest_excel(excel)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         time.sleep(3)
-        items_data = svc.get_run_items(r["runId"])
+        items_data = svc.get_plan_items(r["planId"])
         for item in items_data["items"]:
             assert "startedAt" in item
             assert "finishedAt" in item

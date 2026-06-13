@@ -24,7 +24,9 @@ class SaveHtmlHandler(RuleActionHandler):
     action_type = "save_html"
 
     async def execute(self, action, context) -> None:
-        html = await context.page.content()
+        from ..utils.html_redaction import capture_redacted_html
+
+        html = await capture_redacted_html(context.page)
         path = context.resolve_path(action.value or "page.html")
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)

@@ -25,14 +25,12 @@ def _redact_headers(headers: dict[str, str]) -> dict[str, str]:
 
 
 def _redact_payload_for_log(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy of payload safe for logging (no tokens/secrets)."""
-    safe = dict(payload)
-    for key in list(safe.keys()):
-        if any(s in key.lower() for s in ("password", "secret", "token", "credential")):
-            safe[key] = _REDACTED
-    if "error" in safe and isinstance(safe["error"], dict):
-        safe["error"] = dict(safe["error"])
-    return safe
+    """Return a copy of payload safe for logging (no tokens/secrets).
+
+    Uses recursive redaction via redact_nested_payload for deep coverage.
+    """
+    from ..utils.sensitive import redact_nested_payload
+    return redact_nested_payload(payload)
 
 
 class HttpCallbackTransport:
@@ -57,9 +55,10 @@ class HttpCallbackTransport:
 
         safe_headers = _redact_headers(req_headers)
         safe_payload = _redact_payload_for_log(payload)
+        from ..utils.sensitive import redact_sensitive_text, redact_sensitive_url
         logger.debug(
             "Callback POST url=%s payload=%s headers=%s",
-            url, json.dumps(safe_payload), safe_headers,
+            redact_sensitive_url(url), json.dumps(safe_payload), safe_headers,
         )
 
         req = urllib.request.Request(url, data=data, headers=req_headers, method="POST")
@@ -68,7 +67,11 @@ class HttpCallbackTransport:
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                 status = resp.status
                 body = resp.read().decode("utf-8", errors="replace")
-                logger.debug("Callback response: status=%d body=%s", status, body[:500])
+                logger.debug(
+                    "Callback response: status=%d body=%s",
+                    status,
+                    redact_sensitive_text(body)[:500],
+                )
                 return status, body
         except urllib.error.HTTPError as e:
             body = ""
@@ -78,12 +81,20 @@ class HttpCallbackTransport:
                 pass
             logger.warning(
                 "Callback HTTP error: status=%d url=%s body=%s",
-                e.code, url, body[:300],
+                e.code, redact_sensitive_url(url), redact_sensitive_text(body)[:300],
             )
             return e.code, body
         except urllib.error.URLError as e:
-            logger.error("Callback URL/network error: url=%s reason=%s", url, e.reason)
-            return 0, str(e.reason)
+            logger.error(
+                "Callback URL/network error: url=%s reason=%s",
+                redact_sensitive_url(url),
+                redact_sensitive_text(str(e.reason)),
+            )
+            return 0, redact_sensitive_text(str(e.reason))
         except Exception as e:
-            logger.error("Callback unexpected error: url=%s error=%s", url, e)
-            return 0, str(e)
+            logger.error(
+                "Callback unexpected error: url=%s error=%s",
+                redact_sensitive_url(url),
+                redact_sensitive_text(str(e)),
+            )
+            return 0, redact_sensitive_text(str(e))

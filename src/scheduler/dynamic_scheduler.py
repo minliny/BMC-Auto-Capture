@@ -25,9 +25,11 @@ from ..models.execution_result import ExecutionResult
 from ..executor.ssh_executor import SSHExecutor
 from ..executor.bmc_executor import BMCExecutor
 from ..executor.browser_manager import BrowserManager
+from ..executor.retry import execute_with_retry
+from ..models.verdict import compute_verdict
 from ..out.console import start as cstart, done as cdone, heartbeat as cheartbeat, info as cinfo
 from .resource_monitor import ResourceMonitor
-from .worker_pool import WorkerPool
+from .worker_pool import DispatchNotCommittedError, WorkerPool
 from .resource_registry import ResourceRegistry
 
 logger = logging.getLogger("bmc_auto_capture.scheduler")
@@ -50,6 +52,8 @@ class DynamicScheduler:
         self,
         config: AppConfig,
         event_bus=None,
+        stop_event: threading.Event | None = None,
+        pause_event: threading.Event | None = None,
     ):
         self._config = config
         self._event_bus = event_bus
@@ -62,11 +66,22 @@ class DynamicScheduler:
         # Results
         self._results: list[ExecutionResult] = []
         self._results_lock = threading.Lock()
+        self._result_index_by_plan_id: dict[str, int] = {}
+        self._result_sources: dict[str, str] = {}
 
-        # Control
-        self._stop_event = threading.Event()
-        self._pause_event = threading.Event()
-        self._pause_event.set()
+        # Control — P0-3: accept external events from App for unified stop/pause
+        if stop_event is not None:
+            self._stop_event = stop_event
+        else:
+            self._stop_event = threading.Event()
+        if pause_event is not None:
+            self._pause_event = pause_event
+        else:
+            self._pause_event = threading.Event()
+            self._pause_event.set()
+
+        # AUDIT-003: track WHY stop was triggered
+        self._stop_reason: str = "scheduler_stop"  # or "route_change"
 
         # Pools — max_bmc_workers = max concurrent BMC endpoint groups,
         # max_ssh_workers = max concurrent INBAND endpoint groups.
@@ -181,6 +196,51 @@ class DynamicScheduler:
         except KeyboardInterrupt:
             logger.info("用户中断 — stopping scheduler")
         finally:
+            # AUDIT-003: generate results for all remaining pending plans
+            # (stop / route change / exception — plans that never got dispatched)
+            pending_plans: list[TaskPlan] = []
+            for q in self._endpoint_queues.values():
+                while q:
+                    pending_plans.append(q.popleft())
+
+            if pending_plans:
+                _now = time.time()
+                logger.warning(
+                    "AUDIT-003: %d pending plans will be marked SKIPPED (%s)",
+                    len(pending_plans), self._stop_reason,
+                )
+                for plan in pending_plans:
+                    plan.status = "EXEC_SKIPPED_ROUTE_CHANGED" if self._stop_reason == "route_change" else "EXEC_SKIPPED_STOPPED"
+                    plan.ended_at = _now
+                    plan.completed_at = _now
+                    plan._resource_lease_held = False
+                    r = ExecutionResult(
+                        plan_id=plan.plan_id,
+                        task_id=plan.task_id,
+                        client_task_id=plan.client_task_id,
+                        device_name=plan.device.device_name,
+                        device_group=plan.device.device_group,
+                        bmc_ip=plan.device.bmc_ip,
+                        inband_ip=plan.device.inband_ip,
+                        task_name=plan.task.task_name,
+                        task_type=plan.task.task_type,
+                        execution_mode=plan.task.execution_mode,
+                        execution_status=plan.status,
+                        execution_failure_reason=f"调度停止: {self._stop_reason}",
+                        started_at=_now,
+                        ended_at=_now,
+                        duration_seconds=0.001,
+                        endpoint_key=plan.endpoint_key,
+                        endpoint_type=plan.endpoint_type,
+                    )
+                    r.final_verdict = compute_verdict(r)
+                    self._append_result_once(
+                        plan.plan_id, r, source=f"stop:{self._stop_reason}",
+                    )
+                logger.info(
+                    "AUDIT-003: %d pending plans → SKIPPED (total results now %d)",
+                    len(pending_plans), len(self._results),
+                )
             drained = self._drain()
 
             # Close browsers on worker threads BEFORE pool shutdown
@@ -213,7 +273,8 @@ class DynamicScheduler:
 
         return self._results
 
-    def stop(self):
+    def stop(self, reason: str = "scheduler_stop"):
+        self._stop_reason = reason
         self._stop_event.set()
         self._pause_event.set()
 
@@ -294,6 +355,14 @@ class DynamicScheduler:
             skipped = 0
             ready_snapshot = len(self._ready_endpoints)
             while pool.has_idle() and self._ready_endpoints:
+                # AUDIT-003: check stop before dispatching any new work
+                if self._stop_event.is_set():
+                    logger.debug("Dispatch: stop set — aborting dispatch loop")
+                    return
+                # AUDIT-003: respect pause — don't dispatch while paused
+                if not self._pause_event.is_set():
+                    logger.debug("Dispatch: paused — aborting dispatch loop")
+                    return
                 if skipped >= ready_snapshot:
                     break
 
@@ -377,13 +446,28 @@ class DynamicScheduler:
                             resource_key=endpoint_key,
                             on_complete=lambda results, ek=endpoint_key: self._on_bmc_group_done(results, ek),
                         )
-                    except Exception:
-                        # Dispatch failed — push all plans back
+                    except DispatchNotCommittedError:
+                        # No worker was submitted: release and requeue are safe.
+                        try:
+                            self._registry.release(endpoint_key)
+                        except Exception:
+                            pass
                         for gp in reversed(group_plans):
                             q.appendleft(gp)
                             gp.status = "PENDING"
+                            gp._resource_lease_held = False
                         self._ready_endpoints.append(endpoint_key)
                         logger.error("BMC group dispatch failed for %s, plans re-queued", endpoint_key)
+                        break
+                    except Exception:
+                        # Unknown post-submit state: never release/requeue and risk
+                        # duplicate endpoint execution.
+                        logger.critical(
+                            "BMC dispatch state unknown after exception for %s; "
+                            "lease retained, no requeue",
+                            endpoint_key,
+                            exc_info=True,
+                        )
 
                     skipped = 0
                     continue
@@ -409,7 +493,7 @@ class DynamicScheduler:
                     "开始 [%s] %s / %s (endpoint=%s)",
                     plan.protocol, plan.device.device_name, plan.task.task_name, endpoint_key,
                 )
-                cstart(plan.protocol, plan.device.device_name, plan.task.task_name)
+                cstart(plan.protocol, device_group=plan.device.device_group, device=plan.device.device_name, task=plan.task.task_name)
 
                 if self._event_bus:
                     self._event_bus.emit("plan_started", plan=plan)
@@ -420,13 +504,27 @@ class DynamicScheduler:
                         resource_key=endpoint_key,
                         on_complete=lambda result, p=plan, ek=endpoint_key: self._on_plan_done(p, result, ek),
                     )
-                except Exception:
-                    # Dispatch failed — push task back to queue front
+                except DispatchNotCommittedError:
+                    # No worker was submitted: release and requeue are safe.
+                    try:
+                        self._registry.release(endpoint_key)
+                    except Exception:
+                        pass
                     q.appendleft(plan)
                     plan.status = "PENDING"
+                    plan._resource_lease_held = False
                     self._ready_endpoints.append(endpoint_key)
                     logger.error("派发失败 for %s/%s, 任务已重新入队",
                                  plan.device.device_name, plan.task.task_name)
+                    break
+                except Exception:
+                    logger.critical(
+                        "Dispatch state unknown after exception for %s/%s; "
+                        "lease retained, no requeue",
+                        plan.device.device_name,
+                        plan.task.task_name,
+                        exc_info=True,
+                    )
 
     def _execute_plan(self, plan: TaskPlan) -> ExecutionResult:
         try:
@@ -434,9 +532,13 @@ class DynamicScheduler:
                 exec_ = BMCExecutor(self._bm, connect_timeout=self._config.tcp_connect_timeout,
                              popup_timeout=self._config.popup_dismiss_selector_timeout)
             elif plan.protocol == "SSH":
-                exec_ = SSHExecutor(connect_timeout=self._config.tcp_connect_timeout)
+                exec_ = SSHExecutor(
+                    connect_timeout=self._config.tcp_connect_timeout,
+                    command_timeout=self._config.ssh_command_timeout,
+                    idle_timeout=self._config.ssh_idle_timeout,
+                )
             else:
-                return ExecutionResult(
+                r = ExecutionResult(
                     plan_id=plan.plan_id,
                     device_name=plan.device.device_name,
                     task_name=plan.task.task_name,
@@ -445,10 +547,12 @@ class DynamicScheduler:
                     started_at=time.time(),
                     ended_at=time.time(),
                 )
+                r.final_verdict = compute_verdict(r)
+                return r
 
             # Mark executor start timing
             plan.executor_started_at = time.time()
-            result = exec_.execute(plan, self._config.output_root)
+            result = execute_with_retry(exec_, plan, self._config.output_root)
             plan.executor_finished_at = time.time()
 
             # Copy timing + endpoint data from plan into result
@@ -463,7 +567,7 @@ class DynamicScheduler:
             plan.executor_finished_at = time.time()
             logger.error("_execute_plan crashed for %s/%s: %s",
                          plan.device.device_name, plan.task.task_name, e)
-            return ExecutionResult(
+            r = ExecutionResult(
                 plan_id=plan.plan_id,
                 device_name=plan.device.device_name,
                 task_name=plan.task.task_name,
@@ -472,6 +576,8 @@ class DynamicScheduler:
                 started_at=time.time(),
                 ended_at=time.time(),
             )
+            r.final_verdict = compute_verdict(r)
+            return r
 
     def _on_plan_done(self, plan: TaskPlan, result: ExecutionResult, endpoint_key: str):
         """Called from worker thread when a task completes."""
@@ -490,8 +596,14 @@ class DynamicScheduler:
         plan._resource_lease_held = False
         plan._execution_id = ""
 
-        with self._results_lock:
-            self._results.append(result)
+        # AUDIT-008: ensure final_verdict is set
+        result.final_verdict = compute_verdict(result)
+
+        accepted = self._append_result_once(
+            plan.plan_id, result, source="worker_callback",
+        )
+        if not accepted:
+            return
 
         # Re-add endpoint to ready queue if it still has pending tasks
         q = self._endpoint_queues.get(endpoint_key)
@@ -505,7 +617,7 @@ class DynamicScheduler:
         reason = ""
         if status_icon == "FAIL" and result.execution_failure_reason:
             reason = f"  [{result.execution_failure_reason[:60]}]"
-        cdone(len(self._results), self._dispatched_count, status_icon, result.device_name, result.task_name, reason)
+        cdone(len(self._results), self._dispatched_count, status_icon, device_group=result.device_group, device=result.device_name, task=result.task_name, reason=reason)
 
     def _on_bmc_plan_in_group(self, plan: TaskPlan, result: ExecutionResult):
         """Per-plan callback during BMC session group — no release, no re-queue."""
@@ -515,8 +627,14 @@ class DynamicScheduler:
         plan._resource_lease_held = False
         plan._execution_id = ""
 
-        with self._results_lock:
-            self._results.append(result)
+        # AUDIT-008: ensure final_verdict is set
+        result.final_verdict = compute_verdict(result)
+
+        accepted = self._append_result_once(
+            plan.plan_id, result, source="bmc_plan_callback",
+        )
+        if not accepted:
+            return
 
         if self._event_bus:
             self._event_bus.emit("plan_completed", plan=plan, result=result)
@@ -526,7 +644,7 @@ class DynamicScheduler:
         if _icon == "FAIL" and result.execution_failure_reason:
             _reason = f"  [{result.execution_failure_reason[:60]}]"
         cdone(len(self._results), self._dispatched_count, _icon,
-              result.device_name, result.task_name, _reason)
+              device_group=result.device_group, device=result.device_name, task=result.task_name, reason=_reason)
 
     def _on_bmc_group_done(self, results: list[ExecutionResult], endpoint_key: str):
         """Called when a BMC session group completes. Release registry + log group summary.
@@ -548,6 +666,65 @@ class DynamicScheduler:
                 "BMC group done: endpoint=%s plans=%d passed=%d failed=%d",
                 endpoint_key, len(results), passed, failed,
             )
+
+    @staticmethod
+    def _result_priority(status: str) -> int:
+        if status.startswith("EXEC_SKIPPED"):
+            return 10
+        if status in {
+            "EXEC_SUCCESS", "EXEC_FAILED", "EXEC_ERROR",
+            "EXEC_TIMEOUT", "EXEC_PARTIAL",
+        }:
+            return 100
+        return 50
+
+    def _append_result_once(
+        self, plan_id: str, result: ExecutionResult, source: str,
+    ) -> bool:
+        """Append or upgrade one final result per plan_id.
+
+        Executed terminal results outrank scheduler-generated skipped results.
+        Results at the same priority are first-wins.
+        """
+        stable_plan_id = plan_id or result.plan_id
+        if not stable_plan_id:
+            logger.error(
+                "Result rejected without plan_id: status=%s source=%s",
+                result.execution_status,
+                source,
+            )
+            return False
+        result.plan_id = stable_plan_id
+
+        with self._results_lock:
+            old_index = self._result_index_by_plan_id.get(stable_plan_id)
+            if old_index is None:
+                self._result_index_by_plan_id[stable_plan_id] = len(self._results)
+                self._result_sources[stable_plan_id] = source
+                self._results.append(result)
+                return True
+
+            old_result = self._results[old_index]
+            old_source = self._result_sources.get(stable_plan_id, "unknown")
+            old_priority = self._result_priority(old_result.execution_status)
+            new_priority = self._result_priority(result.execution_status)
+            replace = new_priority > old_priority
+
+            logger.warning(
+                "Duplicate final result plan_id=%s old_status=%s new_status=%s "
+                "old_source=%s new_source=%s action=%s",
+                stable_plan_id,
+                old_result.execution_status,
+                result.execution_status,
+                old_source,
+                source,
+                "replace" if replace else "discard",
+            )
+            if replace:
+                self._results[old_index] = result
+                self._result_sources[stable_plan_id] = source
+                return True
+            return False
 
     def _drain(self) -> bool:
         """Wait for running tasks to finish."""

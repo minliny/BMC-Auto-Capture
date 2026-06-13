@@ -4,11 +4,11 @@ Start the Executor API server for receiving dispatched jobs.
 
 Usage:
   python scripts/start_executor_api_server.py
-  python scripts/start_executor_api_server.py --host 0.0.0.0 --port 18000
+  python scripts/start_executor_api_server.py --host 127.0.0.1 --port 8080
   python scripts/start_executor_api_server.py --executor-id exec-win-001 --callback-transport http
 
 Windows PowerShell:
-  python scripts/start_executor_api_server.py --host 0.0.0.0 --port 18000 --executor-id exec-win-001 --callback-transport http
+  python scripts/start_executor_api_server.py --host 127.0.0.1 --port 8080 --executor-id exec-win-001 --callback-transport http
 """
 
 from __future__ import annotations
@@ -34,12 +34,12 @@ def main():
         description="BMC Auto-Capture Executor API Server v0.1"
     )
     parser.add_argument(
-        "--host", default="0.0.0.0",
-        help="Listen host (default: 0.0.0.0)",
+        "--host", default="127.0.0.1",
+        help="Listen host (default: 127.0.0.1)",
     )
     parser.add_argument(
-        "--port", type=int, default=18000,
-        help="Listen port (default: 18000)",
+        "--port", type=int, default=8080,
+        help="Listen port (default: 8080)",
     )
     parser.add_argument(
         "--executor-id", default="exec-win-001",
@@ -58,6 +58,10 @@ def main():
         help="Job runner: fake (dry-run for testing) or real (BMC/SSH execution). Default: fake",
     )
     parser.add_argument(
+        "--enable-real-runner", action="store_true",
+        help="Allow API requests to execute real BMC/SSH tasks",
+    )
+    parser.add_argument(
         "--output", default="./output_api_direct",
         help="Output directory for real runner artifacts (default: ./output_api_direct)",
     )
@@ -65,6 +69,9 @@ def main():
 
     use_http = args.callback_transport == "http"
     use_real = args.runner == "real"
+    if use_real and not args.enable_real_runner:
+        print("ERROR: --runner real requires --enable-real-runner", file=sys.stderr)
+        sys.exit(2)
 
     try:
         from src.executor_api_server.service import DirectDispatchService
@@ -88,6 +95,7 @@ def main():
         callback_timeout_seconds=args.callback_timeout,
         runner_mode="real" if use_real else "fake",
         output_root=args.output,
+        allow_real_runner=args.enable_real_runner,
     )
     service.start_background_worker()
 
@@ -99,10 +107,14 @@ def main():
         use_http_callback=use_http,
         callback_timeout_seconds=args.callback_timeout,
         output_root=args.output,
+        allow_real_runner=args.enable_real_runner,
     )
 
     from src.plan_run_service import PlanRunService
-    plan_run_service = PlanRunService(use_http_callback=use_http)
+    plan_run_service = PlanRunService(
+        use_http_callback=use_http,
+        allow_real_runner=args.enable_real_runner,
+    )
 
     app = create_app(service, run_service=run_service, plan_run_service=plan_run_service)
 
@@ -113,7 +125,7 @@ def main():
     print(f"  Listen      : {args.host}:{args.port}")
     print(f"  Runner      : {runner_label}")
     print(f"  Callback    : {transport_label}")
-    print(f"  Output      : {args.output}")
+    print(f"  Real runner : {args.enable_real_runner}")
     print(f"  Docs        : http://{args.host}:{args.port}/docs")
     print(f"  Endpoints:")
     print(f"    POST /executor/v1/jobs              — receive dispatched job")

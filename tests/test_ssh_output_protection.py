@@ -1,0 +1,169 @@
+"""TI-001~003: SSH output protection and A3 marker diagnostics tests."""
+from __future__ import annotations
+
+import sys
+import time
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.executor.ssh_executor import SSHExecutor, HCCN_MARKER_RE
+
+
+class FakeChannel:
+    """Fake paramiko channel for testing SSH output reading."""
+
+    def __init__(self, chunks=None, prompt_after=None):
+        self._chunks = list(chunks or [])
+        self._prompt_after = prompt_after
+        self._idx = 0
+        self._closed = False
+        self._timeout = 60
+        self._exit_status = 0
+
+    def recv_ready(self):
+        return self._idx < len(self._chunks)
+
+    def recv(self, size):
+        if self._idx >= len(self._chunks):
+            return b""
+        chunk = self._chunks[self._idx]
+        self._idx += 1
+        return chunk
+
+    def recv_stderr_ready(self):
+        return False
+
+    def exit_status_ready(self):
+        return self._idx >= len(self._chunks)
+
+    def settimeout(self, t):
+        self._timeout = t
+
+    def close(self):
+        self._closed = True
+
+    def send(self, data):
+        return len(data)
+
+
+class TestReadTerminalUntilIdle:
+    """TI-001: terminal_session output protection."""
+
+    def test_fast_output_then_idle_exits_normally(self):
+        """Quick output then idle: normal exit with idle_timeout_hit."""
+        executor = SSHExecutor()
+        chunks = [b"output line 1\n", b"output line 2\n"]
+        channel = FakeChannel(chunks=chunks)
+        output, meta = executor._read_terminal_until_idle(
+            channel, timeout=5, idle_timeout=0.1,
+        )
+        assert "output line 1" in output
+        assert meta["idle_timeout_hit"] is True
+        assert meta["output_truncated"] is False
+        assert meta["bytes_read"] > 0
+
+    def test_continuous_output_triggers_max_bytes(self):
+        """Continuous output triggers max_output_bytes limit."""
+        executor = SSHExecutor()
+        # Generate enough chunks to exceed 1MB
+        big_chunks = [b"A" * 100000 for _ in range(20)]
+        channel = FakeChannel(chunks=big_chunks)
+        output, meta = executor._read_terminal_until_idle(
+            channel, timeout=5, idle_timeout=0.1, max_output_bytes=500000,
+        )
+        assert meta["output_truncated"] is True
+        assert meta["timeout_reason"] == "max_output_bytes_reached"
+
+    def test_no_output_triggers_no_output_timeout(self):
+        """No output at all triggers no_output_timeout."""
+        executor = SSHExecutor()
+        channel = FakeChannel(chunks=[])
+        output, meta = executor._read_terminal_until_idle(
+            channel, timeout=1, idle_timeout=0.3,
+        )
+        assert meta["timeout_reason"] == "no_output_timeout"
+        assert meta["bytes_read"] == 0
+
+    def test_meta_includes_last_non_empty_line(self):
+        """Meta includes last_non_empty_line."""
+        executor = SSHExecutor()
+        chunks = [b"line1\n", b"line2\n", b"\n", b"line3\n"]
+        channel = FakeChannel(chunks=chunks)
+        output, meta = executor._read_terminal_until_idle(
+            channel, timeout=5, idle_timeout=0.1,
+        )
+        assert meta["last_non_empty_line"] == "line3"
+
+
+class TestReadChannel:
+    """TI-002: _read_channel large output protection."""
+
+    def test_read_channel_with_output_limit(self):
+        """_read_channel respects max_output_bytes."""
+        executor = SSHExecutor()
+        big_chunks = [b"B" * 100000 for _ in range(20)]
+        channel = FakeChannel(chunks=big_chunks)
+        stdout = MagicMock()
+        stdout.read.return_value = b""
+        stdin = MagicMock()
+        device = MagicMock()
+        device.device_name = "test-device"
+
+        out, err, events, timed_out, more = executor._read_channel(
+            channel, stdout, stdin, device,
+            cmd_deadline=time.time() + 5,
+            idle_timeout=0.1,
+            max_output_bytes=500000,
+        )
+        total_bytes = sum(len(c) for c in out)
+        assert total_bytes <= 600000  # some margin for chunk boundaries
+
+
+class TestHccnMarker:
+    """TI-003: A3 hccn_tool marker diagnostics."""
+
+    def test_hccn_marker_regex(self):
+        """HCCN marker regex matches ===========> N pattern."""
+        text = "some output\n==============> 7\nmore output"
+        matches = HCCN_MARKER_RE.findall(text)
+        assert matches == ["7"]
+
+    def test_hccn_marker_multiple(self):
+        """Multiple markers are all found, last one returned."""
+        text = "==============> 0\n==============> 5\n==============> 7\n"
+        matches = HCCN_MARKER_RE.findall(text)
+        assert matches == ["0", "5", "7"]
+
+    def test_terminal_session_captures_last_marker(self):
+        """terminal_session meta includes last_marker for hccn output."""
+        executor = SSHExecutor()
+        chunks = [
+            b"==============> 0\n",
+            b"==============> 5\n",
+            b"==============> 7\n",
+        ]
+        channel = FakeChannel(chunks=chunks)
+        output, meta = executor._read_terminal_until_idle(
+            channel, timeout=5, idle_timeout=0.1,
+        )
+        assert meta["last_marker"] == 7
+
+    def test_terminal_session_marker_at_7_then_timeout(self):
+        """When timeout after marker 7, diagnostics include last_marker=7."""
+        executor = SSHExecutor()
+        chunks = [
+            b"==============> 0\n",
+            b"==============> 5\n",
+            b"==============> 7\n",
+        ]
+        channel = FakeChannel(chunks=chunks)
+        output, meta = executor._read_terminal_until_idle(
+            channel, timeout=5, idle_timeout=0.1,
+        )
+        # After chunks exhausted, idle_timeout will trigger
+        assert meta["last_marker"] == 7
+        assert meta["idle_timeout_hit"] is True

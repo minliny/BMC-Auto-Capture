@@ -21,7 +21,7 @@
   Listen host for the Executor API (default: 127.0.0.1).
 
 .PARAMETER Port
-  Listen port for the Executor API (default: 18000).
+  Listen port for the Executor API (default: 8080).
 
 .PARAMETER Quick
   Skip verbose output; just pass/fail.
@@ -35,7 +35,7 @@ param(
     [string]$RuntimeExe = ".\runtime\bmc-engine.exe",
     [string]$ExcelPath = ".\app\examples\task_template.xlsx",
     [string]$Host = "127.0.0.1",
-    [int]$Port = 18000,
+    [int]$Port = 8080,
     [switch]$Quick = $false
 )
 

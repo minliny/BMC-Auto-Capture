@@ -17,6 +17,9 @@ def resolve_template(tmpl: str, device, task, extra: Optional[dict] = None) -> s
     支持中英文字段名，同时支持 Excel 表头名和旧版英文变量名。
     未识别的变量原样保留，可用于检测残留花括号。
 
+    P0-2: 不允许密码变量进入路径/文件名/日志/CSV。
+    调用 resolve_template 前必须用 check_forbidden_template_vars() 检查。
+
     Args:
         tmpl: 模板字符串，可能包含 {变量名}
         device: Device 对象，包含 device_name, device_group, bmc_ip 等
@@ -42,10 +45,11 @@ def resolve_template(tmpl: str, device, task, extra: Optional[dict] = None) -> s
     result = result.replace("{设备名称}", device.device_name)
     result = result.replace("{带外管理IP}", device.bmc_ip)
     result = result.replace("{带外管理用户名}", device.bmc_username)
-    result = result.replace("{带外管理密码}", device.bmc_password)
+    # P0-2: 密码变量替换为 REDACTED，防止泄露到路径/文件名
+    result = result.replace("{带外管理密码}", "REDACTED")
     result = result.replace("{带内管理IP}", device.inband_ip)
     result = result.replace("{带内管理用户名}", device.inband_username)
-    result = result.replace("{带内管理密码}", device.inband_password)
+    result = result.replace("{带内管理密码}", "REDACTED")
     result = result.replace("{设备标签}", getattr(device, "tags", ""))
 
     # 英文变量 (旧版默认模板兼容)
@@ -70,10 +74,10 @@ def resolve_template(tmpl: str, device, task, extra: Optional[dict] = None) -> s
     result = result.replace("{DeviceName}", device.device_name)
     result = result.replace("{OOB_IP}", device.bmc_ip)
     result = result.replace("{OOB_Username}", device.bmc_username)
-    result = result.replace("{OOB_Password}", device.bmc_password)
+    result = result.replace("{OOB_Password}", "REDACTED")
     result = result.replace("{IB_IP}", device.inband_ip)
     result = result.replace("{IB_Username}", device.inband_username)
-    result = result.replace("{IB_Password}", device.inband_password)
+    result = result.replace("{IB_Password}", "REDACTED")
     result = result.replace("{OutputDir}", "")
     result = result.replace("{FileNamePattern}", "")
 

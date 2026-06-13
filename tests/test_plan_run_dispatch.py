@@ -318,5 +318,5 @@ class TestScripts:
             capture_output=True, text=True, timeout=10,
         )
         assert result.returncode == 0
-        assert "--excel" in result.stdout
-        assert "--run-id" in result.stdout
+        assert "--plan-id" in result.stdout
+        assert "--item-status-url" in result.stdout

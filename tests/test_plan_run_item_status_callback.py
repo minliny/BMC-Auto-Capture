@@ -203,12 +203,13 @@ class TestPlanRun:
         assert r["accepted"] is True
 
     def test_real_runner_rejected(self, tmp_path):
-        """22. runner=real is accepted now."""
+        """22. runner=real requires server-side enablement."""
         transport = FakeCallbackTransport()
         svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
-        assert r["accepted"] is True  # now supported
+        assert r["accepted"] is False
+        assert r["reason"] == "REAL_RUNNER_NOT_ENABLED"
 
 
 # ===========================================================================
@@ -248,7 +249,7 @@ class TestRealRunner:
         monkeypatch.setattr("src.job_runner_adapter.RealRunnerAdapter.run_job", _fake_run_job)
 
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport)
+        svc = PlanRunService(callback_transport=transport, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         svc.run_by_plan_id(r["planId"])
@@ -263,7 +264,7 @@ class TestRealRunner:
         monkeypatch.setattr("src.job_runner_adapter.RealRunnerAdapter.run_job", _fake_run_job)
 
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport)
+        svc = PlanRunService(callback_transport=transport, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
@@ -280,7 +281,7 @@ class TestRealRunner:
         monkeypatch.setattr("src.job_runner_adapter.RealRunnerAdapter.run_job", _fake_run_job)
 
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport)
+        svc = PlanRunService(callback_transport=transport, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
@@ -299,7 +300,7 @@ class TestRealRunner:
         monkeypatch.setattr("src.job_runner_adapter.RealRunnerAdapter.run_job", _crash)
 
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport)
+        svc = PlanRunService(callback_transport=transport, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
@@ -318,7 +319,7 @@ class TestRealRunner:
         monkeypatch.setattr("src.job_runner_adapter.RealRunnerAdapter.run_job", _fake_run_job)
 
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport)
+        svc = PlanRunService(callback_transport=transport, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
@@ -337,7 +338,7 @@ class TestRealRunner:
         monkeypatch.setattr("src.job_runner_adapter.RealRunnerAdapter.run_job", _fake_run_job)
 
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport)
+        svc = PlanRunService(callback_transport=transport, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
@@ -353,7 +354,7 @@ class TestRealRunner:
         monkeypatch.setattr("src.job_runner_adapter.RealRunnerAdapter.run_job", _fake_run_job)
 
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport)
+        svc = PlanRunService(callback_transport=transport, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"}})
         svc.run_by_plan_id(r["planId"])
@@ -371,7 +372,7 @@ class TestRealRunner:
         from src.resource_lock_manager import ResourceLockManager
         lock_mgr = ResourceLockManager()
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport, lock_manager=lock_mgr)
+        svc = PlanRunService(callback_transport=transport, lock_manager=lock_mgr, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         svc.run_by_plan_id(r["planId"])
@@ -389,7 +390,7 @@ class TestRealRunner:
         from src.resource_lock_manager import ResourceLockManager
         lock_mgr = ResourceLockManager()
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport, lock_manager=lock_mgr)
+        svc = PlanRunService(callback_transport=transport, lock_manager=lock_mgr, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         svc.run_by_plan_id(r["planId"])
@@ -406,7 +407,7 @@ class TestRealRunner:
         from src.resource_lock_manager import ResourceLockManager
         lock_mgr = ResourceLockManager()
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport, lock_manager=lock_mgr)
+        svc = PlanRunService(callback_transport=transport, lock_manager=lock_mgr, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         svc.run_by_plan_id(r["planId"])
@@ -424,7 +425,7 @@ class TestRealRunner:
         lock_mgr = ResourceLockManager()
         transport = FakeCallbackTransport()
         transport.set_failure()
-        svc = PlanRunService(callback_transport=transport, lock_manager=lock_mgr)
+        svc = PlanRunService(callback_transport=transport, lock_manager=lock_mgr, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         svc.run_by_plan_id(r["planId"])
@@ -439,7 +440,7 @@ class TestRealRunner:
         monkeypatch.setattr("src.job_runner_adapter.RealRunnerAdapter.run_job", _fake_run_job)
 
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport)
+        svc = PlanRunService(callback_transport=transport, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         svc.run_by_plan_id(r["planId"])
@@ -458,7 +459,7 @@ class TestRealRunner:
         monkeypatch.setattr("src.job_runner_adapter.RealRunnerAdapter.run_job", _tracked_run)
 
         transport = FakeCallbackTransport()
-        svc = PlanRunService(callback_transport=transport)
+        svc = PlanRunService(callback_transport=transport, allow_real_runner=True)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"runner": "real", "callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         svc.run_by_plan_id(r["planId"])
@@ -1220,6 +1221,7 @@ class TestCallbackUrlResolution:
 
         monkeypatch.setattr("urllib.request.urlopen", FakeRegistryHandler().urlopen)
         monkeypatch.setenv("EXECUTOR_MASTER_REGISTRY_URL", "http://reg/test")
+        monkeypatch.setenv("EXECUTOR_CALLBACK_ALLOWED_HOSTS", "10.0.99.1")
 
         svc = PlanRunService()
         svc.set_latest_excel(EXCEL_FILE)

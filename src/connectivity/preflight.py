@@ -58,6 +58,9 @@ class PreflightReport:
     bmc_fail: int = 0
     ssh_ok: int = 0
     ssh_fail: int = 0
+    probe_count: int = 0
+    impacted_task_count: int = 0
+    skipped_task_count: int = 0
 
 
 _INVALID_HOST_VALUES = {"是", "否", "启用", "禁用", "yes", "no", "true", "false", "1", "0"}
@@ -80,6 +83,14 @@ def _resolve_host(raw: str) -> str:
     if raw.startswith("/"):
         return ""
     return raw
+
+
+def build_endpoint_key(protocol: str, host: str, port: int) -> str:
+    """Build an endpoint key string from protocol, host, and port.
+
+    Empty host is represented as 'IP_EMPTY'.
+    """
+    return f"{protocol}|{host or 'IP_EMPTY'}|{port}"
 
 
 def _tcp_probe(host_raw: str, port: int, timeout: float) -> tuple[str, str, float]:
@@ -157,67 +168,111 @@ def check_device(device: Device, timeout: float = 5.0,
 def check_all(devices: list[Device], timeout: float = 5.0,
               max_workers: int = 12,
               target: str = "all") -> PreflightReport:
-    """Probe connectivity for all unique enabled devices.
+    """Probe connectivity for all unique endpoints.
 
-    target: "all" — probe both BMC(443) and SSH(22)
-            "bmc" — probe BMC only
-            "ssh" — probe SSH only
+    Deduplicates by endpoint (protocol+host+port), not by device_name.
+    Same BMC IP:443 is probed only once even if multiple devices share it.
     """
-    # Dedup by device name — each unique device probed once
-    seen: set[str] = set()
-    unique: list[Device] = []
+    # Build endpoint → devices mapping
+    endpoint_map: dict[str, list[Device]] = {}  # endpoint_key -> [Device]
+    endpoint_probe_spec: dict[str, tuple[str, str, int]] = {}  # endpoint_key -> (protocol, host, port)
+
     for d in devices:
-        if d.enabled and d.device_name not in seen:
-            seen.add(d.device_name)
-            unique.append(d)
+        if not d.enabled:
+            continue
+        if target in ("all", "bmc"):
+            bmc_host = _resolve_host(d.bmc_ip)
+            bmc_key = f"BMC|{bmc_host or 'IP_EMPTY'}|443"
+            endpoint_map.setdefault(bmc_key, []).append(d)
+            endpoint_probe_spec.setdefault(bmc_key, ("BMC", bmc_host, 443))
+        if target in ("all", "ssh"):
+            ssh_host = _resolve_host(d.inband_ip)
+            ssh_key = f"SSH|{ssh_host or 'IP_EMPTY'}|22"
+            endpoint_map.setdefault(ssh_key, []).append(d)
+            endpoint_probe_spec.setdefault(ssh_key, ("SSH", ssh_host, 22))
 
-    total = len(unique)
-    logger.info("预检: 正在探测 %d unique devices (max %d parallel, target=%s)",
-                total, max_workers, target)
-    print(f"  Probing {total} devices in parallel (workers={max_workers}, target={target})...")
+    probe_count = len(endpoint_probe_spec)
+    impacted_task_count = sum(len(dl) for dl in endpoint_map.values())
 
-    report = PreflightReport(total=total)
-    completed = 0
+    logger.info("预检: 正在探测 %d unique endpoints (max %d parallel, target=%s)",
+                probe_count, max_workers, target)
+    print(f"  Probing {probe_count} endpoints in parallel (workers={max_workers}, target={target})...")
+
+    # Probe each unique endpoint
+    endpoint_results: dict[str, tuple[str, str, float]] = {}  # endpoint_key -> (status, error, latency)
 
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="preflight") as pool:
-        future_to_device = {
-            pool.submit(check_device, d, timeout, target): d for d in unique
-        }
-        for future in as_completed(future_to_device):
-            device = future_to_device[future]
+        future_to_key = {}
+        for key, (protocol, host, port) in endpoint_probe_spec.items():
+            if "IP_EMPTY" in key:
+                endpoint_results[key] = (PreflightStatus.IP_EMPTY, "IP为空", 0.0)
+            else:
+                future_to_key[pool.submit(_tcp_probe, host, port, timeout)] = key
+
+        for future in as_completed(future_to_key):
+            key = future_to_key[future]
             try:
-                r = future.result()
+                status, error, latency = future.result()
             except Exception as e:
-                logger.error("Preflight crashed for %s: %s", device.device_name, e)
-                r = PreflightResult(
-                    device_name=device.device_name,
-                    bmc_status=PreflightStatus.UNKNOWN,
-                    ssh_status=PreflightStatus.UNKNOWN,
-                    bmc_error=str(e),
-                    ssh_error=str(e),
+                status, error, latency = PreflightStatus.UNKNOWN, str(e), 0.0
+            endpoint_results[key] = (status, error, latency)
+            logger.info("Endpoint %s: status=%s latency=%.1fms", key, status, latency)
+
+    # Map endpoint results back to per-device PreflightResult
+    report = PreflightReport(
+        total=len(set(d.device_name for d in devices if d.enabled)),
+        probe_count=probe_count,
+        impacted_task_count=impacted_task_count,
+    )
+
+    # Build per-device results
+    device_results: dict[str, PreflightResult] = {}
+    for key, dev_list in endpoint_map.items():
+        status, error, latency = endpoint_results.get(key, (PreflightStatus.UNKNOWN, "unknown", 0.0))
+        protocol = key.split("|")[0]
+        for d in dev_list:
+            if d.device_name not in device_results:
+                device_results[d.device_name] = PreflightResult(
+                    device_name=d.device_name,
+                    device_group=d.device_group,
                 )
-            report.results.append(r)
-            if r.bmc_status != PreflightStatus.OK:
-                report.bmc_fail += 1
+            pr = device_results[d.device_name]
+            if protocol == "BMC":
+                pr.bmc_status = status
+                pr.bmc_error = error
+                pr.bmc_latency_ms = latency
+                pr.bmc_endpoint = key
             else:
-                report.bmc_ok += 1
-            if r.ssh_status != PreflightStatus.OK:
-                report.ssh_fail += 1
-            else:
-                report.ssh_ok += 1
+                pr.ssh_status = status
+                pr.ssh_error = error
+                pr.ssh_latency_ms = latency
+                pr.ssh_endpoint = key
 
-            completed += 1
-            if completed % 10 == 0 or completed == total:
-                print(f"  Progress: {completed}/{total} devices probed", flush=True)
+    report.results = sorted(device_results.values(), key=lambda r: r.device_name)
 
-    # Sort results by device name for consistent output
-    report.results.sort(key=lambda r: r.device_name)
+    # Count OK/fail
+    for r in report.results:
+        if r.bmc_status != PreflightStatus.OK and r.bmc_status != PreflightStatus.IP_EMPTY:
+            report.bmc_fail += 1
+        elif r.bmc_status == PreflightStatus.OK:
+            report.bmc_ok += 1
+        if r.ssh_status != PreflightStatus.OK and r.ssh_status != PreflightStatus.IP_EMPTY:
+            report.ssh_fail += 1
+        elif r.ssh_status == PreflightStatus.OK:
+            report.ssh_ok += 1
+
+    # Count skipped tasks
+    skipped = 0
+    for r in report.results:
+        if r.bmc_status not in (PreflightStatus.OK, PreflightStatus.IP_EMPTY, ""):
+            skipped += 1
+        if r.ssh_status not in (PreflightStatus.OK, PreflightStatus.IP_EMPTY, ""):
+            skipped += 1
+    report.skipped_task_count = skipped
 
     logger.info(
-        "预检完成:  %d unique devices, BMC %d/%d OK, SSH %d/%d OK",
-        total,
-        report.bmc_ok, report.bmc_ok + report.bmc_fail,
-        report.ssh_ok, report.ssh_ok + report.ssh_fail,
+        "网络预检完成：探测端点 %d 个，影响任务 %d 个，跳过任务 %d 个。",
+        probe_count, impacted_task_count, skipped,
     )
     return report
 

@@ -13,6 +13,8 @@ import logging
 import os
 from typing import Sequence
 
+from ..utils.path_safety import safe_join_under_root, is_safe_path_component
+
 from ..models.execution_result import ExecutionResult
 from ..executor.bmc_health_check import (
     scan_html_for_keywords,
@@ -89,7 +91,7 @@ def _ssh_has_command_output(content: str) -> bool:
 def _read_page_health_debug(output_dir: str) -> dict | None:
     if not output_dir:
         return None
-    path = os.path.join(output_dir, "page_health_debug.json")
+    path = safe_join_under_root(output_dir, "page_health_debug.json")
     if not os.path.exists(path):
         return None
     try:
@@ -281,7 +283,9 @@ def audit_all(results: Sequence[ExecutionResult]) -> list[dict]:
 
 def write_evidence_audit_csv(results: Sequence[ExecutionResult], output_dir: str,
                              filename: str = "evidence_audit.csv") -> str:
-    path = os.path.join(output_dir, filename)
+    if not is_safe_path_component(filename):
+        raise ValueError(f"Unsafe filename for report: {filename!r}")
+    path = safe_join_under_root(output_dir, filename)
     os.makedirs(output_dir, exist_ok=True)
     audits = audit_all(results)
 

@@ -86,6 +86,22 @@ CONTRACT_INDEX: dict[str, Any] = {
             "path": "/executor/v1/plans/{plan_id}/items",
             "detailPath": "/executor/v1/contracts/plan-items",
         },
+        {
+            "id": "run-query",
+            "name": "Run Status Query",
+            "method": "GET",
+            "direction": "inbound",
+            "path": "/executor/v1/runs/{run_id}",
+            "detailPath": "/executor/v1/contracts/run-query",
+        },
+        {
+            "id": "callback-retry",
+            "name": "Retry Pending Plan Callbacks",
+            "method": "POST",
+            "direction": "inbound",
+            "path": "/executor/v1/plans/{plan_id}/callbacks:retry",
+            "detailPath": "/executor/v1/contracts/callback-retry",
+        },
     ],
 }
 
@@ -127,6 +143,11 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
         ),
         "defaultTransport": "Auto: HttpCallbackTransport when itemStatusUrl provided, FakeCallbackTransport otherwise",
         "realHttpTransport": "HttpCallbackTransport (stdlib urllib)",
+        "urlPolicy": (
+            "Only http/https URLs are accepted. URL userinfo is forbidden. "
+            "Loopback is allowed for local debug. Private/link-local literal "
+            "IPs require EXECUTOR_CALLBACK_ALLOWED_HOSTS."
+        ),
     },
 
     "modes": {
@@ -418,7 +439,8 @@ CONFIG_LATEST_CONTRACT: dict[str, Any] = {
     },
     "errorResponses": [
         {"statusCode": 409, "code": "CONFIG_CORRUPTED", "description": "latest.json is not valid JSON"},
-        {"statusCode": 409, "code": "LATEST_EXCEL_MISSING", "description": "storedPath file does not exist"},
+        {"statusCode": 409, "code": "LATEST_EXCEL_MISSING", "description": "latest Excel file does not exist"},
+        {"statusCode": 409, "code": "LATEST_EXCEL_HASH_MISMATCH", "description": "latest Excel file hash does not match metadata"},
     ],
 }
 
@@ -490,7 +512,7 @@ PLAN_RUN_CONTRACT: dict[str, Any] = {
                 "required": False,
                 "defaultValue": "fake",
                 "allowedValues": ["fake", "real"],
-                "description": "Runner mode: fake executes instantly, real connects to devices",
+                "description": "Runner mode: fake executes instantly; real connects to devices only when server-side real runner enablement is active",
             },
         ],
     },
@@ -509,7 +531,12 @@ PLAN_RUN_CONTRACT: dict[str, Any] = {
         "description": "Starts a background thread that executes all items serially",
         "callbackTiming": "After ALL items complete, not per-item",
         "callbackTransport": "Auto: HttpCallbackTransport when itemStatusUrl provided, FakeCallbackTransport otherwise",
+        "realRunnerGate": "runner=real requires --enable-real-runner, PlanRunService(allow_real_runner=True), or EXECUTOR_ENABLE_REAL_RUNNER=1",
     },
+    "errorResponses": [
+        {"statusCode": 400, "code": "REAL_RUNNER_NOT_ENABLED", "description": "runner=real requested without server-side enablement"},
+        {"statusCode": 400, "code": "INVALID_CALLBACK_URL", "description": "callback URL rejected by URL policy"},
+    ],
 }
 
 
@@ -543,7 +570,13 @@ EXTERNAL_PLAN_CONTRACT: dict[str, Any] = {
                 ],
             },
             {"name": "updater", "type": "string", "defaultValue": "downstream-system"},
-            {"name": "runner", "type": "string", "defaultValue": "fake", "allowedValues": ["fake", "real"]},
+            {
+                "name": "runner",
+                "type": "string",
+                "defaultValue": "fake",
+                "allowedValues": ["fake", "real"],
+                "description": "runner=real requires server-side real runner enablement",
+            },
         ],
     },
     "responseBody": {
@@ -627,6 +660,56 @@ PLAN_ITEMS_CONTRACT: dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
+# Run Query + Callback Retry contracts
+# ---------------------------------------------------------------------------
+
+RUN_QUERY_CONTRACT: dict[str, Any] = {
+    "id": "run-query",
+    "name": "Run Status Query",
+    "method": "GET",
+    "direction": "inbound",
+    "path": "/executor/v1/runs/{run_id}",
+    "pathParams": [
+        {"name": "run_id", "type": "string", "required": True},
+    ],
+    "responseBody": PLAN_QUERY_CONTRACT["responseBody"],
+    "relatedPath": "/executor/v1/runs/{run_id}/items",
+}
+
+
+CALLBACK_RETRY_CONTRACT: dict[str, Any] = {
+    "id": "callback-retry",
+    "name": "Retry Pending Plan Callbacks",
+    "method": "POST",
+    "direction": "inbound",
+    "path": "/executor/v1/plans/{plan_id}/callbacks:retry",
+    "pathParams": [
+        {"name": "plan_id", "type": "string", "required": True},
+    ],
+    "requestBody": {
+        "fields": [
+            {"name": "callbackUrl", "type": "string", "required": False, "description": "One-time retry URL override"},
+            {"name": "mode", "type": "string", "defaultValue": "batch", "allowedValues": ["batch", "single"]},
+        ],
+    },
+    "responseBody": {
+        "fields": [
+            {"name": "accepted", "type": "boolean"},
+            {"name": "planId", "type": "string | integer"},
+            {"name": "runId", "type": "string"},
+            {"name": "attempted", "type": "integer"},
+            {"name": "sent", "type": "integer"},
+            {"name": "failed", "type": "integer"},
+            {"name": "pendingAfter", "type": "integer"},
+            {"name": "status", "type": "string"},
+            {"name": "message", "type": "string"},
+        ],
+    },
+    "note": "The outbox stores redacted callback URLs; retry uses callbackUrl, registry, run request URL, or env resolution.",
+}
+
+
+# ---------------------------------------------------------------------------
 # Contract lookup
 # ---------------------------------------------------------------------------
 
@@ -639,6 +722,8 @@ _CONTRACTS: dict[str, dict[str, Any]] = {
     "external-plan": EXTERNAL_PLAN_CONTRACT,
     "plan-query": PLAN_QUERY_CONTRACT,
     "plan-items": PLAN_ITEMS_CONTRACT,
+    "run-query": RUN_QUERY_CONTRACT,
+    "callback-retry": CALLBACK_RETRY_CONTRACT,
 }
 
 

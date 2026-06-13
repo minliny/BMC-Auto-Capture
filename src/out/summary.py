@@ -11,6 +11,7 @@ from collections import defaultdict
 from typing import Sequence
 
 from ..models.execution_result import ExecutionResult
+from ..utils.path_safety import safe_join_under_root, is_safe_path_component
 
 logger = logging.getLogger("bmc_auto_capture.summary")
 
@@ -37,7 +38,9 @@ def build_pivot_csv(
         lookup[(r.device_name, r.task_name)] = r.execution_status
 
     sorted_devices = sorted(devices.items(), key=lambda x: (x[1], x[0]))
-    path = os.path.join(output_dir, filename)
+    if not is_safe_path_component(filename):
+        raise ValueError(f"Unsafe filename for report: {filename!r}")
+    path = safe_join_under_root(output_dir, filename)
     os.makedirs(output_dir, exist_ok=True)
 
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
@@ -67,13 +70,24 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
     print("\n" + "=" * 70)
     print(f"  执行完成: 共 {total} 个计划")
     print(f"  成功: {s['success']}  ({s['success'] / total * 100:.0f}%)")
-    if s['failed'] + s['error'] + s['skipped_preflight'] + s['skipped_port_blocked'] + s['skipped_route'] > 0:
+    not_pass = (s['failed'] + s['error'] + s['timeout'] + s['partial'] +
+                s['blocked'] + s['unknown'] +
+                s['skipped_preflight'] + s['skipped_port_blocked'] + s['skipped_route'] +
+                s['skipped_stopped'] + s['skipped_session'] + s['skipped_disabled'])
+    if not_pass > 0:
         parts = []
         if s['failed']: parts.append(f"失败: {s['failed']}")
         if s['error']: parts.append(f"错误: {s['error']}")
+        if s['timeout']: parts.append(f"超时: {s['timeout']}")
+        if s['partial']: parts.append(f"部分完成: {s['partial']}")
+        if s['blocked']: parts.append(f"阻塞: {s['blocked']}")
+        if s['unknown']: parts.append(f"未知: {s['unknown']}")
         if s['skipped_preflight']: parts.append(f"预检跳过: {s['skipped_preflight']}")
         if s['skipped_port_blocked']: parts.append(f"端口拦截: {s['skipped_port_blocked']}")
         if s['skipped_route']: parts.append(f"路由变更: {s['skipped_route']}")
+        if s['skipped_stopped']: parts.append(f"调度停止: {s['skipped_stopped']}")
+        if s['skipped_session']: parts.append(f"会话失败: {s['skipped_session']}")
+        if s['skipped_disabled']: parts.append(f"已禁用: {s['skipped_disabled']}")
         print(f"  未通过: {'  '.join(parts)}")
 
     # ====== Per-task result table ======
@@ -151,6 +165,22 @@ def _categorize_failure(status: str, reason: str) -> str:
         return "预检跳过"
     if status.startswith("EXEC_SKIPPED_PORT"):
         return "端口拦截"
+    if status.startswith("EXEC_SKIPPED_SESSION"):
+        return "会话失败"
+    if status.startswith("EXEC_SKIPPED_DISABLED"):
+        return "已禁用"
+    if status.startswith("EXEC_SKIPPED_STOPPED"):
+        return "调度停止"
+    if status.startswith("EXEC_SKIPPED_ROUTE"):
+        return "路由变更"
+    if status == "EXEC_TIMEOUT":
+        return "超时"
+    if status == "EXEC_PARTIAL":
+        return "部分完成"
+    if status == "EXEC_BLOCKED":
+        return "阻塞"
+    if status.startswith("EXEC_") and "UNKNOWN" in status.upper():
+        return "未知"
     return "其他"
 
 
@@ -158,7 +188,9 @@ def write_failure_csv(results: Sequence[ExecutionResult], output_dir: str,
                       filename: str = "failure_detail.csv") -> str:
     """Write failed tasks with reasons to CSV for detailed review."""
     failed = [r for r in results if r.execution_status != "EXEC_SUCCESS"]
-    path = os.path.join(output_dir, filename)
+    if not is_safe_path_component(filename):
+        raise ValueError(f"Unsafe filename for report: {filename!r}")
+    path = safe_join_under_root(output_dir, filename)
     os.makedirs(output_dir, exist_ok=True)
 
     with open(path, "w", newline="", encoding="utf-8-sig") as f:

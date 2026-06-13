@@ -238,10 +238,15 @@
       "execution_mode": "SSH_CMD",
       "command_or_url": "display interface transceiver",
       "per_group_commands": {
-        "A3": "for i in $(seq 0 15); do echo \"==============> $i\"; hccn_tool -i $i -optical-g;done"
+        "A3": "for i in $(seq 0 15); do echo \"==============> $i\"; hccn_tool -i $i -optical -g; done"
       },
       "timeout_seconds": 900,
       "retry_count": 0,
+      "stderr_fail_patterns": [
+        "Get invalid major cmd",
+        "command not found",
+        "Permission denied"
+      ],
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",

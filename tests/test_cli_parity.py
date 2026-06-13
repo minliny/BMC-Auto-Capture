@@ -201,12 +201,21 @@ def test_frozen_preflight_auth_invalid():
 # ── Test: build_info.json (if exists) ──────────────────────
 
 def test_build_info_json_exists():
-    """runtime/build_info.json must exist (if runtime/ exists)."""
+    """A packaged runtime executable must have adjacent build metadata."""
     json_path = PROJECT_ROOT / "runtime" / "build_info.json"
-    if not json_path.exists():
-        # Might not exist in dev mode — skip
-        if not (PROJECT_ROOT / "runtime").exists():
-            pytest.skip("No runtime/ directory")
+    runtime_exe = next(
+        (
+            path
+            for path in (
+                PROJECT_ROOT / "runtime" / "bmc-engine.exe",
+                PROJECT_ROOT / "runtime" / "bmc-engine",
+            )
+            if path.exists()
+        ),
+        None,
+    )
+    if runtime_exe is None:
+        pytest.skip("No packaged runtime executable")
     assert json_path.exists(), "build_info.json missing in runtime/"
 
 

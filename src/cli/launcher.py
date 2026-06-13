@@ -269,82 +269,66 @@ def check_network_connectivity(
     timeout: int = 3,
     strict: bool = False
 ) -> dict:
-    """检查网络连通性"""
+    """检查网络连通性 — delegates to unified preflight implementation."""
     log_step("六、网络连通性检测")
 
     if not Path(excel_path).exists() or not HAS_OPENPYXL:
         log("无法检查网络连通性 (Excel 或 openpyxl 不可用)", "WARN")
         return {}
 
-    results = []
-
     try:
+        from src.models.device import Device
+        from src.connectivity.preflight import check_all as preflight_check_all
+
+        devices = []
         wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
         device_sheet = wb.get_sheet_by_name("设备列表") if "设备列表" in wb.sheetnames else None
 
         if device_sheet:
-            for row in device_sheet.iter_rows(min_row=2, values_only=True):
+            for idx, row in enumerate(device_sheet.iter_rows(min_row=2, values_only=True), start=2):
                 if all(v is None for v in row):
                     continue
-
-                # 跳过禁用的设备
                 if len(row) >= 8 and row[7] in ("否", "禁用", "no", "false", "0"):
                     continue
-
                 device_name = row[1] if len(row) > 1 else ""
                 device_group = row[0] if len(row) > 0 else ""
                 bmc_ip = row[2] if len(row) > 2 else ""
                 inband_ip = row[4] if len(row) > 4 else ""
-
-                bmc_status = "未检测"
-                ssh_status = "未检测"
-
-                # 检测 BMC IP (443)
-                if bmc_ip:
-                    try:
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(timeout)
-                        result = sock.connect_ex((bmc_ip, 443))
-                        sock.close()
-                        bmc_status = "可达" if result == 0 else "不可达"
-                    except:
-                        bmc_status = "错误"
-
-                # 检测带内 IP (22)
-                if inband_ip:
-                    try:
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(timeout)
-                        result = sock.connect_ex((inband_ip, 22))
-                        sock.close()
-                        ssh_status = "可达" if result == 0 else "不可达"
-                    except:
-                        ssh_status = "错误"
-
-                results.append({
-                    "device_name": device_name or "-",
-                    "device_group": device_group or "-",
-                    "bmc_ip": bmc_ip or "-",
-                    "bmc_status": bmc_status,
-                    "inband_ip": inband_ip or "-",
-                    "ssh_status": ssh_status,
-                })
-
+                devices.append(Device(
+                    row_index=idx,
+                    device_name=device_name or "-",
+                    device_group=device_group or "",
+                    bmc_ip=str(bmc_ip or ""),
+                    inband_ip=str(inband_ip or ""),
+                    enabled=True,
+                    bmc_username="",
+                    bmc_password="",
+                ))
         wb.close()
+
+        if not devices:
+            log("未找到启用的设备", "WARN")
+            return {}
+
+        report = preflight_check_all(devices, timeout=float(timeout))
+
+        # Display results table
+        print(f"\n{'设备名称':<20} {'设备分组':<15} {'BMC IP':<15} {'BMC':<8} {'带内IP':<15} {'SSH':<8}")
+        print("-" * 85)
+        for r in report.results:
+            bmc_ip = next((d.bmc_ip for d in devices if d.device_name == r.device_name), "-")
+            inband_ip = next((d.inband_ip for d in devices if d.device_name == r.device_name), "-")
+            bmc_status = "可达" if r.bmc_status == "OK" else "不可达" if r.bmc_status else "-"
+            ssh_status = "可达" if r.ssh_status == "OK" else "不可达" if r.ssh_status else "-"
+            print(f"{r.device_name:<20} {r.device_group or '-':<15} {bmc_ip:<15} {bmc_status:<8} {inband_ip:<15} {ssh_status:<8}")
+        print("-" * 85)
+        print(f"共检测 {report.probe_count} 个端点，影响 {report.impacted_task_count} 个任务")
+
+        return {"report": report}
+
     except Exception as e:
         log(f"网络检测出错: {e}", "WARN")
         return {}
-
-    # 打印结果表格
-    if results:
-        print(f"\n{'设备名称':<20} {'设备分组':<15} {'BMC IP':<15} {'BMC':<8} {'带内IP':<15} {'SSH':<8}")
-        print("-" * 85)
-        for r in results:
-            print(f"{r['device_name']:<20} {r['device_group']:<15} {r['bmc_ip']:<15} {r['bmc_status']:<8} {r['inband_ip']:<15} {r['ssh_status']:<8}")
-        print("-" * 85)
-        print(f"共检测 {len(results)} 个设备")
-
-    return results
 
 
 def generate_output_dir(base_dir: Path, custom_dir: Optional[str] = None) -> Path:

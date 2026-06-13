@@ -13,6 +13,7 @@ from collections import defaultdict
 from typing import Sequence
 
 from ..models.execution_result import ExecutionResult
+from ..utils.path_safety import safe_join_under_root, is_safe_path_component
 
 logger = logging.getLogger("bmc_auto_capture.timing")
 
@@ -23,7 +24,9 @@ def write_plan_timing_csv(
     filename: str = "plan_timing.csv",
 ) -> str:
     """Write per-plan timing to CSV."""
-    path = os.path.join(output_dir, filename)
+    if not is_safe_path_component(filename):
+        raise ValueError(f"Unsafe filename for report: {filename!r}")
+    path = safe_join_under_root(output_dir, filename)
     os.makedirs(output_dir, exist_ok=True)
 
     header = [
@@ -74,7 +77,9 @@ def write_device_timing_csv(
     filename: str = "device_timing.csv",
 ) -> str:
     """Write per-device aggregated timing to CSV."""
-    path = os.path.join(output_dir, filename)
+    if not is_safe_path_component(filename):
+        raise ValueError(f"Unsafe filename for report: {filename!r}")
+    path = safe_join_under_root(output_dir, filename)
     os.makedirs(output_dir, exist_ok=True)
 
     # Group by device_name + device_group
@@ -128,7 +133,9 @@ def write_endpoint_timing_csv(
     filename: str = "endpoint_timing.csv",
 ) -> str:
     """Write per-endpoint aggregated timing to CSV."""
-    path = os.path.join(output_dir, filename)
+    if not is_safe_path_component(filename):
+        raise ValueError(f"Unsafe filename for report: {filename!r}")
+    path = safe_join_under_root(output_dir, filename)
     os.makedirs(output_dir, exist_ok=True)
 
     # Group by endpoint_key + endpoint_type
@@ -188,7 +195,7 @@ def write_execution_summary(
     execution_id: str = "",
 ) -> str:
     """Write execution summary to JSON (and CSV)."""
-    path = os.path.join(output_dir, "execution_summary.json")
+    path = safe_join_under_root(output_dir, "execution_summary.json")
     os.makedirs(output_dir, exist_ok=True)
 
     total = len(results)
@@ -244,7 +251,7 @@ def write_execution_summary(
     logger.info("Wrote execution_summary.json to %s", path)
 
     # Also write CSV version
-    csv_path = os.path.join(output_dir, "execution_summary.csv")
+    csv_path = safe_join_under_root(output_dir, "execution_summary.csv")
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         writer.writerow(summary.keys())

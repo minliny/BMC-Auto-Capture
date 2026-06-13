@@ -1,9 +1,15 @@
 """
 RunDispatchService — plan import, run dispatch, execute with locking, callback.
+
+DEPRECATED/ISOLATED: This service uses its own internal run_id and is NOT part
+of the unified planId model.  It does NOT contaminate PlanRunService,
+CallbackOutbox, or executor_state/plans/{planId}.  New code should use
+PlanRunService (/executor/v1/plans/{plan_id}:run) instead.
 """
 
 from __future__ import annotations
 import logging
+import os
 import threading
 import time
 import uuid
@@ -23,6 +29,10 @@ from ..server_callback_client import (
 )
 
 logger = logging.getLogger("bmc_auto_capture.run_dispatch")
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +101,10 @@ class _RunRecord:
 # ---------------------------------------------------------------------------
 
 class RunDispatchService:
-    """Orchestrates plan import → run dispatch → execute → callback."""
+    """DEPRECATED: Orchestrates plan import → run dispatch → execute → callback.
+
+    Isolated from the unified planId model. Uses internal run_id.
+    """
 
     def __init__(
         self,
@@ -103,6 +116,7 @@ class RunDispatchService:
         use_http_callback: bool = False,
         callback_timeout_seconds: float = 30.0,
         output_root: str = "./output_api_direct",
+        allow_real_runner: bool = False,
     ):
         self.executor_id = executor_id
         self._lock_mgr = lock_manager or ResourceLockManager()
@@ -111,6 +125,11 @@ class RunDispatchService:
         if runner is not None:
             self._runner = runner
         elif runner_mode == "real":
+            if not (allow_real_runner or _env_truthy("EXECUTOR_ENABLE_REAL_RUNNER")):
+                raise ValueError(
+                    "runner_mode=real requires RunDispatchService(allow_real_runner=True) "
+                    "or EXECUTOR_ENABLE_REAL_RUNNER=1"
+                )
             self._runner = RealRunnerAdapter(output_root=output_root)
         else:
             self._runner = FakeRunner()

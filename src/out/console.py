@@ -40,12 +40,14 @@ def error(msg: str):
     print(_color(_RED, f"  {_color(_RED, '[ERROR]')} {msg}"), flush=True)
 
 
-def start(protocol: str, device: str, task: str):
-    print(_color(_CYAN, f"  {_color(_CYAN, '[START]')} [{protocol}] {device}  {task}"), flush=True)
+def start(protocol: str, device_group: str = "", device: str = "", task: str = ""):
+    dg = device_group or "-"
+    print(_color(_CYAN, f"  {_color(_CYAN, '[START]')} [{protocol}][{dg}] {device}  {task}"), flush=True)
 
 
-def done(idx: int, total: int, status: str, device: str, task: str, reason: str = ""):
+def done(idx: int, total: int, status: str, device_group: str = "", device: str = "", task: str = "", reason: str = ""):
     """Print task completion. status: OK/FAIL/SKIP/ERR"""
+    dg = device_group or "-"
     if status == "OK":
         level = _color(_GREEN, "[ OK ]")
     elif status in ("FAIL", "ERR"):
@@ -53,7 +55,13 @@ def done(idx: int, total: int, status: str, device: str, task: str, reason: str 
     else:
         level = _color(_YELLOW, f"[{status}]")
     r = f"  [{reason[:50]}]" if reason else ""
-    print(f"  {level} [{idx:>4}/{total}] {device}  {task}{r}", flush=True)
+    print(f"  {level} [{idx:>4}/{total}] [{dg}] {device}  {task}{r}", flush=True)
+
+
+def progress_event(protocol: str, device_group: str = "", device: str = "", task: str = "", event: str = ""):
+    """Print a progress event with device_group."""
+    dg = device_group or "-"
+    print(_color(_DIM, f"  [{protocol}][{dg}] {device} - {task} {event}"), flush=True)
 
 
 def heartbeat(dispatched: int, done: int, pending: int,

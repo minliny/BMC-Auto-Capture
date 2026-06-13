@@ -112,7 +112,10 @@ bmc-engine.exe --app-dir app --excel tasks.xlsx --preflight-only
 bmc-engine.exe --app-dir app --excel tasks.xlsx --preflight-auth all
 
 :: API Server
-bmc-engine.exe --app-dir app --server --host 0.0.0.0 --port 8080
+bmc-engine.exe --app-dir app --server --host 127.0.0.1 --port 8080
+
+:: API Server 真实执行模式（受控网络内使用）
+bmc-engine.exe --app-dir app --server --runner real --enable-real-runner
 
 :: 详细日志
 bmc-engine.exe --app-dir app --excel tasks.xlsx --mode full --verbose
@@ -133,6 +136,8 @@ bmc-engine.exe --app-dir app --excel tasks.xlsx --mode full --verbose
 | `--server` | API Server 模式 | — |
 | `--host` | Server 监听地址 | 127.0.0.1 |
 | `--port` | Server 端口 | 8080 |
+| `--runner` | API runner：fake / real | fake |
+| `--enable-real-runner` | 允许 API 触发真实 BMC/SSH 执行 | — |
 | `--verbose` | Debug 日志 | — |
 
 ## 调度架构

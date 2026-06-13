@@ -91,8 +91,8 @@ class TestDebugCallbackReceiver:
         assert data["items"][0]["payload"]["status"] == "SUCCESS"
         assert data["items"][0]["payload"]["errorMessage"] is None
 
-    def test_debug_callback_payload_strict_6_fields(self, client):
-        """POST payload only contains the 6 required fields, no extra legacy fields."""
+    def test_debug_callback_payload_strict_8_fields(self, client):
+        """POST payload only contains the 8 required fields, no extra legacy fields."""
         payload = {
             "planId": 1,
             "deviceName": "Switch-A",
@@ -100,6 +100,8 @@ class TestDebugCallbackReceiver:
             "status": "SUCCESS",
             "updater": "test-updater",
             "errorMessage": None,
+            "startedAt": None,
+            "finishedAt": None,
         }
         resp = client.post("/debug/plan-item-statuses", json=payload)
         assert resp.status_code == 200
@@ -107,11 +109,11 @@ class TestDebugCallbackReceiver:
         resp2 = client.get("/debug/plan-item-statuses")
         data = resp2.json()
         stored_payload = data["items"][-1]["payload"]
-        required_fields = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage"}
+        required_fields = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
         forbidden_fields = {"job_id", "external_task_id", "executor_id", "duration_ms", "artifacts"}
 
         keys = set(stored_payload.keys())
-        assert keys == required_fields, f"Expected 6 fields, got: {keys}"
+        assert keys == required_fields, f"Expected 8 fields, got: {keys}"
         assert not (keys & forbidden_fields), f"Should not have legacy fields, got: {keys & forbidden_fields}"
 
     def test_debug_callback_post_failed_status(self, client):
@@ -215,13 +217,13 @@ class TestDebugCallbackWithPlanRun:
         assert resp.status_code == 200
         run_info = resp.json()
         assert run_info["accepted"] is True
-        run_id = run_info["runId"]
+        run_id = run_info["planId"]
 
         # Wait for completion
         time.sleep(3)
 
         # Check run status
-        resp = c.get(f"/executor/v1/plans/1/runs/{run_id}")
+        resp = c.get(f"/executor/v1/plans/{run_id}")
         assert resp.status_code == 200
         run_status = resp.json()
         assert run_status["status"] == "COMPLETED"
@@ -244,12 +246,12 @@ class TestDebugCallbackWithPlanRun:
         assert cb_success == total, f"Callback success count ({cb_success}) should match run total ({total})"
         assert cb_failed == 0, f"Callback failed count ({cb_failed}) should be 0"
 
-        # Verify each callback has exactly 6 fields
-        required_fields = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage"}
+        # Verify each callback has exactly 8 fields
+        required_fields = {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
         forbidden_fields = {"job_id", "external_task_id", "executor_id", "duration_ms", "artifacts"}
         for item in cb_data["items"]:
             keys = set(item["payload"].keys())
-            assert keys == required_fields, f"Expected 6 fields, got {keys}"
+            assert keys == required_fields, f"Expected 8 fields, got {keys}"
             assert not (keys & forbidden_fields), f"Has forbidden fields: {keys & forbidden_fields}"
 
     def test_debug_callback_not_available_without_flag(self):
@@ -274,8 +276,8 @@ class TestDebugCallbackWithPlanRun:
         assert "receivedAt" in data["items"][0]
         assert data["items"][0]["receivedAt"] > 0
 
-    def test_debug_callback_stores_only_6_fields_from_extra_payload(self, client):
-        """Extra fields in POST body are dropped — only 6 fields stored."""
+    def test_debug_callback_stores_only_8_fields_from_extra_payload(self, client):
+        """Extra fields in POST body are dropped — only 8 fields stored."""
         # POST with extra fields
         client.post("/debug/plan-item-statuses", json={
             "planId": 1,
@@ -284,6 +286,8 @@ class TestDebugCallbackWithPlanRun:
             "status": "SUCCESS",
             "updater": "t",
             "errorMessage": None,
+            "startedAt": None,
+            "finishedAt": None,
             "extraField": "should-not-exist",
             "job_id": "should-be-dropped",
             "duration_ms": 1234,
@@ -295,7 +299,7 @@ class TestDebugCallbackWithPlanRun:
         assert "job_id" not in stored, "job_id should have been dropped"
         assert "duration_ms" not in stored, "duration_ms should have been dropped"
         keys = set(stored.keys())
-        assert keys == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage"}
+        assert keys == {"planId", "deviceName", "taskName", "status", "updater", "errorMessage", "startedAt", "finishedAt"}
 
 
 # ===========================================================================
@@ -322,7 +326,7 @@ class TestDefaultServerMode:
             "/executor/v1/status",
             "/executor/v1/config/excel:path",
             "/executor/v1/plans/{plan_id}:run",
-            "/executor/v1/plans/{plan_id}/runs/{run_id}",
+            "/executor/v1/plans/{plan_id}",
         ]
         for route in executor_routes:
             assert route in route_paths, f"Executor route {route} must exist in default server mode"
@@ -338,14 +342,14 @@ class TestDefaultServerMode:
 
 
 # ===========================================================================
-# Regression: 6-field payload test from existing tests
+# Regression: 8-field payload test from existing tests
 # ===========================================================================
 
 class TestCallbackPayloadFields:
-    """Verify that the 6-field callback contract is maintained via debug receiver."""
+    """Verify that the 8-field callback contract is maintained via debug receiver."""
 
-    def test_callback_payload_contains_all_6_fields(self):
-        """Test that any POST to debug callback receiver stores all 6 fields correctly."""
+    def test_callback_payload_contains_all_8_fields(self):
+        """Test that any POST to debug callback receiver stores all 8 fields correctly."""
         svc = DirectDispatchService(executor_id="test-6fields")
         svc.start_background_worker()
         prs = PlanRunService()
@@ -363,6 +367,8 @@ class TestCallbackPayloadFields:
                 "status": status_val,
                 "updater": "test-updater",
                 "errorMessage": "some error" if status_val == "FAILED" else None,
+                "startedAt": None,
+                "finishedAt": None,
             }
             resp = c.post("/debug/plan-item-statuses", json=payload)
             assert resp.status_code == 200

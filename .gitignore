@@ -17,6 +17,9 @@ runtime/output/
 dev_verify_out/
 timing_out/
 self_check_output/
+executor_state/
+output_api_direct/
+*_AUDIT_REPORT.md
 
 # IDE
 .vscode/

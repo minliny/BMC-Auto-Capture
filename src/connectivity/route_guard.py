@@ -48,10 +48,9 @@ class RouteGuard:
         """Capture current Windows routing table."""
         raw = ""
         try:
-            # Primary: route print
+            # Primary: route print — shell=False, no user input concatenated
             raw = subprocess.check_output(
                 ["route", "print"],
-                shell=True,
                 text=True,
                 timeout=10,
                 stderr=subprocess.STDOUT,
@@ -61,7 +60,6 @@ class RouteGuard:
                 # Fallback: Get-NetRoute (PowerShell)
                 raw = subprocess.check_output(
                     ["powershell", "-Command", "Get-NetRoute | Format-Table -AutoSize"],
-                    shell=True,
                     text=True,
                     timeout=10,
                     stderr=subprocess.STDOUT,

@@ -21,6 +21,9 @@ from fastapi.exceptions import RequestValidationError
 from .schemas import (
     JobDispatchRequest, JobAcceptResponse, JobStatusResponse, ExecutorStatusResponse,
     PlanRunCallbackConfig, PlanRunRequest, ExternalPlanRequest,
+    ExcelPathRequest, ExcelConfigAcceptResponse, LatestConfigResponse,
+    PlanRunAcceptResponse, PlanStatusResponse, PlanItemsResponse,
+    CallbackRetryRequest, CallbackRetryResponse,
 )
 from .service import DirectDispatchService, ValidationError
 from .contracts import get_contract_index, get_contract
@@ -236,33 +239,53 @@ def _get_config_store() -> object:
     return get_default_store()
 
 
+def _config_accept_response(result: dict) -> dict:
+    """Return only public config activation fields."""
+    return {
+        "accepted": bool(result.get("accepted")),
+        "deviceCount": int(result.get("deviceCount", 0) or 0),
+        "enabledDeviceCount": int(result.get("enabledDeviceCount", 0) or 0),
+        "taskCount": int(result.get("taskCount", 0) or 0),
+        "enabledTaskCount": int(result.get("enabledTaskCount", 0) or 0),
+        "filename": result.get("filename", ""),
+        "excelHash": result.get("excelHash", ""),
+        "sha256": result.get("sha256", result.get("excelHash", "")),
+        "message": result.get("message", ""),
+    }
+
+
+def _error_response(result: dict, status_code: int = 400) -> JSONResponse:
+    """Return an error body without local filesystem paths."""
+    body = dict(result)
+    body.pop("storedPath", None)
+    msg = str(body.get("message", ""))
+    if "storedPath" in msg or "latest.json" in msg:
+        body["message"] = "Excel config storage is unavailable or inconsistent"
+    return JSONResponse(content=body, status_code=status_code)
+
+
 def _register_plan_run_routes(app: FastAPI, prs):
     """Plan run routes: Excel config, run start, query, and remote upload."""
 
-    @app.post("/executor/v1/config/excel:path")
-    async def set_latest_excel_path(req: Request):
+    @app.post("/executor/v1/config/excel:path", response_model=ExcelConfigAcceptResponse)
+    async def set_latest_excel_path(req: ExcelPathRequest):
         """Set latest Excel by executor-local path (local debug only).
 
         Uses ExcelConfigStore.activate_from_local_path() which copies the
         file into executor_state/configs/by_hash/ and writes latest.json.
         Legacy .runtime/configs/latest.xlsx triggers automatic migration.
         """
-        try:
-            body = await req.json()
-        except Exception:
-            raise HTTPException(status_code=400,
-                                detail={"code": "INVALID_JSON_BODY", "message": "Request body must be valid JSON"})
-        path = body.get("excelPath", "")
+        path = req.excelPath
         if not path:
             raise HTTPException(status_code=400, detail={"code": "EXCEL_PATH_REQUIRED",
                                                          "message": "excelPath is required"})
         store = _get_config_store()
         result = store.activate_from_local_path(path)
         if not result.get("accepted"):
-            return JSONResponse(content=result, status_code=400)
-        return result
+            return _error_response(result, status_code=400)
+        return _config_accept_response(result)
 
-    @app.post("/executor/v1/config/excel")
+    @app.post("/executor/v1/config/excel", response_model=ExcelConfigAcceptResponse)
     async def upload_excel(file: UploadFile = File(...)):
         """Upload Excel file from remote Windows client (multipart/form-data).
 
@@ -275,12 +298,14 @@ def _register_plan_run_routes(app: FastAPI, prs):
         raw = await file.read()
         result = store.activate_from_upload(raw, filename)
         if not result.get("accepted"):
-            code = result.get("code", "UNKNOWN")
-            status = 400
-            return JSONResponse(content=result, status_code=status)
-        return result
+            return _error_response(result, status_code=400)
+        return _config_accept_response(result)
 
-    @app.get("/executor/v1/config/latest")
+    @app.get(
+        "/executor/v1/config/latest",
+        response_model=LatestConfigResponse,
+        response_model_exclude_defaults=True,
+    )
     async def get_latest_config():
         """Return info about the latest Excel config, or hasLatest=false.
 
@@ -294,7 +319,7 @@ def _register_plan_run_routes(app: FastAPI, prs):
                 content={
                     "hasLatest": False,
                     "code": meta["code"],
-                    "message": meta.get("message", ""),
+                    "message": "Excel config storage is unavailable or inconsistent",
                 },
                 status_code=409,
             )
@@ -331,20 +356,20 @@ def _register_plan_run_routes(app: FastAPI, prs):
             "createdAt": "",
         }
 
-    @app.post("/executor/v1/plans/{plan_id}:run")
+    @app.post("/executor/v1/plans/{plan_id}:run", response_model=PlanRunAcceptResponse)
     async def start_plan_run(plan_id: int, req: PlanRunRequest):
         """Start a plan run. Request body validated via PlanRunRequest schema."""
         body = req.model_dump()
         result = prs.start_plan_run(plan_id, body)
         if not result.get("accepted"):
-            return JSONResponse(content=result, status_code=400)
+            return _error_response(result, status_code=400)
         # Non-breaking observability: indicate callback transport mode
         # Auto-detect: if itemStatusUrl is provided, transport will be http
         has_url = bool(req.callback.itemStatusUrl)
         result["callbackTransportMode"] = "http" if has_url else "fake"
         return result
 
-    @app.get("/executor/v1/plans/{plan_id}")
+    @app.get("/executor/v1/plans/{plan_id}", response_model=PlanStatusResponse)
     async def get_plan(plan_id: str, request: Request):
         """Get plan summary.
 
@@ -375,7 +400,7 @@ def _register_plan_run_routes(app: FastAPI, prs):
                                                          "message": f"Plan not found: {plan_id}"})
         return r
 
-    @app.get("/executor/v1/plans/{plan_id}/items")
+    @app.get("/executor/v1/plans/{plan_id}/items", response_model=PlanItemsResponse)
     async def get_plan_items_route(plan_id: str, request: Request):
         """Get plan per-item details.
 
@@ -406,7 +431,30 @@ def _register_plan_run_routes(app: FastAPI, prs):
     # External Plan API (excelHash + string planId)
     # ==================================================================
 
-    @app.post("/executor/v1/plans")
+    @app.get("/executor/v1/runs/{run_id}", response_model=PlanStatusResponse)
+    async def get_run_by_id(run_id: str):
+        r = prs.get_run(run_id)
+        if r is None:
+            raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND",
+                                                         "message": f"Run not found: {run_id}"})
+        return r
+
+    @app.get("/executor/v1/runs/{run_id}/items", response_model=PlanItemsResponse)
+    async def get_run_items_by_id(run_id: str):
+        r = prs.get_run_items(run_id)
+        if r is None:
+            raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND",
+                                                         "message": f"Run not found: {run_id}"})
+        return r
+
+    @app.post("/executor/v1/plans/{plan_id}/callbacks:retry", response_model=CallbackRetryResponse)
+    async def retry_plan_callbacks(plan_id: str, req: CallbackRetryRequest):
+        result = prs.retry_pending_callbacks(plan_id, callback_url=req.callbackUrl, mode=req.mode)
+        if not result.get("accepted"):
+            return _error_response(result, status_code=400)
+        return result
+
+    @app.post("/executor/v1/plans", response_model=PlanRunAcceptResponse)
     async def start_external_plan(req: ExternalPlanRequest):
         """Start external plan. Service only needs excelHash + callback URL."""
         body = req.model_dump()
@@ -416,7 +464,7 @@ def _register_plan_run_routes(app: FastAPI, prs):
             em = result.get("errorMessage", "")
             if em in ("NO_LATEST_EXCEL_CONFIG", "EXCEL_HASH_MISMATCH", "MISSING_EXCEL_HASH"):
                 code = 400
-            return JSONResponse(content=result, status_code=code)
+            return _error_response(result, status_code=code)
         # Non-breaking observability: indicate callback transport mode
         has_url = bool(req.callback.itemStatusUrl)
         result["callbackTransportMode"] = "http" if has_url else "fake"

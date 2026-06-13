@@ -38,6 +38,8 @@ from ..rules.condition_evaluator import (
     ArtifactContext, ConditionResult, ConditionEvaluationResult,
 )
 from ..out.file_writer import write_html_file, write_log_file
+from ..utils.html_redaction import capture_redacted_html
+from ..utils.path_safety import safe_join_under_root, is_safe_path_component
 from ..utils.template import resolve_template, check_unreplaced_vars
 
 logger = logging.getLogger("bmc_auto_capture.bmc")
@@ -194,17 +196,24 @@ class BMCExecutor(AbstractExecutor):
             return result
 
         output_dir = self._build_output_dir(output_root, device, task)
+        if task.retry_count > 0:
+            output_dir = safe_join_under_root(output_dir, f"attempt_{plan.retry_attempt + 1}")
         os.makedirs(output_dir, exist_ok=True)
         result.output_dir = output_dir
 
         page = None
         page_acquired = False
         current_stage = "init"
+        _stage_start = time.time()
         _context = None  # browser context for cleanup
         _health_results: list[HealthResult] = []
 
-        # Hard task-level timeout: 2× task.timeout_seconds is the absolute ceiling.
-        task_timeout = max(task.timeout_seconds, 30) * 2
+        # task.timeout_seconds is the task hard timeout; page timeout is only fallback.
+        task_timeout = (
+            float(task.timeout_seconds)
+            if task.timeout_seconds > 0
+            else float(self._page_timeout)
+        )
 
         async def _check_health(stage: str, target_url: str = "") -> HealthResult:
             """Run health check and store result. Returns the HealthResult."""
@@ -224,9 +233,10 @@ class BMCExecutor(AbstractExecutor):
             return hr
 
         async def _run_with_stages():
-            nonlocal page, page_acquired, current_stage, _context
+            nonlocal page, page_acquired, current_stage, _context, _stage_start
 
             # --- Stage 1: acquire browser context ---
+            _stage_start = time.time()
             current_stage = "1/6 acquire_context"
             logger.info("[%s] Stage %s", dname, current_stage)
             context = await asyncio.wait_for(self._bm.get_context(), timeout=30)
@@ -234,6 +244,7 @@ class BMCExecutor(AbstractExecutor):
             logger.info("[%s] 阶段 1/6: 浏览器就绪", dname)
 
             # --- Stage 2: acquire page ---
+            _stage_start = time.time()
             current_stage = "2/6 acquire_page"
             logger.info("[%s] Stage %s", dname, current_stage)
             page = await asyncio.wait_for(context.new_page(), timeout=15)
@@ -242,12 +253,14 @@ class BMCExecutor(AbstractExecutor):
             logger.info("[%s] 阶段 2/6: 页面就绪", dname)
 
             # --- Stage 3: resolve URL ---
+            _stage_start = time.time()
             current_stage = "3/6 resolve_url"
             logger.info("[%s] Stage %s", dname, current_stage)
             bmc_url = self._resolve_url(task.command_or_url, device.bmc_ip, device, task)
             logger.info("[%s] Stage 3/6: url=%s", dname, bmc_url)
 
             # --- Stage 4: login ---
+            _stage_start = time.time()
             current_stage = "4/6 login"
             logger.info("[%s] Stage %s", dname, current_stage)
             login_ok, login_reason = await asyncio.wait_for(
@@ -271,6 +284,7 @@ class BMCExecutor(AbstractExecutor):
                 return
 
             # --- Stage 5: dismiss popups + navigate + capture ---
+            _stage_start = time.time()
             current_stage = "5/6 navigate_capture"
             logger.info("[%s] Stage %s", dname, current_stage)
             await self._dismiss_popups(page)
@@ -280,6 +294,7 @@ class BMCExecutor(AbstractExecutor):
             logger.info("[%s] 阶段 5/6: 采集完成", dname)
 
             # --- Stage 6: final health gate ---
+            _stage_start = time.time()
             current_stage = "6/6 final_health_check"
             hr = await _check_health("before_complete")
             if not hr.healthy and result.execution_status not in ("EXEC_FAILED", "EXEC_PARTIAL"):
@@ -300,10 +315,11 @@ class BMCExecutor(AbstractExecutor):
 
         except asyncio.TimeoutError:
             elapsed = time.time() - _t0
+            stage_elapsed = time.time() - _stage_start
             result.execution_status = "EXEC_TIMEOUT"
             result.execution_failure_reason = (
-                f"BMC任务超时: 卡在 {current_stage}, "
-                f"已等待 {elapsed:.0f}s (硬上限 {task_timeout}s). "
+                f"BMC任务超时: 卡在 {current_stage} (此阶段 {stage_elapsed:.0f}s), "
+                f"总等待 {elapsed:.0f}s (硬上限 {task_timeout}s). "
                 f"可能原因: browser启动失败 / page获取阻塞 / BMC页面无响应."
             )
             logger.error("[%s] BMC timeout at stage %s (%.0fs elapsed)", dname, current_stage, elapsed)
@@ -724,7 +740,7 @@ class BMCExecutor(AbstractExecutor):
         file_base, _ = self._resolve_file_basename(task, device)
 
         # Full-page screenshot
-        ss_path = os.path.join(output_dir, f"{file_base}.png")
+        ss_path = safe_join_under_root(output_dir, f"{file_base}.png")
         await page.screenshot(path=ss_path, full_page=True)
         await self._save_raw_and_compose(ss_path, task, device.bmc_ip, page_url=page.url, result=result, page=page)
 
@@ -738,7 +754,7 @@ class BMCExecutor(AbstractExecutor):
         ))
 
         # Save HTML
-        html_content = await page.content()
+        html_content = await capture_redacted_html(page)
         html_path = write_html_file(output_dir, f"{file_base}.html", html_content)
         result.html_file = html_path
         result.artifact_status = "ARTIFACT_SAVED"
@@ -904,11 +920,16 @@ class BMCExecutor(AbstractExecutor):
             actions = json.loads(task.actions_json) if task.actions_json else []
         except json.JSONDecodeError:
             logger.error("Failed to parse BMC_ACTIONS JSON for task %s", task.task_name)
+            result.execution_status = "EXEC_FAILED"
             result.execution_failure_reason = "BMC_ACTIONS JSON 解析失败"
             return
 
         if not isinstance(actions, list):
             actions = [actions]
+        if any(not isinstance(action, dict) for action in actions):
+            result.execution_status = "EXEC_FAILED"
+            result.execution_failure_reason = "BMC_ACTIONS JSON schema invalid: actions must be objects"
+            return
 
         for i, action in enumerate(actions):
             action_type = action.get("action", action.get("type", ""))
@@ -932,12 +953,8 @@ class BMCExecutor(AbstractExecutor):
                 elif action_type == "wait":
                     await asyncio.sleep(float(value) if value else 1.0)
                 elif action_type == "screenshot":
-                    file_base = (task.image_name_template
-                                 .replace("{device_ip}", device.bmc_ip)
-                                 .replace("{device_name}", device.device_name)
-                                 .replace("{task_name}", task.task_name)
-                                 .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
-                    ss_path = os.path.join(output_dir, f"{file_base}.png")
+                    file_base, _ = self._resolve_file_basename(task, device)
+                    ss_path = safe_join_under_root(output_dir, f"{file_base}.png")
                     await page.screenshot(path=ss_path, full_page=True)
                     result.screenshots = result.screenshots + (ss_path,)
                     result.step_results.append(StepResult(
@@ -945,12 +962,8 @@ class BMCExecutor(AbstractExecutor):
                         status="SUCCESS", screenshot=ss_path,
                     ))
                 elif action_type == "save_html":
-                    html = await page.content()
-                    file_base = (task.image_name_template
-                                 .replace("{device_ip}", device.bmc_ip)
-                                 .replace("{device_name}", device.device_name)
-                                 .replace("{task_name}", task.task_name)
-                                 .replace("{task_sequence}", task.sequence_str or str(task.sequence)))
+                    html = await capture_redacted_html(page)
+                    file_base, _ = self._resolve_file_basename(task, device)
                     html_path = write_html_file(output_dir, f"{file_base}.html", html)
                     result.html_file = html_path
                 elif action_type == "assert_visible":
@@ -1131,7 +1144,7 @@ class BMCExecutor(AbstractExecutor):
                 elif action_type == "intermediate_screenshot":
                     # Action-level screenshot: policy-controlled
                     if self._screenshot_policy in ("all", "checkpoints"):
-                        ss_path = os.path.join(output_dir, f"intermediate_{i:02d}.png")
+                        ss_path = safe_join_under_root(output_dir, f"intermediate_{i:02d}.png")
                         await page.screenshot(path=ss_path, full_page=True)
                         logger.debug("[%s] intermediate screenshot saved (policy=%s): %s",
                                    device.device_name, self._screenshot_policy, ss_path)
@@ -1225,13 +1238,13 @@ class BMCExecutor(AbstractExecutor):
         errors = []
 
         # html/ subdirectory for non-visual evidence
-        html_dir = os.path.join(output_dir, "html")
+        html_dir = safe_join_under_root(output_dir, "html")
         os.makedirs(html_dir, exist_ok=True)
 
         # Final screenshot (content-aware) — stays in main output dir
         ss_path = ""
         try:
-            ss_path = os.path.join(output_dir, f"{file_base}.png")
+            ss_path = safe_join_under_root(output_dir, f"{file_base}.png")
             await self._content_aware_screenshot(page, ss_path, task, result)
             await self._save_raw_and_compose(ss_path, task, bmc_ip, page_url=page.url, result=result, page=page)
             # Overwrite screenshots with final evidence only
@@ -1253,7 +1266,7 @@ class BMCExecutor(AbstractExecutor):
 
         # Final HTML — into html/ subdirectory
         try:
-            html_content = await page.content()
+            html_content = await capture_redacted_html(page)
             html_path = write_html_file(html_dir, f"{file_base}.html", html_content)
             result.html_file = html_path
             result.step_results.append(StepResult(
@@ -1273,19 +1286,8 @@ class BMCExecutor(AbstractExecutor):
         # evidence.html — rendered DOM with computed styles inlined (offline-viewable)
         evidence_path = ""
         try:
-            evidence_html = await page.evaluate("""() => {
-                const root = document.documentElement.cloneNode(true);
-                // Remove all script tags (JS won't execute offline)
-                for (const s of root.querySelectorAll('script')) { s.remove(); }
-                // Remove event handlers
-                for (const el of root.querySelectorAll('*')) {
-                    for (const attr of [...el.attributes]) {
-                        if (attr.name.startsWith('on')) { el.removeAttribute(attr.name); }
-                    }
-                }
-                return '<!DOCTYPE html>\\n' + root.outerHTML;
-            }""")
-            evidence_path = os.path.join(html_dir, f"{file_base}.evidence.html")
+            evidence_html = await capture_redacted_html(page)
+            evidence_path = safe_join_under_root(html_dir, f"{file_base}.evidence.html")
             with open(evidence_path, "w", encoding="utf-8") as f:
                 f.write(evidence_html)
             logger.info("evidence.html (DOM) saved: %s (%.1f KB)", evidence_path, len(evidence_html) / 1024)
@@ -1299,11 +1301,49 @@ class BMCExecutor(AbstractExecutor):
             logger.warning("evidence.html failed: %s", e)
 
         # State mirror: copy JS properties to HTML attributes before MHTML capture
+        # P0-1: password/sensitive fields MUST NOT have their values synced to attributes
         state_mirror_ok = False
         try:
             await page.evaluate("""() => {
-                // input/textarea: value property → value attribute
+                const SENSITIVE_KEYWORDS = [
+                    'password','passwd','pwd','token','secret','key',
+                    'credential','auth','session','cookie',
+                    '密码','口令','令牌','密钥','凭据','认证','会话',
+                ];
+                function _isSensitive(el) {
+                    const type = (el.type || '').toLowerCase();
+                    if (type === 'password') return true;
+                    const attrs = [
+                        el.name || '', el.id || '', el.placeholder || '',
+                        el.getAttribute('aria-label') || '',
+                        el.getAttribute('autocomplete') || '',
+                    ].join(' ').toLowerCase();
+                    for (const kw of SENSITIVE_KEYWORDS) {
+                        if (attrs.indexOf(kw) >= 0) return true;
+                    }
+                    // Also check data-* attributes against full keyword list
+                    for (const attr of (el.attributes || [])) {
+                        if (attr.name.startsWith('data-')) {
+                            const attrLower = attr.name.toLowerCase();
+                            for (const kw of SENSITIVE_KEYWORDS) {
+                                if (attrLower.indexOf(kw) >= 0) return true;
+                            }
+                        }
+                    }
+                    return false;
+                }
+                // input/textarea: value property → value attribute (skip sensitive)
                 for (const el of document.querySelectorAll('input, textarea')) {
+                    if (_isSensitive(el)) {
+                        // P0-1: clear value attribute and remove checked for sensitive fields
+                        if (el.type === 'checkbox' || el.type === 'radio') {
+                            el.removeAttribute('checked');
+                        } else {
+                            el.value = '';
+                            el.setAttribute('value', '***REDACTED***');
+                        }
+                        continue;
+                    }
                     if (el.type === 'checkbox' || el.type === 'radio') {
                         if (el.checked) el.setAttribute('checked', 'checked');
                         else el.removeAttribute('checked');
@@ -1337,7 +1377,9 @@ class BMCExecutor(AbstractExecutor):
             result_cdp = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
             mhtml_data = result_cdp.get("data", "")
             if mhtml_data and len(mhtml_data) > 100:
-                mhtml_path = os.path.join(html_dir, f"{file_base}.mhtml")
+                from ..utils.sensitive import redact_mhtml_payload
+                mhtml_data = redact_mhtml_payload(mhtml_data)
+                mhtml_path = safe_join_under_root(html_dir, f"{file_base}.mhtml")
                 with open(mhtml_path, "wb") as f:
                     f.write(mhtml_data.encode("utf-8", errors="replace"))
                 logger.info("MHTML saved (best-effort): %s (%.1f MB)", mhtml_path, len(mhtml_data) / 1_048_576)
@@ -1349,11 +1391,35 @@ class BMCExecutor(AbstractExecutor):
         state_json_path = ""
         try:
             state_data = await page.evaluate("""() => {
+                function _redactText(text) {
+                    if (!text) return text;
+                    let r = text;
+                    r = r.replace(/(Authorization\\s*:\\s*)(Bearer\\s+\\S+|Basic\\s+\\S+)/gi, '$1***REDACTED***');
+                    r = r.replace(/(Bearer\\s+)\\S+/gi, '$1***REDACTED***');
+                    r = r.replace(/(Basic\\s+)[A-Za-z0-9+/=]+/gi, '$1***REDACTED***');
+                    return r;
+                }
+                function _redactUrl(url) {
+                    if (!url) return url;
+                    try {
+                        const u = new URL(url);
+                        const sensitiveKeys = ['token','secret','api_key','access_token','refresh_token','password','passwd','pwd','key','auth'];
+                        const params = new URLSearchParams(u.search);
+                        for (const k of params.keys()) {
+                            if (sensitiveKeys.includes(k.toLowerCase())) {
+                                params.set(k, '***REDACTED***');
+                            }
+                        }
+                        u.search = params.toString();
+                        if (u.password) u.password = '***REDACTED***';
+                        return u.toString();
+                    } catch(e) { return url; }
+                }
                 const result = {
-                    url: location.href,
+                    url: _redactUrl(location.href),
                     title: document.title,
                     timestamp: new Date().toISOString(),
-                    visible_text: (document.body && document.body.innerText
+                    visible_text: _redactText(document.body && document.body.innerText
                         ? document.body.innerText.substring(0, 5000) : ''),
                     inputs: [],
                     textareas: [],
@@ -1362,23 +1428,53 @@ class BMCExecutor(AbstractExecutor):
                     active_tab_like: [],
                     tables: [],
                 };
+                // P0-1: helper to detect sensitive fields
+                const _SENSITIVE = ['password','passwd','pwd','token','secret','key',
+                    'credential','auth','session','cookie',
+                    '密码','口令','令牌','密钥','凭据','认证','会话'];
+                function _isSensitiveInput(el) {
+                    const t = (el.type || '').toLowerCase();
+                    if (t === 'password') return true;
+                    const haystack = [
+                        el.name || '', el.id || '', el.placeholder || '',
+                        el.getAttribute('aria-label') || '',
+                        el.getAttribute('autocomplete') || '',
+                    ].join(' ').toLowerCase();
+                    for (const kw of _SENSITIVE) {
+                        if (haystack.indexOf(kw) >= 0) return true;
+                    }
+                    for (const attr of (el.attributes || [])) {
+                        if (attr.name.startsWith('data-')) {
+                            const attrLower = attr.name.toLowerCase();
+                            for (const kw of _SENSITIVE) {
+                                if (attrLower.indexOf(kw) >= 0) return true;
+                            }
+                        }
+                    }
+                    return false;
+                }
                 // Inputs
                 for (const el of document.querySelectorAll('input')) {
                     const t = (el.type || 'text').toLowerCase();
+                    const isSens = _isSensitiveInput(el);
                     result.inputs.push({
                         selector: el.tagName + (el.id ? '#'+el.id : '') + '[name="'+(el.name||'')+'"]',
                         type: t, name: el.name || '', id: el.id || '',
-                        value: (t === 'checkbox' || t === 'radio') ? '' : (el.value || ''),
-                        checked: t === 'checkbox' || t === 'radio' ? el.checked : null,
+                        value: isSens ? '***REDACTED***' :
+                               (t === 'checkbox' || t === 'radio') ? '' : (el.value || ''),
+                        checked: (t === 'checkbox' || t === 'radio') ? (isSens ? null : el.checked) : null,
                         disabled: el.disabled,
                         readonly: el.readOnly,
+                        sensitive: isSens || undefined,
                     });
                 }
                 // Textareas
                 for (const el of document.querySelectorAll('textarea')) {
+                    const isSens = _isSensitiveInput(el);
                     result.textareas.push({
                         selector: el.tagName + (el.id ? '#'+el.id : '') + '[name="'+(el.name||'')+'"]',
-                        value: el.value || '',
+                        value: isSens ? '***REDACTED***' : (el.value || ''),
+                        sensitive: isSens || undefined,
                     });
                 }
                 // Selects
@@ -1404,7 +1500,7 @@ class BMCExecutor(AbstractExecutor):
                         selector: el.tagName.toLowerCase() + (el.id ? '#'+el.id : '') + '.' + (el.className||'').substring(0,60),
                         class: (el.className || '').substring(0,80),
                         aria_checked: aria,
-                        text: (el.textContent || '').substring(0,100),
+                        text: _redactText((el.textContent || '').substring(0,100)),
                     });
                 }
                 // Active/tab-like custom elements
@@ -1417,7 +1513,7 @@ class BMCExecutor(AbstractExecutor):
                     result.active_tab_like.push({
                         selector: el.tagName.toLowerCase() + (el.id ? '#'+el.id : '') + '.' + (el.className||'').substring(0,60),
                         class: (el.className || '').substring(0,80),
-                        text: (el.textContent || '').substring(0,100),
+                        text: _redactText((el.textContent || '').substring(0,100)),
                     });
                 }
                 // Tables: count rows and excerpt visible text
@@ -1429,12 +1525,12 @@ class BMCExecutor(AbstractExecutor):
                         table_index: idx,
                         row_count: rows.length,
                         column_count: cells.length,
-                        visible_text_excerpt: (tbl.innerText || '').substring(0,300),
+                        visible_text_excerpt: _redactText((tbl.innerText || '').substring(0,300)),
                     });
                 });
                 return result;
             }""")
-            state_json_path = os.path.join(html_dir, f"{file_base}.state.json")
+            state_json_path = safe_join_under_root(html_dir, f"{file_base}.state.json")
             # Add metadata section
             state_data["metadata"] = {
                 "url": state_data.get("url", ""),
@@ -1453,6 +1549,8 @@ class BMCExecutor(AbstractExecutor):
                 "fallback_used": False,
             }
             import json as _json2
+            from ..utils.sensitive import redact_state_payload
+            state_data = redact_state_payload(state_data)
             with open(state_json_path, "w", encoding="utf-8") as f:
                 _json2.dump(state_data, f, ensure_ascii=False, indent=2)
             logger.info("State JSON saved: %s (%.1f KB)", state_json_path, os.path.getsize(state_json_path) / 1024)
@@ -1621,9 +1719,9 @@ class BMCExecutor(AbstractExecutor):
     ) -> None:
         """Save raw screenshot to raw/ then composite address bar in place."""
         # 1. Save raw
-        raw_dir = os.path.join(os.path.dirname(screenshot_path), "raw")
+        raw_dir = safe_join_under_root(os.path.dirname(screenshot_path), "raw")
         os.makedirs(raw_dir, exist_ok=True)
-        raw_path = os.path.join(raw_dir, os.path.basename(screenshot_path))
+        raw_path = safe_join_under_root(raw_dir, os.path.basename(screenshot_path))
         shutil.copy2(screenshot_path, raw_path)
 
         if result is not None:
@@ -1838,8 +1936,16 @@ class BMCExecutor(AbstractExecutor):
 
         Returns (basename, fallback_used).
         Logs diagnostics: raw template, resolved name, context keys, unresolved vars.
+
+        P0-1: calls validate_template_for_path() on the raw template to fail-fast
+        if sensitive variables (password/token/secret/key) appear in file naming.
         """
+        from ..utils.path_safety import safe_filename, validate_template_for_path
+
         raw_tmpl = getattr(task, "image_name_template", "") or ""
+        # P0-1: fail-fast if template contains sensitive vars
+        if raw_tmpl:
+            validate_template_for_path(raw_tmpl, context="file_basename")
         file_base = resolve_template(raw_tmpl, device=device, task=task)
         unreplaced = check_unreplaced_vars(file_base)
         fallback_used = False
@@ -1856,6 +1962,9 @@ class BMCExecutor(AbstractExecutor):
                     f"文件名模板解析为空且 fallback 也为空: "
                     f"template={raw_tmpl!r}, fallback=OOB_IP={{OOB_IP}} TaskName={{TaskName}}"
                 )
+
+        # AUDIT-002: sanitize file_base to prevent path traversal in evidence filenames
+        file_base = safe_filename(file_base)
 
         logger.info(
             "文件命名: raw_template=%r resolved=%s context_keys=(DeviceName=%s OOB_IP=%s TaskName=%s TaskSeq=%s timestamp) "
@@ -1899,12 +2008,20 @@ class BMCExecutor(AbstractExecutor):
             )
 
     def _build_output_dir(self, root: str, device, task) -> str:
+        from ..utils.path_safety import (
+            resolve_under_output_root, safe_filename, validate_template_for_path,
+        )
+
         tmpl = task.output_dir_template
+        # P0-1: fail-fast if template contains sensitive vars (password/token/secret/key)
+        if tmpl:
+            validate_template_for_path(tmpl, context="output_dir")
         resolved = resolve_template(tmpl, device, task)
         unreplaced = check_unreplaced_vars(resolved)
         if unreplaced:
             logger.warning(f"BMC output_dir_template 残留未替换变量: {unreplaced} in '{tmpl}'")
-        return os.path.join(root, resolved)
+        # P0-2: all output paths must be contained under root
+        return resolve_under_output_root(root, resolved)
 
     def _build_log(self, result: ExecutionResult) -> str:
         lines = [

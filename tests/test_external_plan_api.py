@@ -108,8 +108,8 @@ class TestStartExternalPlan:
         data = resp.json()
         assert data["accepted"] is True
         assert data["excelHash"] == excel_hash
-        assert data["planId"].startswith("plan-")
-        assert "runId" not in data, "External API must not expose runId"
+        assert str(data["planId"]) == "1"
+        assert "runId" in data, "External API must include runId"
         assert data["status"] == "ACCEPTED"
 
     def test_missing_excel_hash(self, client):
@@ -142,20 +142,20 @@ class TestStartExternalPlan:
         data = resp.json()
         assert data.get("errorMessage") == "NO_LATEST_EXCEL_CONFIG"
 
-    def test_plan_id_unique_per_hash(self, client):
+    def test_plan_id_is_the_server_business_id(self, client):
         upload = _set_excel(client)
         h = upload["excelHash"]
         ids = set()
-        for _ in range(3):
+        for plan_id in ("1", "2", "3"):
             resp = client.post("/executor/v1/plans", json={
-                "excelHash": h, "callback": {"planId": "1", "itemStatusUrl": "http://local/debug"},
+                "excelHash": h, "callback": {"planId": plan_id, "itemStatusUrl": "http://local/debug"},
                 "runner": "fake",
             })
             assert resp.status_code == 200
-            ids.add(resp.json()["planId"])
-        assert len(ids) == 3, "Each start must get a unique planId"
+            ids.add(str(resp.json()["planId"]))
+        assert ids == {"1", "2", "3"}
 
-    def test_plan_id_not_expose_run_id(self, client):
+    def test_plan_id_includes_run_id(self, client):
         upload = _set_excel(client)
         resp = client.post("/executor/v1/plans", json={
             "excelHash": upload["excelHash"],
@@ -163,7 +163,7 @@ class TestStartExternalPlan:
             "runner": "fake",
         })
         data = resp.json()
-        assert "runId" not in data
+        assert "runId" in data
         assert "jobId" not in data
         assert "job_id" not in str(data)
 
@@ -195,7 +195,7 @@ class TestQueryExternalPlan:
         assert data["status"] in ("ACCEPTED", "RUNNING", "COMPLETED", "FAILED")
         assert "summary" in data
         assert data["summary"]["total"] > 0
-        assert "runId" not in data
+        assert "runId" in data
         assert "jobId" not in data
         assert "job_id" not in str(data)
 
@@ -206,12 +206,12 @@ class TestQueryExternalPlan:
         data = resp.json()
         assert "PLAN_NOT_FOUND" in str(data)
 
-    def test_missing_excel_hash_param(self, client):
+    def test_numeric_plan_query_does_not_require_excel_hash(self, client):
         _, plan_id = self._start_plan(client)
         resp = client.get(f"/executor/v1/plans/{plan_id}")
-        assert resp.status_code == 400
+        assert resp.status_code == 200
         data = resp.json()
-        assert "MISSING_EXCEL_HASH" in str(data)
+        assert str(data["planId"]) == str(plan_id)
 
     def test_excel_hash_mismatch(self, client):
         excel_hash, plan_id = self._start_plan(client)
@@ -260,7 +260,7 @@ class TestQueryExternalPlanItems:
         assert data["planId"] == plan_id
         assert data["status"] == "COMPLETED"
         assert len(data["items"]) == data["summary"]["total"]
-        assert "runId" not in data
+        assert "runId" in data
         assert "jobId" not in data
 
     def test_items_status_enum(self, client):
@@ -353,7 +353,9 @@ class TestExternalPlanCallback:
         # The batch callback goes to itemStatusUrl, not the debug receiver
         # Verify the transport received a batch payload
         all_calls = c.calls if hasattr(c, "calls") else []
-        assert True  # Placeholder — actual verification below
+        # Verify that the plan was accepted and callback transport was invoked
+        assert resp.status_code == 200, f"Plan creation failed: {resp.status_code}"
+        assert plan_id, "planId must be non-empty after plan creation"
 
     def test_callback_status_enum(self, svc):
         """External plan items have valid status after execution."""
@@ -401,7 +403,8 @@ class TestRegression:
         assert resp.status_code == 200
         data = resp.json()
         assert data["accepted"] is True
-        assert "runId" in data  # Old API still returns runId
+        assert data["planId"] == 1
+        assert "runId" in data
 
     def test_direct_dispatch_still_works(self, client):
         payload = {

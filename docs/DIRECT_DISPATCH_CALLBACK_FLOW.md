@@ -180,7 +180,7 @@ curl -X POST http://<executor-ip>:18000/executor/v1/jobs \
 | 用途 | 测试/调试 | 生产 |
 | 执行 | 模拟 success/failure/timeout | 真实 BMCExecutor / SSHExecutor |
 | 默认 | 是 | 否 |
-| 开启 | `--runner fake` | `--runner real` |
+| 开启 | `--runner fake` | `--runner real --enable-real-runner` |
 
 ## 开启真实执行
 
@@ -190,6 +190,7 @@ python3 scripts/start_executor_api_server.py \
   --executor-id exec-win-001 \
   --callback-transport http \
   --runner real \
+  --enable-real-runner \
   --output ./output_api_direct
 ```
 

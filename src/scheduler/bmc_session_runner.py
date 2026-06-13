@@ -30,6 +30,7 @@ from typing import Callable
 
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult
+from ..models.verdict import AttemptRecord, compute_verdict, is_retryable_failure
 from ..executor.bmc_executor import BMCExecutor
 from ..executor.browser_manager import BrowserManager
 from ..executor.bmc_health_check import check_bmc_page_health, HealthResult
@@ -84,6 +85,37 @@ class BMCEndpointSessionRunner:
     async def _run_async(self) -> list[ExecutionResult]:
         self.session_started_at = time.time()
         results: list[ExecutionResult] = []
+        result_meta_by_plan_id: dict[str, tuple[str, str]] = {}
+
+        def append_result_once(
+            plan: TaskPlan, result: ExecutionResult, source: str,
+        ) -> bool:
+            plan_id = plan.plan_id or result.plan_id
+            if not plan_id:
+                logger.error(
+                    "[SessionRunner] result rejected without plan_id source=%s",
+                    source,
+                )
+                return False
+            result.plan_id = plan_id
+            old_meta = result_meta_by_plan_id.get(plan_id)
+            if old_meta is not None:
+                logger.warning(
+                    "[SessionRunner] duplicate final result discarded "
+                    "plan_id=%s old_status=%s new_status=%s "
+                    "old_source=%s new_source=%s",
+                    plan_id,
+                    old_meta[0],
+                    result.execution_status,
+                    old_meta[1],
+                    source,
+                )
+                return False
+            result_meta_by_plan_id[plan_id] = (result.execution_status, source)
+            results.append(result)
+            if self._on_plan_done:
+                self._on_plan_done(plan, result)
+            return True
 
         page = None
         page_acquired = False
@@ -130,9 +162,8 @@ class BMCEndpointSessionRunner:
                         endpoint_key=self._endpoint_key,
                         endpoint_type="BMC",
                     )
-                    results.append(r)
-                    if self._on_plan_done:
-                        self._on_plan_done(plan, r)
+                    r.final_verdict = compute_verdict(r)
+                    append_result_once(plan, r, "login_failure")
                 return results
 
             logger.info(
@@ -159,22 +190,25 @@ class BMCEndpointSessionRunner:
                 import os
                 os.makedirs(output_dir, exist_ok=True)
 
-                result = ExecutionResult(
-                    plan_id=plan.plan_id,
-                    task_id=plan.task_id,
-                    client_task_id=plan.client_task_id,
-                    device_name=device.device_name,
-                    device_group=device.device_group,
-                    bmc_ip=device.bmc_ip,
-                    inband_ip=device.inband_ip,
-                    task_name=task.task_name,
-                    task_type=task.task_type,
-                    execution_mode=task.execution_mode,
-                    started_at=plan.started_at,
-                    output_dir=output_dir,
-                    endpoint_key=self._endpoint_key,
-                    endpoint_type="BMC",
-                )
+                def make_result(attempt_output_dir: str, started_at: float) -> ExecutionResult:
+                    return ExecutionResult(
+                        plan_id=plan.plan_id,
+                        task_id=plan.task_id,
+                        client_task_id=plan.client_task_id,
+                        device_name=device.device_name,
+                        device_group=device.device_group,
+                        bmc_ip=device.bmc_ip,
+                        inband_ip=device.inband_ip,
+                        task_name=task.task_name,
+                        task_type=task.task_type,
+                        execution_mode=task.execution_mode,
+                        started_at=started_at,
+                        output_dir=attempt_output_dir,
+                        endpoint_key=self._endpoint_key,
+                        endpoint_type="BMC",
+                    )
+
+                result = make_result(output_dir, plan.started_at)
 
                 # --- Health check: session alive ---
                 hr = await check_bmc_page_health(page, "before_plan", target_url="")
@@ -199,43 +233,139 @@ class BMCEndpointSessionRunner:
                         result.duration_seconds = result.ended_at - result.started_at
                         plan.completed_at = result.ended_at
                         plan.status = "EXEC_FAILED"
-                        results.append(result)
-                        if self._on_plan_done:
-                            self._on_plan_done(plan, result)
+                        append_result_once(plan, result, "session_relogin_failure")
                         continue
 
-                # --- Execute this plan's capture flow ---
-                try:
-                    await _exec._run_capture_flow(
-                        page, task, device, device.bmc_ip, output_dir, result,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "[SessionRunner] %s plan %d/%d crashed: %s",
-                        self._endpoint_key, idx + 1, len(self._plans), e,
-                    )
-                    if result.execution_status not in ("EXEC_FAILED",):
-                        result.execution_status = "EXEC_ERROR"
-                        result.execution_failure_reason = str(e)
+                # --- Execute with per-plan timeout and optional retry ---
+                max_retries = max(0, task.retry_count)
+                plan_timeout = (
+                    float(task.timeout_seconds)
+                    if task.timeout_seconds > 0
+                    else float(self._page_timeout)
+                )
+                _attempts_data: list[AttemptRecord] = []
+                _retry_reasons: list[str] = []
 
-                # --- Plan health check ---
-                if result.execution_status not in ("EXEC_FAILED", "EXEC_ERROR"):
-                    hr2 = await check_bmc_page_health(
-                        page, "after_plan",
-                        target_url=task.command_or_url or "",
+                for attempt_idx in range(max_retries + 1):
+                    plan.retry_attempt = attempt_idx
+                    _attempt_start = time.time()
+                    attempt_output_dir = (
+                        os.path.join(output_dir, f"attempt_{attempt_idx + 1}")
+                        if max_retries > 0 else output_dir
                     )
-                    if not hr2.healthy:
-                        result.execution_status = "EXEC_FAILED"
-                        result.execution_failure_reason = (
-                            f"BMC_PAGE_HEALTH_FAILED [{hr2.status}]: {hr2.details}"
+                    os.makedirs(attempt_output_dir, exist_ok=True)
+                    attempt_result = make_result(attempt_output_dir, _attempt_start)
+
+                    try:
+                        await asyncio.wait_for(
+                            _exec._run_capture_flow(
+                                page, task, device, device.bmc_ip,
+                                attempt_output_dir, attempt_result,
+                            ),
+                            timeout=plan_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        elapsed = time.time() - plan.executor_started_at
+                        attempt_result.execution_status = "EXEC_TIMEOUT"
+                        attempt_result.execution_failure_reason = (
+                            f"BMC plan timeout: exceeded {plan_timeout}s "
+                            f"(task.timeout_seconds={task.timeout_seconds}, "
+                            f"elapsed={elapsed:.0f}s)"
                         )
                         logger.error(
-                            "[SessionRunner] %s — plan %d/%d health failed: %s",
-                            self._endpoint_key, idx + 1, len(self._plans), hr2.status,
+                            "[SessionRunner] %s plan %d/%d timeout: %s",
+                            self._endpoint_key, idx + 1, len(self._plans),
+                            attempt_result.execution_failure_reason,
                         )
+                    except Exception as e:
+                        logger.error(
+                            "[SessionRunner] %s plan %d/%d crashed: %s",
+                            self._endpoint_key, idx + 1, len(self._plans), e,
+                        )
+                        if attempt_result.execution_status not in ("EXEC_FAILED",):
+                            attempt_result.execution_status = "EXEC_ERROR"
+                            attempt_result.execution_failure_reason = str(e)
 
-                if result.execution_status not in ("EXEC_FAILED", "EXEC_ERROR", "EXEC_PARTIAL"):
-                    result.execution_status = "EXEC_SUCCESS"
+                    # --- Plan health check ---
+                    if attempt_result.execution_status not in ("EXEC_FAILED", "EXEC_ERROR", "EXEC_TIMEOUT"):
+                        hr2 = await check_bmc_page_health(
+                            page, "after_plan",
+                            target_url=task.command_or_url or "",
+                        )
+                        if not hr2.healthy:
+                            attempt_result.execution_status = "EXEC_FAILED"
+                            attempt_result.execution_failure_reason = (
+                                f"BMC_PAGE_HEALTH_FAILED [{hr2.status}]: {hr2.details}"
+                            )
+                            logger.error(
+                                "[SessionRunner] %s — plan %d/%d health failed: %s",
+                                self._endpoint_key, idx + 1, len(self._plans), hr2.status,
+                            )
+
+                    if attempt_result.execution_status not in (
+                        "EXEC_FAILED", "EXEC_ERROR", "EXEC_PARTIAL", "EXEC_TIMEOUT",
+                    ):
+                        attempt_result.execution_status = "EXEC_SUCCESS"
+
+                    _attempt_end = time.time()
+                    attempt_result.ended_at = _attempt_end
+                    attempt_result.duration_seconds = round(
+                        _attempt_end - _attempt_start, 3,
+                    )
+                    _attempts_data.append(AttemptRecord(
+                        attempt_index=attempt_idx,
+                        max_retries=max_retries,
+                        execution_status=attempt_result.execution_status,
+                        execution_failure_reason=attempt_result.execution_failure_reason or "",
+                        elapsed_seconds=round(_attempt_end - _attempt_start, 3),
+                        started_at=_attempt_start,
+                        ended_at=_attempt_end,
+                        output_dir=attempt_output_dir,
+                        artifact_paths=tuple(
+                            path for path in (
+                                *attempt_result.screenshots,
+                                *attempt_result.raw_screenshots,
+                                attempt_result.html_file,
+                                attempt_result.txt_file,
+                            ) if path
+                        ),
+                        step_result_count=len(attempt_result.step_results),
+                    ))
+                    result = attempt_result
+
+                    # Decide whether to retry
+                    if attempt_result.execution_status == "EXEC_SUCCESS":
+                        break
+                    if not is_retryable_failure(attempt_result):
+                        break
+                    if attempt_idx >= max_retries:
+                        break
+
+                    # Retryable failure with retries left → re-login, then retry
+                    logger.warning(
+                        "[SessionRunner] %s plan %d/%d attempt %d/%d retryable: %s — re-login & retry",
+                        self._endpoint_key, idx + 1, len(self._plans),
+                        attempt_idx + 1, max_retries + 1,
+                        (attempt_result.execution_failure_reason or "")[:60],
+                    )
+                    _retry_reasons.append(
+                        attempt_result.execution_failure_reason
+                        or attempt_result.execution_status
+                    )
+                    login_ok_r, reason_r = await self._do_login(page, device, bmc_url)
+                    self.login_count += 1
+                    if not login_ok_r:
+                        logger.warning(
+                            "[SessionRunner] %s re-login failed: %s — aborting retry",
+                            self._endpoint_key, reason_r,
+                        )
+                        break
+                result.attempt_records = _attempts_data
+                result.retry_count = max(0, len(_attempts_data) - 1)
+                result.attempt_count = len(_attempts_data)
+                result.max_attempts = max_retries + 1
+                result.final_attempt_index = len(_attempts_data)
+                result.retry_reasons = _retry_reasons
 
                 plan.executor_finished_at = time.time()
                 plan.ended_at = time.time()
@@ -251,11 +381,9 @@ class BMCEndpointSessionRunner:
                     plan.ended_at - plan.executor_started_at, 3,
                 ) if plan.executor_started_at > 0 else 0.0
                 result.duration_seconds = round(plan.ended_at - plan.started_at, 3)
-                result.retry_count = plan.retry_attempt
+                result.final_verdict = compute_verdict(result)
 
-                results.append(result)
-                if self._on_plan_done:
-                    self._on_plan_done(plan, result)
+                append_result_once(plan, result, "plan_complete")
 
                 logger.info(
                     "[SessionRunner] %s plan %d/%d done: %s — %s",
@@ -268,25 +396,62 @@ class BMCEndpointSessionRunner:
 
         except asyncio.TimeoutError:
             logger.error("[SessionRunner] %s — session timeout", self._endpoint_key)
+            # P0-4: _fail_ts was only defined in login-failure branch — fix UnboundLocalError
+            _fail_ts = time.time()
+            # Current plan (if any) gets timeout result
             # Mark remaining unexecuted plans as failed
             for plan in self._plans:
-                if plan.status not in ("SUCCESS", "EXEC_FAILED", "EXEC_ERROR", "EXEC_PARTIAL"):
+                if plan.status not in ("SUCCESS", "EXEC_FAILED", "EXEC_ERROR", "EXEC_PARTIAL", "EXEC_TIMEOUT"):
                     plan.status = "EXEC_TIMEOUT"
                     r = ExecutionResult(
                         plan_id=plan.plan_id,
+                        task_id=plan.task_id,
+                        client_task_id=plan.client_task_id,
                         device_name=plan.device.device_name,
+                        device_group=plan.device.device_group,
+                        bmc_ip=plan.device.bmc_ip,
+                        inband_ip=plan.device.inband_ip,
                         task_name=plan.task.task_name,
+                        task_type=plan.task.task_type,
+                        execution_mode=plan.task.execution_mode,
                         execution_status="EXEC_TIMEOUT",
                         execution_failure_reason="Session runner timeout",
                         started_at=_fail_ts,
                         ended_at=_fail_ts,
                         duration_seconds=0.001,
+                        endpoint_key=self._endpoint_key,
+                        endpoint_type="BMC",
                     )
-                    results.append(r)
-                    if self._on_plan_done:
-                        self._on_plan_done(plan, r)
+                    r.final_verdict = compute_verdict(r)
+                    append_result_once(plan, r, "session_timeout")
         except Exception as e:
             logger.error("[SessionRunner] %s crashed: %s", self._endpoint_key, e)
+            # P0-4: ensure all remaining plans get a result (not just logged)
+            _fail_ts = time.time()
+            for plan in self._plans:
+                if plan.status not in ("SUCCESS", "EXEC_FAILED", "EXEC_ERROR", "EXEC_PARTIAL", "EXEC_TIMEOUT"):
+                    plan.status = "EXEC_ERROR"
+                    r = ExecutionResult(
+                        plan_id=plan.plan_id,
+                        task_id=plan.task_id,
+                        client_task_id=plan.client_task_id,
+                        device_name=plan.device.device_name,
+                        device_group=plan.device.device_group,
+                        bmc_ip=plan.device.bmc_ip,
+                        inband_ip=plan.device.inband_ip,
+                        task_name=plan.task.task_name,
+                        task_type=plan.task.task_type,
+                        execution_mode=plan.task.execution_mode,
+                        execution_status="EXEC_ERROR",
+                        execution_failure_reason=f"Session runner crashed: {e}",
+                        started_at=_fail_ts,
+                        ended_at=_fail_ts,
+                        duration_seconds=0.001,
+                        endpoint_key=self._endpoint_key,
+                        endpoint_type="BMC",
+                    )
+                    r.final_verdict = compute_verdict(r)
+                    append_result_once(plan, r, "session_exception")
         finally:
             # --- Cleanup: close page ---
             if page_acquired:

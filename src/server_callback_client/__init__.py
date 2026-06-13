@@ -160,16 +160,45 @@ class ServerCallbackClient:
 
         # NEVER log the auth token
         safe_headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
-        logger.debug("Callback POST %s payload=%s headers=%s", url, json.dumps(payload), safe_headers)
+        from ..utils.sensitive import (
+            redact_nested_payload,
+            redact_sensitive_text,
+            redact_sensitive_url,
+        )
+
+        def _redact_body(text: str) -> str:
+            """Redact response body, preferring JSON-structured redaction."""
+            if not text:
+                return text
+            stripped = text.strip()
+            if stripped and stripped[0] in ('{', '['):
+                try:
+                    parsed = json.loads(stripped)
+                    redacted = redact_nested_payload(parsed)
+                    return json.dumps(redacted, ensure_ascii=False)
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
+            return redact_sensitive_text(text)
+
+        safe_url = redact_sensitive_url(url)
+        safe_payload = redact_nested_payload(payload)
+        logger.debug("Callback POST %s payload=%s headers=%s", safe_url, json.dumps(safe_payload), safe_headers)
 
         try:
             status_code, body = self._transport.post(url, payload, headers)
             ok = 200 <= status_code < 300
             if not ok:
                 logger.warning(
-                    "Callback to %s failed: status=%d body=%s", url, status_code, body[:200]
+                    "Callback to %s failed: status=%d body=%s",
+                    safe_url,
+                    status_code,
+                    _redact_body(body)[:200],
                 )
             return ok
         except Exception as e:
-            logger.error("Callback to %s exception: %s", url, e)
+            logger.error(
+                "Callback to %s exception: %s",
+                safe_url,
+                redact_sensitive_text(str(e)),
+            )
             return False

@@ -17,8 +17,10 @@ Status mapping (internal → server):
 from __future__ import annotations
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..utils.sensitive import (
     redact_nested_payload,
@@ -38,6 +40,59 @@ _ALLOWED_CALLBACK_FIELDS = frozenset({
 })
 
 logger = logging.getLogger("bmc_auto_capture.plan_item_cb")
+
+
+def validate_callback_url(url: str) -> tuple[bool, str]:
+    """Validate callback URL before the executor performs an HTTP POST.
+
+    Default policy:
+      - allow only http/https
+      - reject URLs with userinfo
+      - allow loopback for the built-in debug receiver
+      - reject private/link-local literal IPs unless the host is allow-listed
+      - allow DNS hostnames without resolving them
+
+    Set EXECUTOR_CALLBACK_ALLOWED_HOSTS to a comma-separated host list to allow
+    specific private callback endpoints.
+    """
+    if not url:
+        return True, ""
+    try:
+        parsed = urlsplit(url)
+    except Exception:
+        return False, "CALLBACK_INVALID_URL"
+    if parsed.scheme not in ("http", "https"):
+        return False, "CALLBACK_INVALID_SCHEME"
+    if not parsed.hostname:
+        return False, "CALLBACK_HOST_REQUIRED"
+    if parsed.username or parsed.password:
+        return False, "CALLBACK_USERINFO_FORBIDDEN"
+
+    host = parsed.hostname.lower()
+    allow_raw = os.environ.get("EXECUTOR_CALLBACK_ALLOWED_HOSTS", "")
+    allowed = {h.strip().lower() for h in allow_raw.split(",") if h.strip()}
+    if host in allowed or "*" in allowed:
+        return True, ""
+    if host in ("localhost",):
+        return True, ""
+
+    try:
+        import ipaddress
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True, ""
+
+    if ip.is_loopback:
+        return True, ""
+    if (
+        ip.is_private
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_unspecified
+        or ip.is_reserved
+    ):
+        return False, "CALLBACK_PRIVATE_IP_FORBIDDEN"
+    return True, ""
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +173,9 @@ class HttpCallbackTransport:
         self._timeout = timeout_seconds
 
     def post(self, url: str, payload: dict[str, Any], headers: dict[str, str]) -> tuple[int, str]:
+        ok, reason = validate_callback_url(url)
+        if not ok:
+            return 0, reason
         import urllib.request
         import urllib.error
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -227,8 +285,9 @@ class PlanItemStatusCallbackClient:
                     ci + 1, len(chunks), sorted(plan_ids),
                 )
 
-            # Only include summary in the last chunk (or single chunk)
-            chunk_summary = summary if ci == len(chunks) - 1 else None
+            # Include summary in every chunk so receivers can process chunks
+            # independently when a large plan is split.
+            chunk_summary = summary
             result = self._post_batch(url, chunk, run_id=run_id, summary=chunk_summary)
             agg.success += result.success
             agg.failed += result.failed

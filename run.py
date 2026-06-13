@@ -81,7 +81,7 @@ def _setup_browser_path():
     for d in search_dirs:
         if _is_playwright_browsers_dir(d):
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(d.resolve())
-            _print(f"[browser] Using bundled: {d.resolve()}")
+            _print("[browser] Using bundled Playwright browsers")
             return
 
     # 2. Existing env var — only if the path actually contains browsers
@@ -89,10 +89,10 @@ def _setup_browser_path():
     if env_path:
         ep = Path(env_path)
         if _is_playwright_browsers_dir(ep):
-            _print(f"[browser] Using env var: {ep.resolve()}")
+            _print("[browser] Using PLAYWRIGHT_BROWSERS_PATH")
             return
         else:
-            _print(f"[browser] WARNING: PLAYWRIGHT_BROWSERS_PATH={env_path} exists but has no browser files")
+            _print("[browser] WARNING: PLAYWRIGHT_BROWSERS_PATH exists but has no browser files")
 
     # 3. System ms-playwright cache — must contain actual browser files, not just an empty dir
     for cache in [
@@ -102,14 +102,14 @@ def _setup_browser_path():
     ]:
         if _is_playwright_browsers_dir(cache):
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(cache.resolve())
-            _print(f"[browser] Using system cache: {cache.resolve()}")
+            _print("[browser] Using system Playwright cache")
             return
         elif cache.is_dir():
-            _print(f"[browser] WARNING: system cache exists but has no browser files: {cache}")
+            _print("[browser] WARNING: system Playwright cache exists but has no browser files")
 
     # 4. Last resort: if env var was set but invalid, unset it
     if env_path:
-        _print(f"[browser] WARNING: Unsetting stale PLAYWRIGHT_BROWSERS_PATH={env_path}")
+        _print("[browser] WARNING: Unsetting stale PLAYWRIGHT_BROWSERS_PATH")
         del os.environ["PLAYWRIGHT_BROWSERS_PATH"]
 
     _print("[browser] WARNING: No Playwright browsers found. Install: python -m playwright install chromium")
@@ -174,12 +174,14 @@ def main():
     if "--server" in sys.argv:
         server_parser = argparse.ArgumentParser(add_help=False)
         server_parser.add_argument("--server", action="store_true", default=True)
-        server_parser.add_argument("--host", default="0.0.0.0")
-        server_parser.add_argument("--port", type=int, default=18000)
+        server_parser.add_argument("--host", default="127.0.0.1")
+        server_parser.add_argument("--port", type=int, default=8080)
         server_parser.add_argument("--log-level", default="info")
         server_parser.add_argument("--runner", default="fake", choices=("fake","real"))
         server_parser.add_argument("--callback-transport", default="fake", choices=("fake","http"))
         server_parser.add_argument("--executor-id", default="exec-default")
+        server_parser.add_argument("--enable-real-runner", action="store_true",
+                                   help="Allow API requests to execute real BMC/SSH tasks")
         server_parser.add_argument("--enable-debug-callback-receiver", action="store_true",
                                    help="Enable built-in debug callback receiver at /debug/plan-item-statuses")
         server_parser.add_argument("--legacy-network-boot", action="store_true",
@@ -203,14 +205,21 @@ def main():
 
         use_http = server_args.callback_transport == "http"
         use_real = server_args.runner == "real"
+        if use_real and not server_args.enable_real_runner:
+            print("ERROR: --runner real requires --enable-real-runner", file=sys.stderr)
+            return 2
 
         svc = DirectDispatchService(
             executor_id=server_args.executor_id,
             use_http_callback=use_http, runner_mode="real" if use_real else "fake",
+            allow_real_runner=server_args.enable_real_runner,
         )
         svc.start_background_worker()
 
-        prs = PlanRunService(use_http_callback=use_http)
+        prs = PlanRunService(
+            use_http_callback=use_http,
+            allow_real_runner=server_args.enable_real_runner,
+        )
 
         app = create_app(svc, plan_run_service=prs,
                          debug_callback_receiver=server_args.enable_debug_callback_receiver)
@@ -218,6 +227,7 @@ def main():
         print(f"Executor API server starting (legacy compat enabled):")
         print(f"  host={server_args.host} port={server_args.port}")
         print(f"  runner={server_args.runner} callback={server_args.callback_transport}")
+        print(f"  realRunnerEnabled={server_args.enable_real_runner}")
         print(f"  Legacy endpoints: /health /version /network/ping /routes")
         print(f"  Executor endpoints: /executor/v1/status /executor/v1/plans/...")
         if server_args.enable_debug_callback_receiver:

@@ -79,9 +79,11 @@ class _AcquireContext:
                 remaining = None if deadline is None else deadline - time.time()
                 if remaining is not None and remaining <= 0:
                     held_by = self._registry._leases[self._endpoint_key].holder_metadata
+                    wait_sec = time.time() - wait_start
                     raise RuntimeError(
                         f"ResourceRegistry timeout: could not acquire {self._endpoint_key} "
-                        f"after {self._timeout}s (held by {_holder_summary(held_by)})"
+                        f"after {self._timeout}s (waited {wait_sec:.1f}s, "
+                        f"held by {_holder_summary(held_by)})"
                     )
                 self._registry._condition.wait(timeout=remaining)
 
@@ -172,7 +174,7 @@ class ResourceRegistry:
         self,
         endpoint_key: str,
         holder_metadata: dict[str, str] | None = None,
-        timeout: float | None = None,
+        timeout: float | None = 300.0,
     ) -> _AcquireContext:
         """Return a context manager that acquires endpoint_key on enter, releases on exit.
 
@@ -215,12 +217,9 @@ class ResourceRegistry:
             return True
 
     def release(self, endpoint_key: str) -> None:
-        """Release a held endpoint_key. Thread-safe."""
-        with self._condition:
-            if endpoint_key in self._leases:
-                del self._leases[endpoint_key]
-                logger.debug("[ResourceRegistry] released %s", endpoint_key)
-                self._condition.notify_all()
+        """Release a held endpoint_key. Thread-safe. Also closes cross-process file lock."""
+        # P0-5: release must also close file lock contexts (same as _release)
+        self._release(endpoint_key)
 
     def wait_and_hold(self, endpoint_key: str, holder_metadata: dict[str, str], timeout: float | None = None) -> bool:
         """Blocking: wait until endpoint_key is available, then acquire.
