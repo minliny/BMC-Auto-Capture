@@ -136,6 +136,35 @@ class TestReadTerminalUntilIdle:
         assert "Linux test-host" in stripped
 
 
+class TestTranscriptFormatting:
+    """SSH evidence should stay terminal-like without artificial section headers."""
+
+    def test_terminal_transcript_has_no_command_output_headers(self):
+        executor = SSHExecutor()
+
+        transcript = executor._format_ssh_transcript(
+            ["$ uname -a\nLinux test-host\n$ "],
+            "terminal_session",
+        )
+
+        assert "Linux test-host" in transcript
+        assert "=== COMMAND" not in transcript
+        assert "=== OUTPUT" not in transcript
+
+    def test_exec_command_transcript_has_no_command_output_headers(self):
+        executor = SSHExecutor()
+
+        transcript = executor._format_ssh_transcript(
+            ["first output\n", "second output\n"],
+            "exec_command",
+        )
+
+        assert "first output" in transcript
+        assert "second output" in transcript
+        assert "=== COMMAND" not in transcript
+        assert "=== OUTPUT" not in transcript
+
+
 class TestReadChannel:
     """TI-002: _read_channel large output protection."""
 

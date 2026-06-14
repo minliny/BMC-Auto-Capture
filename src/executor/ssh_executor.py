@@ -203,6 +203,16 @@ class SSHExecutor(AbstractExecutor):
             retry_count=max(0, int(getattr(task, "retry_count", 0) or 0)),
         )
 
+    def _transcript_join_mode(self, strategy: str) -> str:
+        # exec_command runs independent programs; PTY modes must preserve raw prompt/echo flow.
+        return "\n\n" if strategy == "exec_command" else ""
+
+    def _format_ssh_transcript(self, outputs: list[str], strategy: str) -> str:
+        raw_transcript = self._transcript_join_mode(strategy).join(outputs)
+        if strategy in ("interactive_shell", "terminal_session"):
+            return _sanitize_raw_stream(raw_transcript)
+        return _strip_pagination_markers(raw_transcript)
+
     # ------------------------------------------------------------------
     # SSH strategy detection
     # ------------------------------------------------------------------
@@ -510,20 +520,13 @@ class SSHExecutor(AbstractExecutor):
             validate_template_for_path(task.image_name_template, context="file_basename")
             file_base = safe_filename(resolve_template(task.image_name_template, device, task))
 
-            # --- Inject COMMAND / OUTPUT section markers for traceability ---
-            cmd_header = f"=== COMMAND (device_group={device.device_group}, strategy={strategy}) ===\n{resolved_cmd}\n=== OUTPUT ===\n"
             # exec_command: separate commands with double newline (each is an independent program)
             # interactive_shell: raw stream concat — no separator, prompt+echo must stay together
-            join_mode = "\n\n" if strategy == "exec_command" else ""
+            join_mode = self._transcript_join_mode(strategy)
             transcript_meta["transcript_join_mode"] = "double_newline" if join_mode else "raw_stream_concat"
             transcript_meta["chunk_separator_inserted"] = bool(join_mode)
             transcript_meta["strip_applied"] = (strategy != "interactive_shell")
-            # interactive_shell: minimal sanitization, no strip, no extra newlines
-            # exec_command: full sanitization including strip
-            if strategy in ("interactive_shell", "terminal_session"):
-                full_transcript = _sanitize_raw_stream(cmd_header + join_mode.join(all_output))
-            else:
-                full_transcript = _strip_pagination_markers(cmd_header + join_mode.join(all_output))
+            full_transcript = self._format_ssh_transcript(all_output, strategy)
             transcript_lines = full_transcript.split("\n")
             total_lines = len(transcript_lines)
 
