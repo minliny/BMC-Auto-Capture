@@ -7,7 +7,41 @@ One-directory bundle — Playwright Chromium is too large for one-file.
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 _root = Path(__file__).parent.parent
+
+_runtime_hiddenimports = [
+    "paramiko",
+    "playwright",
+    "openpyxl",
+    "psutil",
+    "yaml",
+    "PIL",
+    "textual",
+    "rich",
+    "fastapi",
+    "fastapi.middleware.cors",
+    "fastapi.responses",
+    "fastapi.exceptions",
+    "uvicorn",
+    "pydantic",
+    "aiofiles",
+    "python_multipart",
+    "multipart",
+]
+
+for _package in (
+    "fastapi",
+    "starlette",
+    "uvicorn",
+    "pydantic",
+    "pydantic_core",
+    "anyio",
+    "multipart",
+    "python_multipart",
+):
+    _runtime_hiddenimports += collect_submodules(_package)
 
 a = Analysis(
     [
@@ -19,20 +53,7 @@ a = Analysis(
         (str(_root / "config" / "default_config.yaml"), "config"),
         (str(_root / "config" / "logging.yaml"), "config"),
     ],
-    hiddenimports=[
-        "paramiko",
-        "playwright",
-        "openpyxl",
-        "psutil",
-        "yaml",
-        "PIL",
-        "textual",
-        "rich",
-        "fastapi",
-        "uvicorn",
-        "pydantic",
-        "aiofiles",
-    ],
+    hiddenimports=sorted(set(_runtime_hiddenimports)),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

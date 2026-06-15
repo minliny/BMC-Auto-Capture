@@ -16,6 +16,24 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+RUNTIME_SERVER_IMPORTS = [
+    "fastapi.middleware.cors",
+    "fastapi.responses",
+    "fastapi.exceptions",
+    "multipart",
+]
+
+RUNTIME_COLLECT_SUBMODULE_PACKAGES = [
+    "fastapi",
+    "starlette",
+    "uvicorn",
+    "pydantic",
+    "pydantic_core",
+    "anyio",
+    "multipart",
+    "python_multipart",
+]
+
 
 def _frozen_exe() -> Path | None:
     """Return path to frozen exe if it exists."""
@@ -271,6 +289,28 @@ def test_build_info_json_valid():
     assert data.get("version"), "version missing"
     assert data.get("git_commit"), "git_commit missing"
     assert data.get("build_time"), "build_time missing"
+
+
+def test_release_workflow_collects_runtime_server_imports_when_src_excluded():
+    """Runtime/app split excludes src, so API dependency submodules must be bundled."""
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "--exclude-module src" in workflow
+    for module in RUNTIME_SERVER_IMPORTS:
+        assert f"--hidden-import {module}" in workflow
+    for package in RUNTIME_COLLECT_SUBMODULE_PACKAGES:
+        assert f"--collect-submodules {package}" in workflow
+
+
+def test_build_spec_collects_runtime_server_imports_when_src_excluded():
+    """Local PyInstaller spec must match the release workflow runtime import policy."""
+    spec = (PROJECT_ROOT / "scripts" / "build.spec").read_text(encoding="utf-8")
+    assert '"src"' in spec
+    for module in RUNTIME_SERVER_IMPORTS:
+        assert f'"{module}"' in spec
+    for package in RUNTIME_COLLECT_SUBMODULE_PACKAGES:
+        assert f'"{package}"' in spec
 
 
 # ── Test: stale artifact detection ─────────────────────────

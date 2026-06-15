@@ -55,10 +55,22 @@ jobs:
             --hidden-import textual `
             --hidden-import rich `
             --hidden-import fastapi `
+            --hidden-import fastapi.middleware.cors `
+            --hidden-import fastapi.responses `
+            --hidden-import fastapi.exceptions `
             --hidden-import uvicorn `
             --hidden-import pydantic `
             --hidden-import aiofiles `
             --hidden-import python_multipart `
+            --hidden-import multipart `
+            --collect-submodules fastapi `
+            --collect-submodules starlette `
+            --collect-submodules uvicorn `
+            --collect-submodules pydantic `
+            --collect-submodules pydantic_core `
+            --collect-submodules anyio `
+            --collect-submodules multipart `
+            --collect-submodules python_multipart `
             --exclude-module src `
             --exclude-module tkinter `
             --exclude-module matplotlib `
