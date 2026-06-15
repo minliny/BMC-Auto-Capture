@@ -411,12 +411,12 @@ class TestPlanRunServicePerGroupCommands:
         )
 
         payload = PlanRunService()._build_job_payload(item)
-        assert payload["task_snapshot"]["per_group_timeout_seconds"] == {"A3": 900, "L1": 60, "L2": 60}
+        assert payload["task_snapshot"]["per_group_timeout_seconds"] == {"A3": 900, "L1": 180, "L2": 180}
         rebuilt = RealRunnerAdapter()._task_from_snapshot(payload["task_snapshot"])
         assert resolve_task_no_split(rebuilt, "A3") is True
         assert getattr(rebuilt, "_task_def", {}).get("stderr_fail_patterns")
         assert SSHExecutor(command_timeout=60)._resolve_execution_options(rebuilt, "A3").command_timeout == 900
-        assert SSHExecutor(command_timeout=60)._resolve_execution_options(rebuilt, "L1").command_timeout == 60
+        assert SSHExecutor(command_timeout=60)._resolve_execution_options(rebuilt, "L1").command_timeout == 180
 
         spec = SSHExecutor()._parse_command_spec(
             rebuilt,

@@ -1047,8 +1047,45 @@ class SSHExecutor(AbstractExecutor):
 
                 # Check output classification for quality issues
                 output_cls = read_meta.get("output_classification", "OK")
+                timeout_reason = read_meta.get("reason") or read_meta.get("timeout_reason") or output_cls
+                if (
+                    timeout_reason == "HARD_TIMEOUT_WITH_OUTPUT"
+                    and read_meta.get("bytes_received", 0) > 0
+                ):
+                    has_failure = True
+                    failure_reasons.append(
+                        f"命令输出未结束: {cmd[:50]}... "
+                        f"(HARD_TIMEOUT_WITH_OUTPUT, timeout={read_meta.get('timeout_seconds')}s, "
+                        f"bytes={read_meta.get('bytes_received')})"
+                    )
+                    step_results.append(StepResult(
+                        step_index=step_index,
+                        step_name=step_name,
+                        status="PARTIAL",
+                        details=json.dumps(read_meta, ensure_ascii=False),
+                    ))
+                    step_index += 1
+                    continue
+
+                if read_meta["hard_timeout_hit"]:
+                    has_timeout = True
+                    has_failure = True
+                    failure_reasons.append(
+                        f"命令超时: {cmd[:50]}... "
+                        f"({timeout_reason}, timeout={read_meta.get('timeout_seconds')}s)"
+                    )
+                    step_results.append(StepResult(
+                        step_index=step_index,
+                        step_name=step_name,
+                        status="TIMEOUT",
+                        details=json.dumps(read_meta, ensure_ascii=False),
+                    ))
+                    step_index += 1
+                    continue
+
                 if output_cls in ("ONLY_COMMAND_ECHO", "NO_COMMAND_OUTPUT",
-                                  "ONLY_LOGIN_BANNER", "PROMPT_TIMEOUT", "SESSION_LOST"):
+                                  "ONLY_LOGIN_BANNER", "PROMPT_TIMEOUT",
+                                  "FIRST_OUTPUT_TIMEOUT", "SESSION_LOST"):
                     has_failure = True
                     failure_reasons.append(
                         f"命令输出异常: {cmd[:50]}... ({output_cls})"
@@ -1062,16 +1099,12 @@ class SSHExecutor(AbstractExecutor):
                     step_index += 1
                     continue
 
-                if read_meta["hard_timeout_hit"] or read_meta["idle_timeout_hit"]:
+                if read_meta["idle_timeout_hit"]:
                     has_timeout = True
                     has_failure = True
-                    timeout_kind = (
-                        "hard timeout"
-                        if read_meta["hard_timeout_hit"]
-                        else "idle timeout"
-                    )
                     failure_reasons.append(
-                        f"命令超时: {cmd[:50]}... ({timeout_kind})"
+                        f"命令超时: {cmd[:50]}... "
+                        f"({timeout_reason}, idle_timeout={read_meta.get('idle_timeout_seconds')}s)"
                     )
                     step_results.append(StepResult(
                         step_index=step_index,
@@ -1263,6 +1296,29 @@ class SSHExecutor(AbstractExecutor):
 
         output = b"".join(chunks).decode("utf-8", errors="replace")
         finished_at = time.time()
+        bytes_received = len(output.encode("utf-8"))
+        time_since_last_output = (
+            finished_at - last_output_at if last_output_at is not None else None
+        )
+        hard_timeout_with_output = (
+            hard_timeout_hit
+            and prompt_detected_at is None
+            and bytes_received > 0
+            and time_since_last_output is not None
+            and time_since_last_output <= effective_idle_timeout
+        )
+        if prompt_detected_at is not None:
+            timeout_reason = "PROMPT_DETECTED"
+        elif hard_timeout_with_output:
+            timeout_reason = "HARD_TIMEOUT_WITH_OUTPUT"
+        elif hard_timeout_hit:
+            timeout_reason = "HARD_TIMEOUT"
+        elif idle_timeout_hit and first_output_at is None:
+            timeout_reason = "FIRST_OUTPUT_TIMEOUT"
+        elif idle_timeout_hit:
+            timeout_reason = "PROMPT_TIMEOUT"
+        else:
+            timeout_reason = "NO_PROMPT"
 
         # Classify output quality for interactive_shell commands.
         # This helps detect cases where only the command echo was captured
@@ -1284,25 +1340,36 @@ class SSHExecutor(AbstractExecutor):
         elif not cmd_echo_seen and first_output_at is not None:
             output_classification = "ONLY_LOGIN_BANNER"
 
-        if idle_timeout_hit and not prompt_detected_at:
-            output_classification = "PROMPT_TIMEOUT"
-        if hard_timeout_hit and not prompt_detected_at:
-            output_classification = "PROMPT_TIMEOUT"
+        if prompt_detected_at is None and timeout_reason in (
+            "PROMPT_TIMEOUT",
+            "FIRST_OUTPUT_TIMEOUT",
+            "HARD_TIMEOUT",
+            "HARD_TIMEOUT_WITH_OUTPUT",
+        ):
+            output_classification = timeout_reason
 
         meta = {
             "command": cmd,
             "timeout_seconds": timeout,
+            "idle_timeout_seconds": effective_idle_timeout,
             "command_start_time": command_start,
             "first_output_time": first_output_at,
             "last_output_time": last_output_at,
             "prompt_detected_time": prompt_detected_at,
             "idle_timeout_hit": idle_timeout_hit,
             "hard_timeout_hit": hard_timeout_hit,
-            "bytes_received": len(output.encode("utf-8")),
+            "hard_timeout_with_output": hard_timeout_with_output,
+            "bytes_received": bytes_received,
             "prompt_detected": prompt_detected_at is not None,
             "pagination_detected": more_count > 0,
             "pagination_count": more_count,
             "duration_seconds": round(finished_at - command_start, 3),
+            "time_since_last_output_seconds": (
+                round(time_since_last_output, 3)
+                if time_since_last_output is not None else None
+            ),
+            "reason": timeout_reason,
+            "timeout_reason": timeout_reason,
             "cmd_echo_seen": cmd_echo_seen,
             "output_classification": output_classification,
         }
@@ -1311,7 +1378,7 @@ class SSHExecutor(AbstractExecutor):
             "command_start_time=%.6f first_output_time=%s last_output_time=%s "
             "prompt_detected_time=%s idle_timeout_hit=%s hard_timeout_hit=%s "
             "bytes_received=%d prompt_detected=%s pagination_detected=%s "
-            "pagination_count=%d duration=%.3fs",
+            "pagination_count=%d timeout_seconds=%s reason=%s duration=%.3fs",
             device.device_name,
             cmd,
             command_start,
@@ -1324,6 +1391,8 @@ class SSHExecutor(AbstractExecutor):
             meta["prompt_detected"],
             meta["pagination_detected"],
             more_count,
+            timeout,
+            timeout_reason,
             meta["duration_seconds"],
         )
         return output, meta

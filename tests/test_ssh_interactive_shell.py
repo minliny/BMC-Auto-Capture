@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import time
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 
 from src.executor.ssh_executor import SSHExecutor, VRP_PROMPT_RE
@@ -21,6 +23,41 @@ class FakeInteractiveChannel:
 
     def recv(self, _size):
         return self.responses.pop(0)
+
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+class TimedInteractiveChannel:
+    def __init__(self, clock, events):
+        self.clock = clock
+        self.events = list(events)
+        self.sent = []
+        self.timeout = None
+
+    def send(self, data):
+        self.sent.append(data)
+        return len(data)
+
+    def recv_ready(self):
+        return bool(self.events) and self.clock.time() >= self.events[0][0]
+
+    def recv(self, _size):
+        if not self.recv_ready():
+            return b""
+        _at, data = self.events.pop(0)
+        return data
 
     def settimeout(self, timeout):
         self.timeout = timeout
@@ -84,6 +121,36 @@ class ScriptedInteractiveClient:
 
     def get_transport(self):
         return self.transport
+
+
+class ParamikoInteractiveClient:
+    def __init__(self):
+        self.channel = ScriptedInteractiveChannel([b"<SwitchName>"], {})
+        self.transport = ScriptedInteractiveTransport(self.channel)
+
+    def set_missing_host_key_policy(self, policy):
+        pass
+
+    def connect(self, **kwargs):
+        pass
+
+    def get_transport(self):
+        return self.transport
+
+    def close(self):
+        pass
+
+
+def _long_output_events(prompt_at: float | None = None):
+    events = [(0.0, b"display interface transceiver\r\n")]
+    end = int(prompt_at) if prompt_at is not None else 60
+    for sec in range(2, end, 2):
+        events.append((float(sec), f"transceiver line {sec}\r\n".encode()))
+    if prompt_at is None:
+        events.append((59.9, b"transceiver line still streaming\r\n"))
+    else:
+        events.append((prompt_at, b"<SwitchName>"))
+    return events
 
 
 def test_vrp_prompt_regex_accepts_long_angle_and_bracket_prompts():
@@ -206,6 +273,72 @@ def test_send_and_read_accepts_bracket_prompt():
     assert meta["output_classification"] == "OK"
 
 
+def test_long_output_over_60_seconds_is_hard_timeout_with_output(monkeypatch):
+    from src.executor import ssh_executor as ssh_module
+
+    clock = FakeClock()
+    monkeypatch.setattr(ssh_module.time, "time", clock.time)
+    monkeypatch.setattr(ssh_module.time, "sleep", clock.sleep)
+    channel = TimedInteractiveChannel(clock, _long_output_events(prompt_at=None))
+    executor = SSHExecutor(command_timeout=60.0, idle_timeout=5.0)
+
+    output, meta = executor._send_and_read(
+        channel,
+        "display interface transceiver",
+        SimpleNamespace(device_name="vrp-test"),
+        timeout=60.0,
+        idle_timeout=5.0,
+    )
+
+    assert "transceiver line still streaming" in output
+    assert meta["hard_timeout_hit"] is True
+    assert meta["hard_timeout_with_output"] is True
+    assert meta["reason"] == "HARD_TIMEOUT_WITH_OUTPUT"
+    assert meta["output_classification"] == "HARD_TIMEOUT_WITH_OUTPUT"
+    assert meta["output_classification"] != "PROMPT_TIMEOUT"
+    assert meta["bytes_received"] > 0
+
+
+def test_long_output_prompt_at_90_respects_command_timeout(monkeypatch):
+    from src.executor import ssh_executor as ssh_module
+
+    clock = FakeClock()
+    monkeypatch.setattr(ssh_module.time, "time", clock.time)
+    monkeypatch.setattr(ssh_module.time, "sleep", clock.sleep)
+    channel = TimedInteractiveChannel(clock, _long_output_events(prompt_at=90.0))
+    executor = SSHExecutor(command_timeout=60.0, idle_timeout=5.0)
+
+    _output, meta = executor._send_and_read(
+        channel,
+        "display interface transceiver",
+        SimpleNamespace(device_name="vrp-test"),
+        timeout=60.0,
+        idle_timeout=5.0,
+    )
+
+    assert meta["reason"] == "HARD_TIMEOUT_WITH_OUTPUT"
+    assert meta["prompt_detected"] is False
+
+    clock = FakeClock()
+    monkeypatch.setattr(ssh_module.time, "time", clock.time)
+    monkeypatch.setattr(ssh_module.time, "sleep", clock.sleep)
+    channel = TimedInteractiveChannel(clock, _long_output_events(prompt_at=90.0))
+
+    output, meta = executor._send_and_read(
+        channel,
+        "display interface transceiver",
+        SimpleNamespace(device_name="vrp-test"),
+        timeout=180.0,
+        idle_timeout=5.0,
+    )
+
+    assert "transceiver line 88" in output
+    assert meta["prompt_detected"] is True
+    assert meta["hard_timeout_hit"] is False
+    assert meta["reason"] == "PROMPT_DETECTED"
+    assert meta["timeout_seconds"] == 180.0
+
+
 def test_interactive_shell_runs_business_command_after_screen_length_success():
     channel = ScriptedInteractiveChannel(
         banner_chunks=[b"<SwitchName>"],
@@ -236,6 +369,158 @@ def test_interactive_shell_runs_business_command_after_screen_length_success():
     assert has_timeout is False
     assert failure_reasons == []
     assert step_results[0].status == "SUCCESS"
+
+
+def test_interactive_shell_uses_task_timeout_for_business_command(monkeypatch, tmp_path):
+    from src.models.device import Device
+    from src.models.task import Task
+    from src.models.task_plan import TaskPlan
+
+    calls = []
+
+    def fake_send_and_read(self, channel, cmd, device, timeout, command_timeout=None, idle_timeout=None):
+        calls.append((cmd, timeout, command_timeout, idle_timeout))
+        return (
+            f"{cmd}\r\nok\r\n<SwitchName>",
+            {
+                "command": cmd,
+                "timeout_seconds": timeout,
+                "idle_timeout_seconds": idle_timeout,
+                "first_output_time": 1.0,
+                "last_output_time": 1.0,
+                "prompt_detected_time": 1.0,
+                "idle_timeout_hit": False,
+                "hard_timeout_hit": False,
+                "hard_timeout_with_output": False,
+                "bytes_received": 30,
+                "prompt_detected": True,
+                "pagination_detected": False,
+                "pagination_count": 0,
+                "duration_seconds": 0.1,
+                "reason": "PROMPT_DETECTED",
+                "timeout_reason": "PROMPT_DETECTED",
+                "cmd_echo_seen": True,
+                "output_classification": "OK",
+            },
+        )
+
+    monkeypatch.setattr("src.executor.ssh_executor.paramiko.SSHClient", ParamikoInteractiveClient)
+    monkeypatch.setattr(SSHExecutor, "_send_and_read", fake_send_and_read)
+    monkeypatch.setattr("src.executor.ssh_executor.render_text_to_image", lambda text, output_dir, filename: str(Path(output_dir) / filename))
+
+    task = Task(
+        1, 1, "long-output", "SSH", "SSH_CMD",
+        command_or_url="display interface transceiver",
+        timeout_seconds=180,
+        image_name_template="long-output",
+    )
+    device = Device(
+        1, "redacted-device", "L1", "", "", "",
+        inband_ip="192.0.2.10", inband_username="", inband_password="",
+    )
+    result = SSHExecutor(command_timeout=60.0, idle_timeout=5.0).execute(
+        TaskPlan(device=device, task=task),
+        str(tmp_path),
+    )
+
+    assert calls[0][0] == "screen-length 0 temporary"
+    assert calls[0][1] == 10.0
+    assert calls[1][0] == "display interface transceiver"
+    assert calls[1][1] == 180
+    assert result.execution_status == "EXEC_SUCCESS"
+    assert json.loads(result.runtime_context)["ssh_strategy"] == "interactive_shell"
+
+
+def test_interactive_shell_hard_timeout_with_output_saves_partial_txt(monkeypatch, tmp_path):
+    from src.models.device import Device
+    from src.models.task import Task
+    from src.models.task_plan import TaskPlan
+
+    captured = {}
+
+    def fake_send_and_read(self, channel, cmd, device, timeout, command_timeout=None, idle_timeout=None):
+        if cmd == "screen-length 0 temporary":
+            return (
+                "screen-length 0 temporary\r\n<SwitchName>",
+                {
+                    "command": cmd,
+                    "timeout_seconds": timeout,
+                    "idle_timeout_seconds": idle_timeout,
+                    "first_output_time": 1.0,
+                    "last_output_time": 1.0,
+                    "prompt_detected_time": 1.0,
+                    "idle_timeout_hit": False,
+                    "hard_timeout_hit": False,
+                    "hard_timeout_with_output": False,
+                    "bytes_received": 40,
+                    "prompt_detected": True,
+                    "pagination_detected": False,
+                    "pagination_count": 0,
+                    "duration_seconds": 0.1,
+                    "reason": "PROMPT_DETECTED",
+                    "timeout_reason": "PROMPT_DETECTED",
+                    "cmd_echo_seen": True,
+                    "output_classification": "OK",
+                },
+            )
+        return (
+            "display interface transceiver\r\npartial transceiver output\r\n",
+            {
+                "command": cmd,
+                "timeout_seconds": timeout,
+                "idle_timeout_seconds": idle_timeout,
+                "first_output_time": 1.0,
+                "last_output_time": 59.9,
+                "prompt_detected_time": None,
+                "idle_timeout_hit": False,
+                "hard_timeout_hit": True,
+                "hard_timeout_with_output": True,
+                "bytes_received": 75,
+                "prompt_detected": False,
+                "pagination_detected": False,
+                "pagination_count": 0,
+                "duration_seconds": timeout,
+                "time_since_last_output_seconds": 0.1,
+                "reason": "HARD_TIMEOUT_WITH_OUTPUT",
+                "timeout_reason": "HARD_TIMEOUT_WITH_OUTPUT",
+                "cmd_echo_seen": True,
+                "output_classification": "HARD_TIMEOUT_WITH_OUTPUT",
+            },
+        )
+
+    def write_text(output_dir, filename, content):
+        captured["txt"] = content
+        path = Path(output_dir) / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    monkeypatch.setattr("src.executor.ssh_executor.paramiko.SSHClient", ParamikoInteractiveClient)
+    monkeypatch.setattr(SSHExecutor, "_send_and_read", fake_send_and_read)
+    monkeypatch.setattr("src.executor.ssh_executor.write_text_file", write_text)
+    monkeypatch.setattr("src.executor.ssh_executor.render_text_to_image", lambda text, output_dir, filename: str(Path(output_dir) / filename))
+
+    task = Task(
+        1, 1, "long-output", "SSH", "SSH_CMD",
+        command_or_url="display interface transceiver",
+        timeout_seconds=60,
+        image_name_template="long-output",
+    )
+    device = Device(
+        1, "redacted-device", "L1", "", "", "",
+        inband_ip="192.0.2.10", inband_username="", inband_password="",
+    )
+
+    result = SSHExecutor(command_timeout=60.0, idle_timeout=5.0).execute(
+        TaskPlan(device=device, task=task),
+        str(tmp_path),
+    )
+
+    assert result.execution_status == "EXEC_PARTIAL"
+    assert "HARD_TIMEOUT_WITH_OUTPUT" in result.execution_failure_reason
+    assert result.txt_file
+    assert "partial transceiver output" in captured["txt"]
+    assert result.step_results[0].status == "PARTIAL"
 
 
 def test_interactive_shell_screen_length_failure_does_not_fail_business_command():

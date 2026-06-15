@@ -243,8 +243,8 @@
       "timeout_seconds": 900,
       "per_group_timeout_seconds": {
         "A3": 900,
-        "L1": 60,
-        "L2": 60
+        "L1": 180,
+        "L2": 180
       },
       "retry_count": 0,
       "stderr_fail_patterns": [
