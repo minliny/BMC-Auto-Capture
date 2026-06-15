@@ -63,6 +63,7 @@ jobs:
             --hidden-import aiofiles `
             --hidden-import python_multipart `
             --hidden-import multipart `
+            --collect-submodules playwright `
             --collect-submodules fastapi `
             --collect-submodules starlette `
             --collect-submodules uvicorn `

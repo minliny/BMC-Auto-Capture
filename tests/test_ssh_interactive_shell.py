@@ -251,7 +251,7 @@ def test_send_and_read_handles_control_char_more_marker_and_cleans_transcript():
     assert meta["prompt_detected"] is True
     assert "page 1" in transcript
     assert "page 2" in transcript
-    assert "More" not in transcript
+    assert "---- More ----" in transcript
     assert "\x08" not in transcript
 
 

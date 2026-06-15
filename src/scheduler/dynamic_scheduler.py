@@ -24,7 +24,7 @@ from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult
 from ..executor.ssh_executor import SSHExecutor
 from ..executor.bmc_executor import BMCExecutor
-from ..executor.browser_manager import BrowserManager
+from ..executor.browser_manager import BrowserManager, check_playwright_runtime_dependency
 from ..executor.retry import execute_with_retry
 from ..models.verdict import compute_verdict
 from ..out.console import start as cstart, done as cdone, heartbeat as cheartbeat, info as cinfo
@@ -116,6 +116,7 @@ class DynamicScheduler:
             self._execution_id = uuid.uuid4().hex[:12]
         self._build_endpoint_queues(plans)
         self._total_plan_count = len(plans)
+        self._gate_bmc_runtime_dependency()
         self._log_startup_stats(plans)
         self._monitor.start()
         self._bmc_pool.start()
@@ -373,6 +374,80 @@ class DynamicScheduler:
         if self._bmc_pool._active_futures or self._ssh_pool._active_futures:
             return True
         return False
+
+    def _gate_bmc_runtime_dependency(self) -> None:
+        """Block BMC work early when Playwright is unavailable in this runtime."""
+        has_bmc = any(
+            plan.endpoint_type == "BMC"
+            for queue in self._endpoint_queues.values()
+            for plan in queue
+        )
+        if not has_bmc:
+            return
+
+        ok, reason = check_playwright_runtime_dependency()
+        if ok:
+            return
+
+        logger.error("BMC runtime dependency preflight failed: %s", reason)
+        now = time.time()
+        blocked = 0
+        for endpoint_key, queue in list(self._endpoint_queues.items()):
+            if not queue or queue[0].endpoint_type != "BMC":
+                continue
+            while queue:
+                plan = queue.popleft()
+                plan.status = "EXEC_BLOCKED"
+                plan.started_at = now
+                plan.ended_at = now
+                plan.completed_at = now
+                result = ExecutionResult(
+                    plan_id=plan.plan_id,
+                    task_id=plan.task_id,
+                    client_task_id=plan.client_task_id,
+                    device_name=plan.device.device_name,
+                    device_group=plan.device.device_group,
+                    bmc_ip=plan.device.bmc_ip,
+                    inband_ip=plan.device.inband_ip,
+                    task_name=plan.task.task_name,
+                    task_type=plan.task.task_type,
+                    execution_mode=plan.task.execution_mode,
+                    execution_status="EXEC_BLOCKED",
+                    execution_failure_reason=reason,
+                    started_at=now,
+                    ended_at=now,
+                    duration_seconds=0.001,
+                    endpoint_key=plan.endpoint_key,
+                    endpoint_type=plan.endpoint_type,
+                )
+                result.final_verdict = compute_verdict(result)
+                self._append_result_once(
+                    plan.plan_id,
+                    result,
+                    source="bmc_dependency_preflight",
+                )
+                if self._event_bus:
+                    self._event_bus.emit("plan_completed", plan=plan, result=result)
+                cdone(
+                    len(self._results),
+                    self._total_plan_count or blocked + 1,
+                    "FAIL",
+                    device_group=result.device_group,
+                    device=result.device_name,
+                    task=result.task_name,
+                    reason="BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME",
+                )
+                blocked += 1
+
+        self._ready_endpoints = deque(
+            endpoint_key for endpoint_key in self._ready_endpoints
+            if self._endpoint_queues.get(endpoint_key)
+        )
+        logger.error(
+            "BMC runtime dependency preflight blocked %d BMC plans; "
+            "non-BMC dispatch remains available",
+            blocked,
+        )
 
     def _adjust_pools(self, cpu: float, mem: float):
         scale = self._compute_scale(cpu, mem)

@@ -137,8 +137,8 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
         "realHttpTransport": "HttpCallbackTransport (stdlib urllib)",
         "urlPolicy": (
             "Only http/https URLs are accepted. URL userinfo is forbidden. "
-            "Loopback is allowed for local debug. Private/link-local literal "
-            "IPs require EXECUTOR_CALLBACK_ALLOWED_HOSTS."
+            "A parseable host is required. Intranet and loopback literal IPs "
+            "are accepted for on-prem deployments."
         ),
     },
 

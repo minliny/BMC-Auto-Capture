@@ -220,7 +220,7 @@ class _TerminalChannel:
         return self.queue.pop(0)
 
     def send(self, text):
-        lines = "".join(f"==============> {i}\nvalue-{i}\n" for i in range(80))
+        lines = "".join(f"==============> {i}\nvalue-{i}\n" for i in range(120))
         self.queue.append((text + lines + "[root@a3 ~]# ").encode())
 
     def close(self):
@@ -244,7 +244,7 @@ class _SSHClient:
         pass
 
 
-def test_a3_terminal_strategy_full_txt_and_truncated_png(monkeypatch, tmp_path):
+def test_a3_terminal_strategy_full_txt_and_truncated_png_without_notice(monkeypatch, tmp_path):
     command = 'for i in $(seq 0 15); do echo "==============> $i"; hccn_tool -i $i -optical -g; done'
     task = Task(
         1, 1, "计算节点光模块信息查询测试", "SSH", "SSH_CMD",
@@ -284,10 +284,16 @@ def test_a3_terminal_strategy_full_txt_and_truncated_png(monkeypatch, tmp_path):
     assert resolve_task_no_split(task, "A3") is True
     assert executor._get_ssh_strategy(device, task) == "terminal_session"
     assert command in captured["txt"]
-    assert "value-79" in captured["txt"]
-    assert "[TRUNCATED:" in captured["png_input"]
-    assert "value-79" not in captured["png_input"]
-    assert json.loads(result.runtime_context)["ssh_strategy"] == "terminal_session"
+    assert "value-119" in captured["txt"]
+    assert "value-119" not in captured["png_input"]
+    forbidden = ("只显示", "完整请看", "输出已截断", "请查看日志",
+                 "[TRUNCATED:", "full transcript saved", "showing first")
+    assert not any(marker in captured["png_input"] for marker in forbidden)
+    meta = json.loads(result.runtime_context)
+    assert meta["ssh_strategy"] == "terminal_session"
+    assert meta["truncated"] is True
+    assert meta["rendered_line_count"] == 100
+    assert meta["total_line_count"] > meta["rendered_line_count"]
 
     l1 = Device(1, "L1-1", "L1", "", "", "", inband_ip="10.0.0.3")
     assert executor._get_ssh_strategy(l1, task) == "interactive_shell"

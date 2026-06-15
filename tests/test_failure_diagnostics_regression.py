@@ -10,10 +10,12 @@ from src.models.app_config import AppConfig
 from src.models.device import Device
 from src.models.execution_result import ExecutionResult
 from src.models.task import Task
+from src.models.task_plan import TaskPlan
 from src.out.collector import write_final_result_csv
 from src.out.evidence_audit import audit_plan_evidence
 from src.out.summary import write_failure_csv
 from src.out.timing import write_execution_summary
+from src.scheduler.dynamic_scheduler import DynamicScheduler
 
 
 class _VRPChannel:
@@ -148,6 +150,24 @@ def test_bmc_failure_reason_mapping_reaches_final_and_failure_csv(tmp_path):
             execution_status="EXEC_TIMEOUT",
             execution_failure_reason="Page.goto Timeout 5000ms exceeded",
         ),
+        ExecutionResult(
+            "p4", "redacted-device", task_name="bmc dependency", task_type="BMC",
+            execution_status="EXEC_BLOCKED",
+            execution_failure_reason=(
+                "BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME: "
+                "No module named 'playwright.async_api'"
+            ),
+        ),
+        ExecutionResult(
+            "p5", "redacted-device", task_name="bmc dialog", task_type="BMC",
+            execution_status="EXEC_FAILED",
+            execution_failure_reason="custom-dialog timeout遮挡点击",
+        ),
+        ExecutionResult(
+            "p6", "redacted-device", task_name="bmc context", task_type="BMC",
+            execution_status="EXEC_ERROR",
+            execution_failure_reason="Target page, context or browser has been closed",
+        ),
     ]
 
     final_path = Path(write_final_result_csv(results, str(tmp_path)))
@@ -157,6 +177,9 @@ def test_bmc_failure_reason_mapping_reaches_final_and_failure_csv(tmp_path):
     assert "BMC_SESSION_EXPIRED" in final_text
     assert "BMC_EMPTY_DOM" in final_text
     assert "BMC_PAGE_GOTO_TIMEOUT" in final_text
+    assert "BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME" in final_text
+    assert "BMC_DIALOG_TIMEOUT" in final_text
+    assert "BMC_PAGE_CONTEXT_INVALID" in final_text
 
     with failure_path.open(encoding="utf-8-sig", newline="") as fh:
         rows = list(csv.DictReader(fh))
@@ -164,6 +187,35 @@ def test_bmc_failure_reason_mapping_reaches_final_and_failure_csv(tmp_path):
     assert categories["bmc session"] == "BMC_SESSION_EXPIRED"
     assert categories["bmc dom"] == "BMC_EMPTY_DOM"
     assert categories["bmc goto"] == "BMC_PAGE_GOTO_TIMEOUT"
+    assert categories["bmc dependency"] == "BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME"
+    assert categories["bmc dialog"] == "BMC_DIALOG_TIMEOUT"
+    assert categories["bmc context"] == "BMC_PAGE_CONTEXT_INVALID"
+
+
+def test_bmc_playwright_dependency_missing_blocks_bmc_without_global_stop(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "src.scheduler.dynamic_scheduler.check_playwright_runtime_dependency",
+        lambda: (
+            False,
+            "BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME: "
+            "No module named 'playwright.async_api'",
+        ),
+    )
+
+    cfg = AppConfig(output_root=str(tmp_path))
+    plan = TaskPlan(
+        device=Device(1, "redacted-device", "A3", "10.0.0.1", "", ""),
+        task=Task(1, 1, "BMC dependency gate", "BMC", "BMC_URL"),
+        plan_id="bmc-dep",
+    )
+    scheduler = DynamicScheduler(cfg)
+    results = scheduler.run([plan])
+
+    assert len(results) == 1
+    assert results[0].execution_status == "EXEC_BLOCKED"
+    assert "BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME" in results[0].execution_failure_reason
+    assert scheduler.stop_metadata["stopReason"] == ""
+    assert scheduler.stop_metadata["affectedPendingCount"] == 0
 
 
 def test_execution_summary_writes_route_guard_stop_reason_and_bmc_expiry_does_not_stop(tmp_path):

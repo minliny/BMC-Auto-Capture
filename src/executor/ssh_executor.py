@@ -98,10 +98,6 @@ def resolve_task_command(task, device_group: str = "") -> str:
         )
     return str(cmd)
 
-MORE_LINE_RE = re.compile(r'^\s*[-–—]*(?:More|more|MORE)[-–—\s]*$', re.IGNORECASE)
-MORE_INLINE_RE = re.compile(
-    r'[-–—]{2,}\s*(?:More|more|MORE)\s*[-–—]*', re.IGNORECASE
-)
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 TERMINAL_CONTROL_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 
@@ -110,17 +106,14 @@ def _clean_interactive_detection_text(text: str) -> str:
     return TERMINAL_CONTROL_RE.sub('', ANSI_RE.sub('', text))
 
 
-def _strip_pagination_markers(text: str) -> str:
+def _normalize_structured_stream(text: str) -> str:
     text = _clean_interactive_detection_text(text)
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     lines = []
     for line in text.split('\n'):
         stripped = line.strip()
-        if MORE_LINE_RE.match(stripped):
-            continue
-        clean = MORE_INLINE_RE.sub('', stripped)
-        if clean:
-            lines.append(clean)
+        if stripped:
+            lines.append(stripped)
         elif lines and lines[-1].strip():
             lines.append('')
     result = '\n'.join(lines)
@@ -131,22 +124,15 @@ def _strip_pagination_markers(text: str) -> str:
 def _sanitize_raw_stream(text: str) -> str:
     """Minimal sanitization for raw interactive shell streams.
 
-    Only removes ANSI escape codes and pagination markers.
+    Only removes ANSI escape codes and terminal control characters.
     Preserves all whitespace, line structure, and relative positions
-    between prompt and command echo.
+    between prompt and command echo. Device pagination markers such as
+    ``---- More ----`` are device output and remain in evidence text.
     Does NOT strip lines or add/remove newlines.
     """
     text = _clean_interactive_detection_text(text)
     text = text.replace('\r\n', '\n').replace('\r', '\n')
-    lines = text.split('\n')
-    result = []
-    for line in lines:
-        stripped = line.strip()
-        if MORE_LINE_RE.match(stripped):
-            continue
-        # Remove inline More markers while preserving original whitespace
-        result.append(MORE_INLINE_RE.sub('', line))
-    return '\n'.join(result)
+    return text
 
 
 def _resolve_var(template: str, variables: dict) -> str:
@@ -238,7 +224,7 @@ class SSHExecutor(AbstractExecutor):
         raw_transcript = self._transcript_join_mode(strategy).join(outputs)
         if strategy in ("interactive_shell", "terminal_session"):
             return _sanitize_raw_stream(raw_transcript)
-        return _strip_pagination_markers(raw_transcript)
+        return _normalize_structured_stream(raw_transcript)
 
     # ------------------------------------------------------------------
     # SSH strategy detection
@@ -462,7 +448,7 @@ class SSHExecutor(AbstractExecutor):
                 "ssh_strategy": strategy,
                 "input_echo_available": strategy in ("interactive_shell", "terminal_session"),
                 "prompt_preserved": strategy in ("interactive_shell", "terminal_session"),
-                "transcript_sanitization": "ansi_only/more_removed/control_chars_removed",
+                "transcript_sanitization": "ansi_control_chars_only/pagination_preserved",
             }
 
             all_output, has_failure, has_timeout, failure_reasons, cmd_outputs, step_results = (
@@ -574,8 +560,7 @@ class SSHExecutor(AbstractExecutor):
 
             if ssh_line_limit > 0 and total_lines > ssh_line_limit:
                 png_input = "\n".join(transcript_lines[:ssh_line_limit])
-                png_input += f"\n[TRUNCATED: showing first {ssh_line_limit} lines only; full transcript saved in TXT]"
-                transcript_meta["rendered_line_count"] = ssh_line_limit + 1
+                transcript_meta["rendered_line_count"] = ssh_line_limit
                 transcript_meta["truncated"] = True
             else:
                 png_input = full_transcript

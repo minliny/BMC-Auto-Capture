@@ -53,24 +53,10 @@ LINUX_FONTS = [
 # === Text cleaning utilities ===
 
 ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
-PAGINATION_PATTERNS = [
-    re.compile(r'-{4,}\s*More\s*-{4,}'),
-    re.compile(r'-{4,}More-{4,}'),
-    re.compile(r'--More--'),
-    re.compile(r'---more---'),
-]
-
 
 def clean_ansi(text: str) -> str:
     """Remove ANSI escape sequences."""
     return ANSI_ESCAPE_PATTERN.sub('', text)
-
-
-def clean_pagination(text: str) -> str:
-    """Remove pagination prompts (---- More ----, --More--, etc.)."""
-    for pattern in PAGINATION_PATTERNS:
-        text = pattern.sub('', text)
-    return text
 
 
 def normalize_output(text: str) -> str:
@@ -86,10 +72,8 @@ def normalize_output(text: str) -> str:
 
 
 def clean_output_for_png(text: str) -> str:
-    """Full pipeline: normalize + clean pagination."""
-    text = normalize_output(text)
-    text = clean_pagination(text)
-    return text
+    """Normalize terminal output for PNG without adding or rewriting content."""
+    return normalize_output(text)
 
 
 # === Safe filename utilities ===

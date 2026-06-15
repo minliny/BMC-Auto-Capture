@@ -32,6 +32,7 @@ _runtime_hiddenimports = [
 ]
 
 for _package in (
+    "playwright",
     "fastapi",
     "starlette",
     "uvicorn",

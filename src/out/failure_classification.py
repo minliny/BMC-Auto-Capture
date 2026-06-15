@@ -13,6 +13,7 @@ from ..models.execution_result import ExecutionResult, StepResult
 
 
 BMC_FAILURE_CATEGORIES = {
+    "BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME",
     "BMC_SESSION_EXPIRED",
     "BMC_RELOGIN_FAILED",
     "BMC_PAGE_GOTO_TIMEOUT",
@@ -20,6 +21,9 @@ BMC_FAILURE_CATEGORIES = {
     "BMC_PAGE_HEALTH_FAILED",
     "BMC_ACTION_TIMEOUT",
     "BMC_SCREENSHOT_FAILED",
+    "BMC_ROUTE_GUARD_STOPPED",
+    "BMC_DIALOG_TIMEOUT",
+    "BMC_PAGE_CONTEXT_INVALID",
     "ROUTE_GUARD_STOPPED",
 }
 
@@ -42,12 +46,19 @@ def classify_failure(result: ExecutionResult) -> str:
     task_type = (result.task_type or "").upper()
     looks_bmc = task_type == "BMC" or "bmc" in lower
 
+    if "bmc_dependency_missing_playwright_runtime" in lower:
+        return "BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME"
+
     if status == "EXEC_SKIPPED_ROUTE_CHANGED" or "route_change" in lower:
-        return "ROUTE_GUARD_STOPPED"
+        return "BMC_ROUTE_GUARD_STOPPED" if looks_bmc else "ROUTE_GUARD_STOPPED"
 
     if not looks_bmc:
         return ""
 
+    if "no module named 'playwright.async_api'" in lower or "no module named \"playwright.async_api\"" in lower:
+        return "BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME"
+    if "session runner crashed" in lower and "playwright" in lower:
+        return "BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME"
     if "re-login failed" in lower or "relogin failed" in lower or "重新登录失败" in lower:
         return "BMC_RELOGIN_FAILED"
     if "bmc_session_invalid" in lower and "failed" in lower:
@@ -64,6 +75,18 @@ def classify_failure(result: ExecutionResult) -> str:
         return "BMC_PAGE_GOTO_TIMEOUT"
     if "bmc页面无法访问" in lower and ("timeout" in lower or "超时" in lower):
         return "BMC_PAGE_GOTO_TIMEOUT"
+    if "bmc_dialog_timeout" in lower:
+        return "BMC_DIALOG_TIMEOUT"
+    if "custom-dialog" in lower and ("timeout" in lower or "超时" in lower):
+        return "BMC_DIALOG_TIMEOUT"
+    if "timeout dialog" in lower or "登录超时" in lower:
+        return "BMC_DIALOG_TIMEOUT"
+    if "bmc_page_context_invalid" in lower:
+        return "BMC_PAGE_CONTEXT_INVALID"
+    if "target page" in lower and ("closed" in lower or "context" in lower):
+        return "BMC_PAGE_CONTEXT_INVALID"
+    if "browser context" in lower and ("closed" in lower or "invalid" in lower):
+        return "BMC_PAGE_CONTEXT_INVALID"
     if "locator." in lower and ("timeout" in lower or "超时" in lower):
         return "BMC_ACTION_TIMEOUT"
     if "required action failed" in lower and ("timeout" in lower or "超时" in lower):

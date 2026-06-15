@@ -6,6 +6,7 @@ No cross-thread sharing — eliminates event-loop deadlocks entirely.
 
 from __future__ import annotations
 import asyncio
+import importlib
 import logging
 import threading
 import time
@@ -62,6 +63,23 @@ def _ensure_playwright_browsers_path():
             "Playwright browsers dir not found at runtime/playwright_browsers "
             "or _internal/playwright — Playwright will use default cache"
         )
+
+
+def check_playwright_runtime_dependency() -> tuple[bool, str]:
+    """Verify the current runtime can import Playwright's Python package."""
+    try:
+        importlib.import_module("playwright.async_api")
+    except ModuleNotFoundError as e:
+        if (e.name or "").startswith("playwright"):
+            return (
+                False,
+                "BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME: "
+                "No module named 'playwright.async_api'",
+            )
+        return False, f"BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME: {e}"
+    except Exception as e:
+        return False, f"BMC_DEPENDENCY_MISSING_PLAYWRIGHT_RUNTIME: {e}"
+    return True, ""
 
 
 class BrowserManager:
@@ -224,6 +242,9 @@ class _ThreadLocalBrowser:
         self._loop_id: int = 0
 
     async def get_context(self):
+        ok, reason = check_playwright_runtime_dependency()
+        if not ok:
+            raise RuntimeError(reason)
         from playwright.async_api import async_playwright
 
         # --- P0: resolve Playwright browsers path ---

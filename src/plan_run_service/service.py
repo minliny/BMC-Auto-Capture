@@ -215,6 +215,7 @@ class PlanRunService:
             workspace_root = str(_resolve_workspace())
         self._runs: dict[str, PlanRun] = {}
         self._runs_by_run_id: dict[str, PlanRun] = {}
+        self._run_threads: dict[str, threading.Thread] = {}
         self._runs_lock = threading.Lock()
         self._cb_transport = callback_transport
         self._lock_mgr = lock_manager or ResourceLockManager()
@@ -440,6 +441,8 @@ class PlanRunService:
             logger.info("callback not configured: no itemStatusUrl provided")
 
         t = threading.Thread(target=self._execute_run, args=(run, cb), daemon=True)
+        with self._runs_lock:
+            self._run_threads[str(plan_id)] = t
         t.start()
 
         return {
@@ -851,6 +854,8 @@ class PlanRunService:
             logger.info("callback not configured: no itemStatusUrl provided")
 
         t = threading.Thread(target=self._execute_run, args=(run, cb), daemon=True)
+        with self._runs_lock:
+            self._run_threads[str(plan_id)] = t
         t.start()
 
         return {
@@ -1617,6 +1622,11 @@ class PlanRunService:
         if run is None:
             return
         if run.status == "COMPLETED":
+            return
+        with self._runs_lock:
+            thread = self._run_threads.get(str(plan_id))
+        if run.status == "RUNNING" and thread is not None and thread.is_alive():
+            thread.join()
             return
         # P2-1: use _resolve_transport() instead of self._cb_transport or FakeCallbackTransport()
         transport = self._resolve_transport(run.item_status_url)

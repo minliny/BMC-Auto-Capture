@@ -18,7 +18,6 @@ Status mapping (internal → server):
 from __future__ import annotations
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -49,12 +48,8 @@ def validate_callback_url(url: str) -> tuple[bool, str]:
     Default policy:
       - allow only http/https
       - reject URLs with userinfo
-      - allow loopback for the built-in debug receiver
-      - reject private/link-local literal IPs unless the host is allow-listed
-      - allow DNS hostnames without resolving them
-
-    Set EXECUTOR_CALLBACK_ALLOWED_HOSTS to a comma-separated host list to allow
-    specific private callback endpoints.
+      - require a parseable host
+      - allow DNS names and literal IPs, including private intranet addresses
     """
     if not url:
         return True, ""
@@ -64,35 +59,15 @@ def validate_callback_url(url: str) -> tuple[bool, str]:
         return False, "CALLBACK_INVALID_URL"
     if parsed.scheme not in ("http", "https"):
         return False, "CALLBACK_INVALID_SCHEME"
-    if not parsed.hostname:
+    try:
+        hostname = parsed.hostname
+    except ValueError:
+        return False, "CALLBACK_INVALID_URL"
+    if not hostname:
         return False, "CALLBACK_HOST_REQUIRED"
     if parsed.username or parsed.password:
         return False, "CALLBACK_USERINFO_FORBIDDEN"
 
-    host = parsed.hostname.lower()
-    allow_raw = os.environ.get("EXECUTOR_CALLBACK_ALLOWED_HOSTS", "")
-    allowed = {h.strip().lower() for h in allow_raw.split(",") if h.strip()}
-    if host in allowed or "*" in allowed:
-        return True, ""
-    if host in ("localhost",):
-        return True, ""
-
-    try:
-        import ipaddress
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return True, ""
-
-    if ip.is_loopback:
-        return True, ""
-    if (
-        ip.is_private
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_unspecified
-        or ip.is_reserved
-    ):
-        return False, "CALLBACK_PRIVATE_IP_FORBIDDEN"
     return True, ""
 
 

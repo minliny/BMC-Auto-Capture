@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.executor.ssh_executor import SSHExecutor, HCCN_MARKER_RE
+from src.out.screenshot import clean_output_for_png
 
 
 class FakeChannel:
@@ -163,6 +164,38 @@ class TestTranscriptFormatting:
         assert "second output" in transcript
         assert "=== COMMAND" not in transcript
         assert "=== OUTPUT" not in transcript
+
+    def test_terminal_transcript_preserves_raw_more_markers(self):
+        executor = SSHExecutor()
+
+        transcript = executor._format_ssh_transcript(
+            [
+                "display this\r\n"
+                "page 1\r\n"
+                "---- More ----\r\n"
+                "page 2\r\n"
+                "===more===\r\n"
+                "<SwitchName>"
+            ],
+            "interactive_shell",
+        )
+
+        assert "---- More ----" in transcript
+        assert "===more===" in transcript
+        assert "[TRUNCATED:" not in transcript
+        assert "完整请看" not in transcript
+
+    def test_png_normalization_preserves_raw_more_markers(self):
+        text = clean_output_for_png(
+            "display this\r\n"
+            "page 1\r\n"
+            "---- More ----\r\n"
+            "page 2\r\n"
+            "===more===\r\n"
+        )
+
+        assert "---- More ----" in text
+        assert "===more===" in text
 
 
 class TestReadChannel:
