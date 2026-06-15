@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -372,7 +372,14 @@ def _register_plan_run_routes(app: FastAPI, prs):
         return result
 
     @app.get("/executor/v1/plans/{plan_id}", response_model=PlanStatusResponse)
-    async def get_plan(plan_id: str, request: Request):
+    async def get_plan(
+        plan_id: str,
+        request: Request,
+        excelHash: str = Query(
+            default="",
+            description="Optional Excel SHA-256 hash. When provided, the query is validated against the plan's bound Excel hash.",
+        ),
+    ):
         """Get plan summary.
 
         Handles both:
@@ -380,7 +387,7 @@ def _register_plan_run_routes(app: FastAPI, prs):
           - str plan_id (external plan): requires excelHash query param
         """
         # Try external plan first (requires excelHash)
-        excel_hash = request.query_params.get("excelHash", "")
+        excel_hash = excelHash
         if excel_hash:
             r = prs.get_external_plan(plan_id, excel_hash)
             if r is None:
@@ -403,13 +410,20 @@ def _register_plan_run_routes(app: FastAPI, prs):
         return r
 
     @app.get("/executor/v1/plans/{plan_id}/items", response_model=PlanItemsResponse)
-    async def get_plan_items_route(plan_id: str, request: Request):
+    async def get_plan_items_route(
+        plan_id: str,
+        request: Request,
+        excelHash: str = Query(
+            default="",
+            description="Optional Excel SHA-256 hash. When provided, the query is validated against the plan's bound Excel hash.",
+        ),
+    ):
         """Get plan per-item details.
 
         Handles both int and external (string) plan IDs.
         External plans require excelHash query param.
         """
-        excel_hash = request.query_params.get("excelHash", "")
+        excel_hash = excelHash
         if excel_hash:
             r = prs.get_external_plan_items(plan_id, excel_hash)
             if r is None:

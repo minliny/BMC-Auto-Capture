@@ -1,0 +1,1203 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "BMC Auto-Capture Executor API v0.2",
+    "version": "0.2.4"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/version": {
+      "get": {
+        "summary": "Version",
+        "operationId": "version_version_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/network/ping": {
+      "get": {
+        "summary": "Network Ping",
+        "operationId": "network_ping_network_ping_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routes": {
+      "get": {
+        "summary": "List Routes",
+        "operationId": "list_routes_routes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/contracts": {
+      "get": {
+        "summary": "List Contracts",
+        "description": "Return index of all available API contracts.\n\nRead-only: does not read Excel, connect to services, or modify state.",
+        "operationId": "list_contracts_executor_v1_contracts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/contracts/{contract_id}": {
+      "get": {
+        "summary": "Get Contract Detail",
+        "description": "Return detailed contract for a specific API endpoint.\n\nRead-only: does not read Excel, connect to services, or modify state.",
+        "operationId": "get_contract_detail_executor_v1_contracts__contract_id__get",
+        "parameters": [
+          {
+            "name": "contract_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Contract Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/status": {
+      "get": {
+        "summary": "Get Status",
+        "operationId": "get_status_executor_v1_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutorStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/config/excel:path": {
+      "post": {
+        "summary": "Set Latest Excel Path",
+        "description": "Set latest Excel by executor-local path (local debug only).\n\nUses ExcelConfigStore.activate_from_local_path() which copies the\nfile into executor_state/configs/by_hash/ and writes latest.json.\nLegacy .runtime/configs/latest.xlsx triggers automatic migration.",
+        "operationId": "set_latest_excel_path_executor_v1_config_excel_path_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExcelPathRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExcelConfigAcceptResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/config/excel": {
+      "post": {
+        "summary": "Upload Excel",
+        "description": "Upload Excel file from remote Windows client (multipart/form-data).\n\nUses ExcelConfigStore.activate_from_upload() which saves to\nexecutor_state/configs/by_hash/ and atomically writes latest.json.\nDoes NOT write to .runtime/configs/latest.xlsx.",
+        "operationId": "upload_excel_executor_v1_config_excel_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_excel_executor_v1_config_excel_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExcelConfigAcceptResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/config/latest": {
+      "get": {
+        "summary": "Get Latest Config",
+        "description": "Return info about the latest Excel config, or hasLatest=false.\n\nReads from latest.json via ExcelConfigStore.\nFalls back to in-memory state (legacy set_latest_excel path).",
+        "operationId": "get_latest_config_executor_v1_config_latest_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/plans/{plan_id}:run": {
+      "post": {
+        "summary": "Start Plan Run",
+        "description": "Start a plan run. Request body validated via PlanRunRequest schema.",
+        "operationId": "start_plan_run_executor_v1_plans__plan_id__run_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Plan Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRunAcceptResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/plans/{plan_id}": {
+      "get": {
+        "summary": "Get Plan",
+        "description": "Get plan summary.\n\nHandles both:\n  - int plan_id (legacy PlanRunService): no query params needed\n  - str plan_id (external plan): requires excelHash query param",
+        "operationId": "get_plan_executor_v1_plans__plan_id__get",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Id"
+            }
+          },
+          {
+            "name": "excelHash",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Optional Excel SHA-256 hash. When provided, the query is validated against the plan's bound Excel hash.",
+              "default": "",
+              "title": "Excelhash"
+            },
+            "description": "Optional Excel SHA-256 hash. When provided, the query is validated against the plan's bound Excel hash."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/plans/{plan_id}/items": {
+      "get": {
+        "summary": "Get Plan Items Route",
+        "description": "Get plan per-item details.\n\nHandles both int and external (string) plan IDs.\nExternal plans require excelHash query param.",
+        "operationId": "get_plan_items_route_executor_v1_plans__plan_id__items_get",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Id"
+            }
+          },
+          {
+            "name": "excelHash",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Optional Excel SHA-256 hash. When provided, the query is validated against the plan's bound Excel hash.",
+              "default": "",
+              "title": "Excelhash"
+            },
+            "description": "Optional Excel SHA-256 hash. When provided, the query is validated against the plan's bound Excel hash."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanItemsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/plans/{plan_id}/callbacks:retry": {
+      "post": {
+        "summary": "Retry Plan Callbacks",
+        "operationId": "retry_plan_callbacks_executor_v1_plans__plan_id__callbacks_retry_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CallbackRetryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallbackRetryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/plans": {
+      "post": {
+        "summary": "Start External Plan",
+        "description": "Start external plan. Service only needs excelHash + callback URL.",
+        "operationId": "start_external_plan_executor_v1_plans_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRunAcceptResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_upload_excel_executor_v1_config_excel_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_excel_executor_v1_config_excel_post"
+      },
+      "CallbackRetryRequest": {
+        "properties": {
+          "callbackUrl": {
+            "type": "string",
+            "title": "Callbackurl",
+            "description": "Optional override URL for retrying pending callbacks",
+            "default": ""
+          },
+          "mode": {
+            "type": "string",
+            "pattern": "^(batch|single)$",
+            "title": "Mode",
+            "description": "Retry delivery mode: batch or single",
+            "default": "batch"
+          }
+        },
+        "type": "object",
+        "title": "CallbackRetryRequest"
+      },
+      "CallbackRetryResponse": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          },
+          "planId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Planid",
+            "default": ""
+          },
+          "attempted": {
+            "type": "integer",
+            "title": "Attempted",
+            "default": 0
+          },
+          "sent": {
+            "type": "integer",
+            "title": "Sent",
+            "default": 0
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          },
+          "pendingAfter": {
+            "type": "integer",
+            "title": "Pendingafter",
+            "default": 0
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "title": "CallbackRetryResponse"
+      },
+      "ExcelConfigAcceptResponse": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          },
+          "deviceCount": {
+            "type": "integer",
+            "title": "Devicecount",
+            "default": 0
+          },
+          "enabledDeviceCount": {
+            "type": "integer",
+            "title": "Enableddevicecount",
+            "default": 0
+          },
+          "taskCount": {
+            "type": "integer",
+            "title": "Taskcount",
+            "default": 0
+          },
+          "enabledTaskCount": {
+            "type": "integer",
+            "title": "Enabledtaskcount",
+            "default": 0
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "default": ""
+          },
+          "excelHash": {
+            "type": "string",
+            "title": "Excelhash",
+            "default": ""
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256",
+            "default": ""
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "title": "ExcelConfigAcceptResponse"
+      },
+      "ExcelPathRequest": {
+        "properties": {
+          "excelPath": {
+            "type": "string",
+            "title": "Excelpath",
+            "description": "Executor-local .xlsx path to activate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "excelPath"
+        ],
+        "title": "ExcelPathRequest"
+      },
+      "ExecutorStatusResponse": {
+        "properties": {
+          "executor_id": {
+            "type": "string",
+            "title": "Executor Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ONLINE"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "0.2.4"
+          },
+          "job_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Job Counts"
+          },
+          "total_jobs": {
+            "type": "integer",
+            "title": "Total Jobs",
+            "default": 0
+          },
+          "uptime_seconds": {
+            "type": "number",
+            "title": "Uptime Seconds",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "executor_id"
+        ],
+        "title": "ExecutorStatusResponse"
+      },
+      "ExternalPlanRequest": {
+        "properties": {
+          "excelHash": {
+            "type": "string",
+            "title": "Excelhash",
+            "description": "SHA-256 hash of the currently activated Excel config",
+            "default": ""
+          },
+          "callback": {
+            "$ref": "#/components/schemas/PlanRunCallbackConfig",
+            "description": "Callback configuration for status reporting"
+          },
+          "updater": {
+            "type": "string",
+            "title": "Updater",
+            "description": "Value sent in the updater field of each callback payload",
+            "default": "downstream-system"
+          },
+          "runner": {
+            "type": "string",
+            "pattern": "^(fake|real)$",
+            "title": "Runner",
+            "description": "Runner mode: fake executes instantly, real connects to devices",
+            "default": "fake"
+          }
+        },
+        "type": "object",
+        "title": "ExternalPlanRequest",
+        "description": "Request body for POST /executor/v1/plans (external plan with excelHash)."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LatestConfigResponse": {
+        "properties": {
+          "hasLatest": {
+            "type": "boolean",
+            "title": "Haslatest"
+          },
+          "excelHash": {
+            "type": "string",
+            "title": "Excelhash",
+            "default": ""
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "default": ""
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256",
+            "default": ""
+          },
+          "deviceCount": {
+            "type": "integer",
+            "title": "Devicecount",
+            "default": 0
+          },
+          "enabledDeviceCount": {
+            "type": "integer",
+            "title": "Enableddevicecount",
+            "default": 0
+          },
+          "taskCount": {
+            "type": "integer",
+            "title": "Taskcount",
+            "default": 0
+          },
+          "enabledTaskCount": {
+            "type": "integer",
+            "title": "Enabledtaskcount",
+            "default": 0
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": ""
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat",
+            "default": ""
+          },
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "default": ""
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "hasLatest"
+        ],
+        "title": "LatestConfigResponse"
+      },
+      "PlanInfoEvent": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp",
+            "default": ""
+          },
+          "level": {
+            "type": "string",
+            "title": "Level",
+            "default": ""
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "PlanInfoEvent"
+      },
+      "PlanItemStatusResponse": {
+        "properties": {
+          "deviceGroup": {
+            "type": "string",
+            "title": "Devicegroup",
+            "default": ""
+          },
+          "deviceName": {
+            "type": "string",
+            "title": "Devicename",
+            "default": ""
+          },
+          "taskName": {
+            "type": "string",
+            "title": "Taskname",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errormessage"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
+          "finishedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finishedat"
+          },
+          "infoEvents": {
+            "items": {
+              "$ref": "#/components/schemas/PlanInfoEvent"
+            },
+            "type": "array",
+            "title": "Infoevents"
+          }
+        },
+        "type": "object",
+        "title": "PlanItemStatusResponse"
+      },
+      "PlanItemsResponse": {
+        "properties": {
+          "planId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Planid",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PlanSummary"
+          },
+          "excelHash": {
+            "type": "string",
+            "title": "Excelhash",
+            "default": ""
+          },
+          "outputRoot": {
+            "type": "string",
+            "title": "Outputroot",
+            "default": ""
+          },
+          "startedAt": {
+            "type": "string",
+            "title": "Startedat",
+            "default": ""
+          },
+          "finishedAt": {
+            "type": "string",
+            "title": "Finishedat",
+            "default": ""
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errormessage"
+          },
+          "infoEvents": {
+            "items": {
+              "$ref": "#/components/schemas/PlanInfoEvent"
+            },
+            "type": "array",
+            "title": "Infoevents"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PlanItemStatusResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "title": "PlanItemsResponse"
+      },
+      "PlanRunAcceptResponse": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          },
+          "planId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Planid",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "excelHash": {
+            "type": "string",
+            "title": "Excelhash",
+            "default": ""
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "callbackTransportMode": {
+            "type": "string",
+            "title": "Callbacktransportmode",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "title": "PlanRunAcceptResponse"
+      },
+      "PlanRunCallbackConfig": {
+        "properties": {
+          "itemStatusUrl": {
+            "type": "string",
+            "title": "Itemstatusurl",
+            "description": "URL to receive plan-item status callbacks",
+            "default": ""
+          },
+          "planId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Planid",
+            "description": "Business plan ID included in callback payloads",
+            "default": ""
+          },
+          "mode": {
+            "type": "string",
+            "pattern": "^(batch|single)$",
+            "title": "Mode",
+            "description": "Callback delivery mode: batch or single",
+            "default": "batch"
+          }
+        },
+        "type": "object",
+        "title": "PlanRunCallbackConfig",
+        "description": "Callback configuration for plan run status reporting."
+      },
+      "PlanRunRequest": {
+        "properties": {
+          "callback": {
+            "$ref": "#/components/schemas/PlanRunCallbackConfig",
+            "description": "Callback configuration for status reporting"
+          },
+          "updater": {
+            "type": "string",
+            "title": "Updater",
+            "description": "Value sent in the updater field of each callback payload",
+            "default": "downstream-system"
+          },
+          "runner": {
+            "type": "string",
+            "pattern": "^(fake|real)$",
+            "title": "Runner",
+            "description": "Runner mode: fake executes instantly, real connects to devices",
+            "default": "fake"
+          }
+        },
+        "type": "object",
+        "title": "PlanRunRequest",
+        "description": "Request body for POST /executor/v1/plans/{plan_id}:run."
+      },
+      "PlanStatusResponse": {
+        "properties": {
+          "planId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Planid",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PlanSummary"
+          },
+          "excelHash": {
+            "type": "string",
+            "title": "Excelhash",
+            "default": ""
+          },
+          "outputRoot": {
+            "type": "string",
+            "title": "Outputroot",
+            "default": ""
+          },
+          "startedAt": {
+            "type": "string",
+            "title": "Startedat",
+            "default": ""
+          },
+          "finishedAt": {
+            "type": "string",
+            "title": "Finishedat",
+            "default": ""
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errormessage"
+          },
+          "infoEvents": {
+            "items": {
+              "$ref": "#/components/schemas/PlanInfoEvent"
+            },
+            "type": "array",
+            "title": "Infoevents"
+          }
+        },
+        "type": "object",
+        "title": "PlanStatusResponse"
+      },
+      "PlanSummary": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "success": {
+            "type": "integer",
+            "title": "Success",
+            "default": 0
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          },
+          "in_progress": {
+            "type": "integer",
+            "title": "In Progress",
+            "default": 0
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "default": 0
+          },
+          "failureSummary": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Failuresummary"
+          },
+          "outputRoot": {
+            "type": "string",
+            "title": "Outputroot",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "PlanSummary"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
