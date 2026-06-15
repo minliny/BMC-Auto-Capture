@@ -103,10 +103,15 @@ MORE_INLINE_RE = re.compile(
     r'[-–—]{2,}\s*(?:More|more|MORE)\s*[-–—]*', re.IGNORECASE
 )
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+TERMINAL_CONTROL_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+
+
+def _clean_interactive_detection_text(text: str) -> str:
+    return TERMINAL_CONTROL_RE.sub('', ANSI_RE.sub('', text))
 
 
 def _strip_pagination_markers(text: str) -> str:
-    text = ANSI_RE.sub('', text)
+    text = _clean_interactive_detection_text(text)
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     lines = []
     for line in text.split('\n'):
@@ -131,7 +136,7 @@ def _sanitize_raw_stream(text: str) -> str:
     between prompt and command echo.
     Does NOT strip lines or add/remove newlines.
     """
-    text = ANSI_RE.sub('', text)
+    text = _clean_interactive_detection_text(text)
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     lines = text.split('\n')
     result = []
@@ -1011,12 +1016,6 @@ class SSHExecutor(AbstractExecutor):
         )
         all_output.append(paging_out)
         if not paging_meta["prompt_detected"]:
-            has_failure = True
-            if paging_meta["hard_timeout_hit"]:
-                has_timeout = True
-            failure_reasons.append(
-                "screen-length 0 temporary 未返回 VRP prompt"
-            )
             logger.warning(
                 "[%s] screen-length 0 temporary did not return prompt; "
                 "continuing with pagination handling enabled",
@@ -1135,7 +1134,7 @@ class SSHExecutor(AbstractExecutor):
                     chunks.append(chunk)
                     last_data = time.time()
                     text = b"".join(chunks).decode("utf-8", errors="replace")
-                    if VRP_PROMPT_RE.search(ANSI_RE.sub("", text)):
+                    if VRP_PROMPT_RE.search(_clean_interactive_detection_text(text)):
                         prompt_detected = True
                         break
             elif time.time() - last_data > 2.0:
@@ -1209,7 +1208,7 @@ class SSHExecutor(AbstractExecutor):
                     got_data = True
 
             output_so_far = b"".join(chunks).decode("utf-8", errors="replace")
-            clean_output = ANSI_RE.sub("", output_so_far)
+            clean_output = _clean_interactive_detection_text(output_so_far)
 
             # Detect command echo: the sent command text appears in the output.
             # This typically shows as "<hostname>command" or "[hostname]command".
@@ -1238,6 +1237,11 @@ class SSHExecutor(AbstractExecutor):
                     channel.send(" ")
                     more_count += 1
                     handled_more_count = detected_more_count
+                    logger.info(
+                        "interactive_shell pager prompt detected, sending space "
+                        "(page=%d)",
+                        more_count,
+                    )
                     got_data = True
                 except Exception:
                     pass
@@ -1264,7 +1268,7 @@ class SSHExecutor(AbstractExecutor):
         # This helps detect cases where only the command echo was captured
         # without the actual command output body.
         output_classification = "OK"
-        clean = ANSI_RE.sub("", output).replace("\r\n", "\n").replace("\r", "\n")
+        clean = _clean_interactive_detection_text(output).replace("\r\n", "\n").replace("\r", "\n")
         if cmd_echo_seen:
             # Check if there is content AFTER the command echo
             echo_pos = clean.rfind(cmd_stripped)
@@ -1377,7 +1381,8 @@ class SSHExecutor(AbstractExecutor):
             # Pagination
             if out_chunks:
                 tail = b"".join(out_chunks[-2:]).decode("utf-8", errors="replace")
-                if "----More----" in tail or "---- More ----" in tail or "---more---" in tail or "--More--" in tail:
+                clean_tail = _clean_interactive_detection_text(tail)
+                if INTERACTIVE_MORE_RE.search(clean_tail):
                     if more_count >= MAX_MORE_PAGES:
                         logger.warning("[%s] 翻页次数超限 (%s)，停止翻页", device.device_name, more_count)
                         break
