@@ -59,6 +59,7 @@ jobs:
             --hidden-import pydantic `
             --hidden-import aiofiles `
             --hidden-import python_multipart `
+            --exclude-module src `
             --exclude-module tkinter `
             --exclude-module matplotlib `
             --exclude-module numpy `

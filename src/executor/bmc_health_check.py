@@ -124,7 +124,7 @@ SESSION_EXPIRED_KEYWORDS = [
     "session expired", "会话已过期", "登录已过期", "login expired",
     "token invalid", "unauthorized", "未授权",
     "please login", "请重新登录", "重新登录", "re-login",
-    "登录超时", "login timeout",
+    "登录超时", "会话超时", "login timeout", "session timeout",
 ]
 
 PASSWORD_EXPIRED_KEYWORDS = [
@@ -158,6 +158,35 @@ GENERIC_ERROR_KEYWORDS = [
     "timeout", "超时", "timed out", "not found", "404", "500", "502", "503",
     "internal server error", "service unavailable",
 ]
+
+SESSION_RECOVERY_STATUSES = (
+    "BMC_SESSION_EXPIRED",
+    "BMC_TIMEOUT_DIALOG",
+    "BMC_SESSION_PREEMPTED",
+    "BMC_LOGIN_PAGE_RETURNED",
+    "BMC_LOGIN_FORM_STILL_VISIBLE",
+)
+
+PAGE_RECOVERABLE_STATUSES = (
+    "BMC_PAGE_STILL_LOADING_VISIBLE",
+    "BMC_PAGE_EMPTY",
+    "BMC_EMPTY_DOM",
+    "BMC_DOM_NOT_STABLE",
+)
+
+
+def is_session_recoverable_status(status: str) -> bool:
+    raw = str(status or "")
+    return any(raw.startswith(prefix) for prefix in SESSION_RECOVERY_STATUSES)
+
+
+def is_page_recoverable_status(status: str) -> bool:
+    raw = str(status or "")
+    return any(raw.startswith(prefix) for prefix in PAGE_RECOVERABLE_STATUSES)
+
+
+def is_recoverable_health_status(status: str) -> bool:
+    return is_session_recoverable_status(status) or is_page_recoverable_status(status)
 
 # ======================================================================
 # JS snippet for element inspection
@@ -380,6 +409,10 @@ async def check_authenticated(page) -> BMCPageGateResult:
             return _make_result("AUTHENTICATED", False, "FAIL",
                                 f"BMC_SESSION_EXPIRED: '{kw}'", state)
 
+    if "custom-dialog timeout" in html_lower:
+        return _make_result("AUTHENTICATED", False, "FAIL",
+                            "BMC_TIMEOUT_DIALOG: custom-dialog timeout", state)
+
     # Password expired → FAIL (cannot proceed)
     for kw in PASSWORD_EXPIRED_KEYWORDS:
         if kw.lower() in html_lower:
@@ -432,6 +465,10 @@ async def check_page_basic_health(page) -> BMCPageGateResult:
         if kw.lower() in html_lower:
             return _make_result("PAGE_BASIC_HEALTH", False, "FAIL",
                                 f"BMC_SESSION_EXPIRED: '{kw}'", state)
+
+    if "custom-dialog timeout" in html_lower:
+        return _make_result("PAGE_BASIC_HEALTH", False, "FAIL",
+                            "BMC_TIMEOUT_DIALOG: custom-dialog timeout", state)
 
     # Empty page?
     if state.html_length < 500:
@@ -725,7 +762,8 @@ def save_page_health_debug(results: list[BMCPageGateResult], output_dir: str) ->
 class HealthResult:
     """Compatibility wrapper for new gate system."""
     __slots__ = ("stage", "healthy", "status", "matched_keyword",
-                 "url", "title", "html_size", "screenshot_size", "details")
+                 "url", "title", "html_size", "screenshot_size", "details",
+                 "recoverable", "terminal")
 
     def __init__(self, stage: str):
         self.stage = stage
@@ -737,6 +775,8 @@ class HealthResult:
         self.html_size = 0
         self.screenshot_size = 0
         self.details = ""
+        self.recoverable = False
+        self.terminal = False
 
 
 async def check_bmc_page_health(page, stage: str, target_url: str = "") -> HealthResult:
@@ -755,6 +795,8 @@ async def check_bmc_page_health(page, stage: str, target_url: str = "") -> Healt
                 hr.status = r.reason.split(":")[0] if ":" in r.reason else r.reason
                 hr.matched_keyword = r.matched_text[:100] if r.matched_text else r.reason[:100]
                 hr.details = r.reason
+                hr.recoverable = is_recoverable_health_status(hr.status)
+                hr.terminal = not hr.recoverable
                 return hr
             if not r.ok and r.severity == "WARN":
                 hr.status = r.reason.split(":")[0] if ":" in r.reason else "WARN"
@@ -767,6 +809,8 @@ async def check_bmc_page_health(page, stage: str, target_url: str = "") -> Healt
         hr.healthy = False
         hr.status = "HEALTH_CHECK_ERROR"
         hr.details = str(e)
+        hr.recoverable = False
+        hr.terminal = True
 
     return hr
 

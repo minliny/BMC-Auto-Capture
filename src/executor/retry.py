@@ -16,7 +16,11 @@ import time
 
 from ..models.task_plan import TaskPlan
 from ..models.execution_result import ExecutionResult
-from ..models.verdict import AttemptRecord, is_retryable_failure
+from ..models.verdict import (
+    AttemptRecord,
+    is_retryable_failure,
+    is_transient_retryable_failure,
+)
 
 logger = logging.getLogger("bmc_auto_capture.retry")
 
@@ -41,7 +45,8 @@ def execute_with_retry(executor, plan: TaskPlan, output_root: str) -> ExecutionR
     attempts: list[AttemptRecord] = []
     retry_reasons: list[str] = []
 
-    for attempt_idx in range(max_retries + 1):
+    attempt_idx = 0
+    while attempt_idx <= max_retries:
         plan.retry_attempt = attempt_idx
         attempt_start = time.time()
 
@@ -101,7 +106,16 @@ def execute_with_retry(executor, plan: TaskPlan, output_root: str) -> ExecutionR
             break
 
         # Non-retryable → done
-        if not is_retryable_failure(result):
+        retryable = is_retryable_failure(result)
+        if is_transient_retryable_failure(result) and max_retries < 1:
+            max_retries = 1
+            logger.warning(
+                "[%s] transient network error detected; extending max_retries to %d",
+                plan.device.device_name,
+                max_retries,
+            )
+
+        if not retryable:
             logger.info(
                 "[%s] Attempt %d/%d not retryable: %s — %s",
                 plan.device.device_name, attempt_idx + 1, max_retries + 1,
@@ -120,15 +134,21 @@ def execute_with_retry(executor, plan: TaskPlan, output_root: str) -> ExecutionR
             break
 
         # Retry
+        next_delay = min(5.0, 1.0 * (2 ** attempt_idx))
         logger.warning(
-            "[%s] Attempt %d/%d failed (retryable): %s — retrying...",
+            "[%s] Attempt %d/%d failed (retryable=true next_delay=%.1fs): %s — retrying...",
             plan.device.device_name, attempt_idx + 1, max_retries + 1,
+            next_delay,
             (result.execution_failure_reason or "")[:80],
         )
         retry_reasons.append(result.execution_failure_reason or result.execution_status)
+        time.sleep(next_delay)
+        attempt_idx += 1
 
     # Record attempt history
     if result is not None:
+        for attempt in attempts:
+            attempt.max_retries = max_retries
         result.attempt_records = attempts
         result.retry_count = max(0, len(attempts) - 1)
         result.attempt_count = len(attempts)

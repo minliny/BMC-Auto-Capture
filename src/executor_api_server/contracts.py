@@ -216,8 +216,8 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
             "name": "planId",
             "type": "string",
             "required": True,
-            "source": "callback.planId from plan run request",
-            "description": "Business plan ID provided by the caller",
+            "source": "path plan_id for /plans/{plan_id}:run; callback.planId only for legacy /plans request bodies",
+            "description": "Business plan ID / batch ID used by both executor and scheduler",
             "example": "<planId>",
         },
         {

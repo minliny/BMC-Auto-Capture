@@ -124,6 +124,92 @@ class RealRunnerAdapter:
 
     def run_job(self, job_payload: dict[str, Any]) -> JobResult:
         """Execute a job from the API payload. Routes to BMC or SSH executor."""
+        plan, execution_mode, task_type = self._plan_from_job_payload(job_payload)
+
+        os.makedirs(self.output_root, exist_ok=True)
+
+        if execution_mode in ("BMC_URL", "BMC_ACTIONS") or task_type in ("BMC", "BMC_URL", "BMC_ACTIONS"):
+            return self._run_bmc(plan)
+        elif execution_mode == "SSH_CMD" or task_type in ("SSH", "SSH_CMD", "TELNET"):
+            return self._run_ssh(plan)
+        else:
+            return JobResult(
+                status="FAILED",
+                error={
+                    "code": "UNSUPPORTED_TASK_TYPE",
+                    "message": f"Unsupported execution_mode={execution_mode} task_type={task_type}",
+                    "retryable": False,
+                    "category": "CONFIG",
+                },
+            )
+
+    def run_bmc_session_group(self, job_payloads: list[dict[str, Any]]) -> list[JobResult]:
+        """Execute same-endpoint BMC jobs with one browser login/session.
+
+        Tests and custom integrations sometimes monkeypatch ``run_job``.  In that
+        case this method deliberately preserves the old per-job adapter path.
+        """
+        if not job_payloads:
+            return []
+        if type(self).run_job is not _ORIGINAL_REAL_RUN_JOB:
+            return [self.run_job(payload) for payload in job_payloads]
+
+        started = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            plans = []
+            seen_plan_ids: set[str] = set()
+            for payload in job_payloads:
+                plan, execution_mode, task_type = self._plan_from_job_payload(payload)
+                if execution_mode not in ("BMC_URL", "BMC_ACTIONS") and task_type not in (
+                    "BMC", "BMC_URL", "BMC_ACTIONS",
+                ):
+                    return [self.run_job(item_payload) for item_payload in job_payloads]
+                if not plan.plan_id or plan.plan_id == "api-unknown" or plan.plan_id in seen_plan_ids:
+                    plan.plan_id = f"api-group-{len(plans) + 1}"
+                seen_plan_ids.add(plan.plan_id)
+                plans.append(plan)
+
+            endpoint_keys = {plan.endpoint_key for plan in plans}
+            if len(endpoint_keys) != 1:
+                return [self.run_job(payload) for payload in job_payloads]
+
+            os.makedirs(self.output_root, exist_ok=True)
+            from ..scheduler.bmc_session_runner import BMCEndpointSessionRunner
+
+            runner = BMCEndpointSessionRunner(
+                browser_manager=self._get_browser_manager(),
+                endpoint_key=plans[0].endpoint_key,
+                plans=plans,
+                output_root=self.output_root,
+                connect_timeout=self._bmc_connect_timeout,
+                page_timeout=self._bmc_page_timeout,
+                artifact_profile=self._bmc_artifact_profile,
+            )
+            execution_results = runner.run()
+            return [
+                self._execution_result_to_job_result(er, started, protocol="BMC")
+                for er in execution_results
+            ]
+        except Exception as e:
+            logger.exception("BMC session group execution crashed")
+            finished = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return [
+                JobResult(
+                    status="FAILED",
+                    started_at=started,
+                    finished_at=finished,
+                    error={
+                        "code": "BMC_SESSION_GROUP_CRASH",
+                        "message": str(e)[:200],
+                        "retryable": True,
+                        "category": "BMC",
+                    },
+                )
+                for _ in job_payloads
+            ]
+
+    def _plan_from_job_payload(self, job_payload: dict[str, Any]):
+        """Convert a public job payload into an internal TaskPlan."""
         from ..secret_resolver import resolve_secrets
 
         device_snapshot = job_payload.get("device_snapshot", {})
@@ -145,26 +231,9 @@ class RealRunnerAdapter:
         plan = TaskPlan(device=device, task=task)
         plan.plan_id = f"api-{job_payload.get('job_id', 'unknown')}"
 
-        # Route
         execution_mode = task_snapshot.get("execution_mode", "")
         task_type = task_snapshot.get("task_type", "")
-
-        os.makedirs(self.output_root, exist_ok=True)
-
-        if execution_mode in ("BMC_URL", "BMC_ACTIONS") or task_type in ("BMC", "BMC_URL", "BMC_ACTIONS"):
-            return self._run_bmc(plan)
-        elif execution_mode == "SSH_CMD" or task_type in ("SSH", "SSH_CMD", "TELNET"):
-            return self._run_ssh(plan)
-        else:
-            return JobResult(
-                status="FAILED",
-                error={
-                    "code": "UNSUPPORTED_TASK_TYPE",
-                    "message": f"Unsupported execution_mode={execution_mode} task_type={task_type}",
-                    "retryable": False,
-                    "category": "CONFIG",
-                },
-            )
+        return plan, execution_mode, task_type
 
     # ------------------------------------------------------------------
     # BMC execution
@@ -442,3 +511,6 @@ class RealRunnerAdapter:
             except Exception:
                 pass
             self._bm = None
+
+
+_ORIGINAL_REAL_RUN_JOB = RealRunnerAdapter.run_job

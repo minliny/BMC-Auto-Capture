@@ -34,7 +34,11 @@ from ..models.execution_result import ExecutionResult
 from ..models.verdict import AttemptRecord, compute_verdict, is_retryable_failure
 from ..executor.bmc_executor import BMCExecutor
 from ..executor.browser_manager import BrowserManager
-from ..executor.bmc_health_check import check_bmc_page_health, HealthResult
+from ..executor.bmc_health_check import (
+    check_bmc_page_health,
+    HealthResult,
+    is_session_recoverable_status,
+)
 
 logger = logging.getLogger("bmc_auto_capture.session_runner")
 
@@ -125,10 +129,8 @@ class BMCEndpointSessionRunner:
 
         try:
             # --- Acquire browser context + page ---
-            context = await asyncio.wait_for(self._bm.get_context(), timeout=30)
-            page = await asyncio.wait_for(context.new_page(), timeout=15)
+            page = await self._new_page()
             page_acquired = True
-            page.set_default_timeout(self._page_timeout * 1000)
             logger.info(
                 "[SessionRunner] %s — 浏览器就绪 (%d plans)",
                 self._endpoint_key, len(self._plans),
@@ -219,15 +221,17 @@ class BMCEndpointSessionRunner:
                 if not hr.healthy and hr.status in (
                     "BMC_ACCOUNT_LOGGED_IN_ELSEWHERE",
                     "BMC_SESSION_EXPIRED",
+                    "BMC_TIMEOUT_DIALOG",
                     "BMC_LOGIN_PAGE_RETURNED",
                 ):
                     # Session lost — try one re-login
                     logger.warning(
-                        "[SessionRunner] %s — session lost (plan %d/%d): %s, 尝试重新登录",
+                        "[SessionRunner] %s — session expired (plan %d/%d): %s, relogin start",
                         self._endpoint_key, idx + 1, len(self._plans), hr.status,
                     )
-                    login_ok2, reason2 = await self._do_login(page, device, bmc_url)
-                    self.login_count += 1
+                    page, login_ok2, reason2 = await self._recover_session(
+                        page, device, bmc_url, reason=hr.status,
+                    )
                     if not login_ok2:
                         result.execution_status = "EXEC_FAILED"
                         result.execution_failure_reason = (
@@ -239,6 +243,10 @@ class BMCEndpointSessionRunner:
                         plan.status = "EXEC_FAILED"
                         append_result_once(plan, result, "session_relogin_failure")
                         continue
+                    logger.info(
+                        "[SessionRunner] %s — relogin success; retry target navigation in current task",
+                        self._endpoint_key,
+                    )
 
                 # --- Execute with per-plan timeout and optional retry ---
                 max_retries = max(0, task.retry_count)
@@ -247,13 +255,15 @@ class BMCEndpointSessionRunner:
                 )
                 _attempts_data: list[AttemptRecord] = []
                 _retry_reasons: list[str] = []
+                session_recovery_used = 0
 
-                for attempt_idx in range(max_retries + 1):
+                attempt_idx = 0
+                while attempt_idx <= max_retries + session_recovery_used:
                     plan.retry_attempt = attempt_idx
                     _attempt_start = time.time()
                     attempt_output_dir = (
                         os.path.join(output_dir, f"attempt_{attempt_idx + 1}")
-                        if max_retries > 0 else output_dir
+                        if max_retries > 0 or session_recovery_used > 0 else output_dir
                     )
                     os.makedirs(attempt_output_dir, exist_ok=True)
                     attempt_result = make_result(attempt_output_dir, _attempt_start)
@@ -338,6 +348,35 @@ class BMCEndpointSessionRunner:
                     # Decide whether to retry
                     if attempt_result.execution_status == "EXEC_SUCCESS":
                         break
+                    if self._result_needs_session_recovery(attempt_result) and session_recovery_used < 1:
+                        session_recovery_used += 1
+                        _retry_reasons.append(
+                            attempt_result.execution_failure_reason
+                            or attempt_result.execution_status
+                        )
+                        logger.warning(
+                            "[SessionRunner] %s plan %d/%d attempt %d session expired; "
+                            "relogin start",
+                            self._endpoint_key, idx + 1, len(self._plans),
+                            attempt_idx + 1,
+                        )
+                        page, login_ok_s, reason_s = await self._recover_session(
+                            page, device, bmc_url,
+                            reason=attempt_result.execution_failure_reason or attempt_result.execution_status,
+                        )
+                        if login_ok_s:
+                            logger.info(
+                                "[SessionRunner] %s relogin success; retry target navigation",
+                                self._endpoint_key,
+                            )
+                            attempt_idx += 1
+                            continue
+                        logger.warning(
+                            "[SessionRunner] %s relogin failed: %s — current task fails only",
+                            self._endpoint_key,
+                            reason_s,
+                        )
+                        break
                     if not is_retryable_failure(attempt_result):
                         break
                     if attempt_idx >= max_retries:
@@ -354,18 +393,23 @@ class BMCEndpointSessionRunner:
                         attempt_result.execution_failure_reason
                         or attempt_result.execution_status
                     )
-                    login_ok_r, reason_r = await self._do_login(page, device, bmc_url)
-                    self.login_count += 1
+                    page, login_ok_r, reason_r = await self._recover_session(
+                        page, device, bmc_url,
+                        reason=attempt_result.execution_failure_reason
+                        or attempt_result.execution_status,
+                    )
                     if not login_ok_r:
                         logger.warning(
                             "[SessionRunner] %s re-login failed: %s — aborting retry",
                             self._endpoint_key, reason_r,
                         )
                         break
+                    attempt_idx += 1
+                    continue
                 result.attempt_records = _attempts_data
                 result.retry_count = max(0, len(_attempts_data) - 1)
                 result.attempt_count = len(_attempts_data)
-                result.max_attempts = max_retries + 1
+                result.max_attempts = max_retries + 1 + session_recovery_used
                 result.final_attempt_index = len(_attempts_data)
                 result.retry_reasons = _retry_reasons
 
@@ -483,6 +527,68 @@ class BMCEndpointSessionRunner:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    async def _new_page(self):
+        context = await asyncio.wait_for(self._bm.get_context(), timeout=30)
+        page = await asyncio.wait_for(context.new_page(), timeout=15)
+        page.set_default_timeout(self._page_timeout * 1000)
+        return page
+
+    async def _recover_session(self, page, device, bmc_url: str, reason: str):
+        """Replace stale page and perform a fresh login for this endpoint."""
+        logger.warning(
+            "[SessionRunner] %s — session recovery: reason=%s action=new_page_relogin",
+            self._endpoint_key,
+            str(reason)[:120],
+        )
+        try:
+            if page is not None:
+                try:
+                    setattr(page, "_bmc_invalid", True)
+                except Exception:
+                    pass
+                await asyncio.wait_for(page.close(), timeout=5)
+                logger.warning(
+                    "[SessionRunner] %s — old page discarded",
+                    self._endpoint_key,
+                )
+        except Exception:
+            logger.warning(
+                "[SessionRunner] %s — old page discard failed; continuing with new page",
+                self._endpoint_key,
+            )
+
+        try:
+            new_page = await self._new_page()
+        except Exception as e:
+            return page, False, f"BMC session recovery failed creating page: {e}"
+
+        logger.warning("[SessionRunner] %s — relogin start", self._endpoint_key)
+        login_ok, login_reason = await self._do_login(new_page, device, bmc_url)
+        self.login_count += 1
+        if login_ok:
+            logger.info("[SessionRunner] %s — relogin success", self._endpoint_key)
+            return new_page, True, ""
+        logger.warning(
+            "[SessionRunner] %s — relogin failed: %s",
+            self._endpoint_key,
+            str(login_reason)[:120],
+        )
+        return new_page, False, login_reason
+
+    @staticmethod
+    def _result_needs_session_recovery(result: ExecutionResult) -> bool:
+        reason = result.execution_failure_reason or ""
+        status = ""
+        marker = "BMC_PAGE_HEALTH_FAILED ["
+        if marker in reason:
+            status = reason.split(marker, 1)[1].split("]", 1)[0]
+        return (
+            is_session_recoverable_status(status)
+            or "BMC_SESSION_EXPIRED" in reason
+            or "BMC_SESSION_PREEMPTED" in reason
+            or "BMC_TIMEOUT_DIALOG" in reason
+        )
 
     async def _do_login(self, page, device, bmc_url: str) -> tuple[bool, str]:
         """Perform BMC login. Returns (success, failure_reason)."""

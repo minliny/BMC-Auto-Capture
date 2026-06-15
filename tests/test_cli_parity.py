@@ -179,9 +179,9 @@ def test_run_py_help_has_all_flags():
 
 
 def test_run_py_help_version_string():
-    """python run.py --help must show v0.2.4-RC5."""
+    """python run.py --help must show v0.2.4."""
     help_text = _source_help()
-    assert "v0.2.4-RC5" in help_text or "0.2.4-RC5" in help_text, (
+    assert "v0.2.4" in help_text or "0.2.4" in help_text, (
         "Version string missing in python run.py --help"
     )
 

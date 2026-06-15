@@ -1,13 +1,13 @@
 @echo off
 REM ============================================================
-REM BMC Auto-Capture v0.2.1 — Build Script
+REM BMC Auto-Capture v0.2.4 - Build Script
 REM Builds a self-contained one-directory distribution.
 REM ============================================================
 setlocal enabledelayedexpansion
 
 echo.
 echo ============================================================
-echo   BMC Auto-Capture v0.2.1 — Build
+echo   BMC Auto-Capture v0.2.4 - Build
 echo ============================================================
 echo.
 
@@ -57,6 +57,15 @@ echo [5/5] Copying runtime files...
 REM Config files
 xcopy /E /I /Y "%ROOT%\config" "%DIST%\config" >nul
 
+REM App layer files used by run.py --app-dir
+if not exist "%DIST%\app" mkdir "%DIST%\app"
+xcopy /E /I /Y "%ROOT%\src" "%DIST%\app\src" >nul
+xcopy /E /I /Y "%ROOT%\config" "%DIST%\app\config" >nul
+xcopy /E /I /Y "%ROOT%\examples" "%DIST%\app\examples" >nul
+if exist "%ROOT%\api" xcopy /E /I /Y "%ROOT%\api" "%DIST%\app\api" >nul
+if exist "%ROOT%\assets" xcopy /E /I /Y "%ROOT%\assets" "%DIST%\app\assets" >nul
+copy "%ROOT%\tasks.json" "%DIST%\app\" >nul
+
 REM Playwright browsers (if available)
 if exist "%PLAYWRIGHT_BROWSERS%" (
     xcopy /E /I /Y "%PLAYWRIGHT_BROWSERS%" "%DIST%\playwright_browsers" >nul
@@ -68,19 +77,19 @@ echo @echo off
 echo set PLAYWRIGHT_BROWSERS_PATH=%%~dp0playwright_browsers
 echo set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 echo.
-echo BMC Auto-Capture v0.2.1
+echo BMC Auto-Capture v0.2.4
 echo ========================
 echo.
 echo Usage: bmc-auto-capture.exe --excel ^<path_to_xlsx^> [--config ^<path_to_yaml^>]
 echo.
 echo Starting...
 echo.
-echo bmc-auto-capture.exe %%*
+echo bmc-auto-capture.exe --app-dir "%%~dp0app" %%*
 ) > "%DIST%\run.bat"
 
 REM README
 (
-echo BMC Auto-Capture v0.2.1
+echo BMC Auto-Capture v0.2.4
 echo ========================
 echo.
 echo Automated test evidence collection platform for BMC/SSH devices.
@@ -93,7 +102,7 @@ echo   2. Optional config:
 echo      run.bat --excel path\to\task_template.xlsx --config path\to\config.yaml
 echo.
 echo   3. For API server mode:
-echo      bmc-auto-capture.exe --mode api --port 8080
+echo      bmc-auto-capture.exe --app-dir app --server --port 8080
 echo.
 echo Requirements: Windows 10+, no Python installation needed.
 echo.
@@ -106,7 +115,7 @@ echo   Distribution: %DIST%
 echo ============================================================
 echo.
 echo To package for distribution:
-echo   7z a bmc-auto-capture-v0.2.1.7z "%DIST%"
+echo   7z a bmc-auto-capture-v0.2.4.7z "%DIST%"
 echo.
 
 endlocal

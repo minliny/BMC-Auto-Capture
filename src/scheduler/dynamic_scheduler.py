@@ -102,6 +102,7 @@ class DynamicScheduler:
 
         # Stats for logging
         self._dispatched_count = 0
+        self._total_plan_count = 0
         self._plan_order_for_show: list[str] = []
 
     # ------------------------------------------------------------------
@@ -111,6 +112,7 @@ class DynamicScheduler:
         if not self._execution_id:
             self._execution_id = uuid.uuid4().hex[:12]
         self._build_endpoint_queues(plans)
+        self._total_plan_count = len(plans)
         self._log_startup_stats(plans)
         self._monitor.start()
         self._bmc_pool.start()
@@ -559,6 +561,7 @@ class DynamicScheduler:
         try:
             if plan.protocol == "BMC" and self._bm:
                 exec_ = BMCExecutor(self._bm, connect_timeout=self._config.tcp_connect_timeout,
+                             page_timeout=self._config.bmc_page_timeout,
                              popup_timeout=self._config.popup_dismiss_selector_timeout,
                              artifact_profile=getattr(self._config, "bmc_artifact_profile", "full"))
             elif plan.protocol == "SSH":
@@ -647,7 +650,15 @@ class DynamicScheduler:
         reason = ""
         if status_icon == "FAIL" and result.execution_failure_reason:
             reason = f"  [{result.execution_failure_reason[:60]}]"
-        cdone(len(self._results), self._dispatched_count, status_icon, device_group=result.device_group, device=result.device_name, task=result.task_name, reason=reason)
+        cdone(
+            len(self._results),
+            self._total_plan_count or self._dispatched_count,
+            status_icon,
+            device_group=result.device_group,
+            device=result.device_name,
+            task=result.task_name,
+            reason=reason,
+        )
 
     def _on_bmc_plan_in_group(self, plan: TaskPlan, result: ExecutionResult):
         """Per-plan callback during BMC session group — no release, no re-queue."""
@@ -673,8 +684,15 @@ class DynamicScheduler:
         _reason = ""
         if _icon == "FAIL" and result.execution_failure_reason:
             _reason = f"  [{result.execution_failure_reason[:60]}]"
-        cdone(len(self._results), self._dispatched_count, _icon,
-              device_group=result.device_group, device=result.device_name, task=result.task_name, reason=_reason)
+        cdone(
+            len(self._results),
+            self._total_plan_count or self._dispatched_count,
+            _icon,
+            device_group=result.device_group,
+            device=result.device_name,
+            task=result.task_name,
+            reason=_reason,
+        )
 
     def _on_bmc_group_done(self, results: list[ExecutionResult], endpoint_key: str):
         """Called when a BMC session group completes. Release registry + log group summary.

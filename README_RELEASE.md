@@ -1,4 +1,4 @@
-# BMC Auto-Capture v0.2.4-RC5 — 使用说明
+# BMC Auto-Capture v0.2.4 — 使用说明
 
 ## 一、简介
 
@@ -289,8 +289,8 @@ bmc-app-${tag}.zip
 仍可复用，只需覆盖 `app/`、`run.py`、`启动.bat`。
 
 ```text
-依赖包可复用的最早版本：v0.2.4-RC18
-Minimum reusable runtime package version: v0.2.4-RC18
+依赖包可复用的最早版本：以 release notes / release_manifest.json 为准
+Minimum reusable runtime package version: see release notes / release_manifest.json
 ```
 
 以下任一内容变化时，应更新 runtime 包并调整最早可复用版本：
@@ -325,7 +325,7 @@ Minimum reusable runtime package version: v0.2.4-RC18
 
 ## 当前 RC 预留问题
 
-本 RC tag：v0.2.4-RC18
+本 RC tag：以当前 GitHub Release / release_manifest.json 为准
 
 ### Security / 代码冻结前阻断项
 

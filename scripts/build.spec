@@ -11,9 +11,9 @@ _root = Path(__file__).parent.parent
 
 a = Analysis(
     [
-        str(_root / "src" / "__main__.py"),
+        str(_root / "run.py"),
     ],
-    pathex=[str(_root / "src")],
+    pathex=[str(_root)],
     binaries=[],
     datas=[
         (str(_root / "config" / "default_config.yaml"), "config"),
@@ -44,6 +44,7 @@ a = Analysis(
         "scipy",
         "IPython",
         "jupyter",
+        "src",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

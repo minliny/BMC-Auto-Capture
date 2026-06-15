@@ -32,6 +32,7 @@ class RouteGuard:
     def __init__(self, check_interval: float = 30.0):
         self._interval = check_interval
         self._before: RouteSnapshot | None = None
+        self._last_change_signature: tuple[str, ...] = ()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._routes_changed = threading.Event()
@@ -141,9 +142,18 @@ class RouteGuard:
                 if self._before:
                     changes = self.diff(self._before, current)
                     if changes:
-                        logger.warning("RouteGuard: route change detected! %d changes", len(changes))
+                        signature = tuple(changes)
+                        if signature == self._last_change_signature:
+                            continue
+                        self._last_change_signature = signature
+                        logger.warning(
+                            "RouteGuard: route change detected! %d changes "
+                            "(scope=system_routes)",
+                            len(changes),
+                        )
                         self._routes_changed.set()
                         if self.on_change:
                             self.on_change(changes)
+                        self._before = current
             except Exception as e:
                 logger.error("RouteGuard: monitor error: %s", e)

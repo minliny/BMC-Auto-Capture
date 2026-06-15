@@ -11,6 +11,7 @@ Directory layout:
 from __future__ import annotations
 
 import argparse
+import importlib
 import logging
 import os
 import sys
@@ -29,6 +30,40 @@ def _exe_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
+
+
+def _arg_value(args: list[str], name: str) -> str | None:
+    for i, arg in enumerate(args):
+        if arg == name and i + 1 < len(args):
+            return args[i + 1]
+        if arg.startswith(name + "="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _resolve_app_dir_from_argv(args: list[str]) -> Path:
+    explicit = _arg_value(args, "--app-dir")
+    if explicit:
+        return Path(explicit).resolve()
+    if getattr(sys, "frozen", False):
+        release_app = (_exe_dir().parent / "app").resolve()
+        local_app = (_exe_dir() / "app").resolve()
+        return release_app if release_app.is_dir() else local_app
+    project_root = Path(__file__).resolve().parent
+    app_candidate = project_root / "app"
+    return (app_candidate if app_candidate.is_dir() else project_root).resolve()
+
+
+def _prepend_app_dir(app_dir: Path) -> None:
+    if app_dir.is_dir():
+        app_dir_s = str(app_dir)
+        if app_dir_s not in sys.path:
+            sys.path.insert(0, app_dir_s)
+
+
+def _import_attr(module_name: str, attr_name: str):
+    module = importlib.import_module(module_name)
+    return getattr(module, attr_name)
 
 
 def _is_playwright_browsers_dir(d: Path) -> bool:
@@ -141,12 +176,11 @@ def _setup_encoding():
 
 def _run_launcher_mode(args_list: list[str]) -> int:
     """Run launcher.main() with the given args."""
-    app_dir = Path(__file__).resolve().parent
-    if str(app_dir) not in sys.path:
-        sys.path.insert(0, str(app_dir))
+    app_dir = _resolve_app_dir_from_argv(args_list)
+    _prepend_app_dir(app_dir)
 
     try:
-        from src.cli.launcher import main as launcher_main
+        launcher_main = _import_attr("src.cli.launcher", "main")
         return launcher_main()
     except ImportError as e:
         print(f"ERROR: launcher 模块不可用: {e}", file=sys.stderr)
@@ -169,11 +203,14 @@ def main():
                 _os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_d.resolve())
                 break
     _setup_encoding()
+    initial_app_dir = _resolve_app_dir_from_argv(sys.argv[1:])
+    _prepend_app_dir(initial_app_dir)
 
     # --- Server mode: Executor API (replaces legacy Network Boot API) ---
     if "--server" in sys.argv:
         server_parser = argparse.ArgumentParser(add_help=False)
         server_parser.add_argument("--server", action="store_true", default=True)
+        server_parser.add_argument("--app-dir", default=None)
         server_parser.add_argument("--host", default="127.0.0.1")
         server_parser.add_argument("--port", type=int, default=8080)
         server_parser.add_argument("--log-level", default="info")
@@ -190,17 +227,19 @@ def main():
 
         # Legacy mode (explicit opt-in)
         if server_args.legacy_network_boot:
-            from api.boot import start_minimal_server
+            start_minimal_server = _import_attr("api.boot", "start_minimal_server")
             start_minimal_server(
                 host=server_args.host, port=server_args.port,
-                log_level=server_args.log_level, app_dir=None,
+                log_level=server_args.log_level, app_dir=str(initial_app_dir),
             )
             return 0
 
         # New Executor API (default)
-        from src.executor_api_server.service import DirectDispatchService
-        from src.executor_api_server.app import create_app
-        from src.plan_run_service import PlanRunService
+        DirectDispatchService = _import_attr(
+            "src.executor_api_server.service", "DirectDispatchService",
+        )
+        create_app = _import_attr("src.executor_api_server.app", "create_app")
+        PlanRunService = _import_attr("src.plan_run_service", "PlanRunService")
         import uvicorn
 
         use_http = server_args.callback_transport == "http"
@@ -242,7 +281,8 @@ def main():
         sys.argv = [sys.argv[0]] + clean_args
         return _run_launcher_mode(clean_args)
 
-    from src.cli.args import build_parser, resolve_execution_cli
+    build_parser = _import_attr("src.cli.args", "build_parser")
+    resolve_execution_cli = _import_attr("src.cli.args", "resolve_execution_cli")
     parser = build_parser()
     # --excel is optional in shared parser; run.py validates below
     args = parser.parse_args()
@@ -269,8 +309,8 @@ def main():
     if str(app_dir) not in sys.path:
         sys.path.insert(0, str(app_dir))
 
-    from src.models.app_config import AppConfig
-    from src.app import App as PipelineApp
+    AppConfig = _import_attr("src.models.app_config", "AppConfig")
+    PipelineApp = _import_attr("src.app", "App")
 
     effective_mode, effective_max_bmc_workers, effective_max_ssh_workers, _legacy_concurrency = (
         resolve_execution_cli(args, sys.argv[1:])
@@ -371,9 +411,9 @@ def main():
 
     # Preflight-only mode
     if args.preflight_only:
-        from src.loader.excel_reader import load_all as _load
-        from src.connectivity.preflight import check_all as _preflight_all
-        from src.connectivity.preflight import check_auth_all as _preflight_auth
+        _load = _import_attr("src.loader.excel_reader", "load_all")
+        _preflight_all = _import_attr("src.connectivity.preflight", "check_all")
+        _preflight_auth = _import_attr("src.connectivity.preflight", "check_auth_all")
         devices, tasks = _load(str(excel_path))
 
         if args.preflight_auth:

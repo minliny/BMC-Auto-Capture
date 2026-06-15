@@ -91,6 +91,18 @@ def compute_verdict(result: ExecutionResult) -> str:
 # ---------------------------------------------------------------------------
 
 RETRYABLE_STATUSES = frozenset({"EXEC_TIMEOUT", "EXEC_FAILED"})
+TRANSIENT_RETRYABLE_REASON_PATTERNS: list[str] = [
+    "WinError 10054",
+    "10054",
+    "connection reset",
+    "Connection reset",
+    "forcibly closed",
+    "远程主机强迫关闭",
+    "remote host closed",
+    "connection aborted",
+    "Connection aborted",
+    "ECONNRESET",
+]
 
 # Patterns that indicate non-retryable failures even when status is retryable
 NON_RETRYABLE_REASON_PATTERNS: list[str] = [
@@ -123,13 +135,26 @@ def is_retryable_failure(result: ExecutionResult) -> bool:
       1. The execution_status is in RETRYABLE_STATUSES, AND
       2. The failure_reason does NOT match any NON_RETRYABLE_REASON_PATTERNS.
     """
+    reason = result.execution_failure_reason or ""
+    for pattern in NON_RETRYABLE_REASON_PATTERNS:
+        if pattern in reason:
+            return False
+    if is_transient_retryable_failure(result):
+        return True
     if result.execution_status not in RETRYABLE_STATUSES:
+        return False
+    return True
+
+
+def is_transient_retryable_failure(result: ExecutionResult) -> bool:
+    """Return True for transient network/socket failures worth retrying."""
+    if result.execution_status not in ("EXEC_ERROR", "EXEC_FAILED", "EXEC_TIMEOUT"):
         return False
     reason = result.execution_failure_reason or ""
     for pattern in NON_RETRYABLE_REASON_PATTERNS:
         if pattern in reason:
             return False
-    return True
+    return any(pattern in reason for pattern in TRANSIENT_RETRYABLE_REASON_PATTERNS)
 
 
 @dataclass

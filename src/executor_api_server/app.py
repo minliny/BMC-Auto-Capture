@@ -137,7 +137,11 @@ def create_app(
     # ==================================================================
 
     if plan_run_service is not None:
-        _register_plan_run_routes(app, plan_run_service)
+        _register_plan_run_routes(
+            app,
+            plan_run_service,
+            expose_internal_run_routes=run_service is None,
+        )
 
     return app
 
@@ -266,7 +270,11 @@ def _error_response(result: dict, status_code: int = 400) -> JSONResponse:
     return JSONResponse(content=body, status_code=status_code)
 
 
-def _register_plan_run_routes(app: FastAPI, prs):
+def _register_plan_run_routes(
+    app: FastAPI,
+    prs,
+    expose_internal_run_routes: bool = True,
+):
     """Plan run routes: Excel config, run start, query, and remote upload."""
 
     @app.post("/executor/v1/config/excel:path", response_model=ExcelConfigAcceptResponse)
@@ -447,23 +455,24 @@ def _register_plan_run_routes(app: FastAPI, prs):
     # External Plan API (excelHash + string planId)
     # ==================================================================
 
-    @app.get("/executor/v1/runs/{run_id}", response_model=PlanStatusResponse,
-             include_in_schema=False, deprecated=True)
-    async def get_run_by_id(run_id: str):
-        r = prs.get_run(run_id)
-        if r is None:
-            raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND",
-                                                         "message": f"Run not found: {run_id}"})
-        return r
+    if expose_internal_run_routes:
+        @app.get("/executor/v1/runs/{run_id}", response_model=PlanStatusResponse,
+                 include_in_schema=False, deprecated=True)
+        async def get_run_by_id(run_id: str):
+            r = prs.get_run(run_id)
+            if r is None:
+                raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND",
+                                                             "message": f"Run not found: {run_id}"})
+            return r
 
-    @app.get("/executor/v1/runs/{run_id}/items", response_model=PlanItemsResponse,
-             include_in_schema=False, deprecated=True)
-    async def get_run_items_by_id(run_id: str):
-        r = prs.get_run_items(run_id)
-        if r is None:
-            raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND",
-                                                         "message": f"Run not found: {run_id}"})
-        return r
+        @app.get("/executor/v1/runs/{run_id}/items", response_model=PlanItemsResponse,
+                 include_in_schema=False, deprecated=True)
+        async def get_run_items_by_id(run_id: str):
+            r = prs.get_run_items(run_id)
+            if r is None:
+                raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND",
+                                                             "message": f"Run not found: {run_id}"})
+            return r
 
     @app.post("/executor/v1/plans/{plan_id}/callbacks:retry", response_model=CallbackRetryResponse)
     async def retry_plan_callbacks(plan_id: str, req: CallbackRetryRequest):

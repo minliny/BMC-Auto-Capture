@@ -178,7 +178,7 @@ if exist "%ROOT%\runtime\build_info.json" (
 )
 
 :: 验证 exe 是否包含 --preflight-auth (仅在编译 exe 模式)
-if /i "%ENGINE_EXE:~-4%"==".exe" if "%USE_PHTHON%"=="0" (
+if /i "%ENGINE_EXE:~-4%"==".exe" if "%USE_PYTHON%"=="0" (
     echo( [校验] 检测编译引擎参数 ...
     "%ENGINE_EXE%" --help 2>&1 | findstr "preflight-auth" >nul
     if !ERRORLEVEL! NEQ 0 (

@@ -581,7 +581,10 @@ class SSHExecutor(AbstractExecutor):
             logger.error("[%s] SSH连接超时: %s", device.device_name, e)
         except socket.error as e:
             result.execution_status = self._classify_socket_error(e)
-            result.execution_failure_reason = str(e)
+            if self._is_transient_socket_error(e):
+                result.execution_failure_reason = f"TRANSIENT_NETWORK_ERROR: {e}"
+            else:
+                result.execution_failure_reason = str(e)
             logger.error("[%s] Socket错误: %s", device.device_name, e)
         except paramiko.AuthenticationException as e:
             result.execution_status = "EXEC_FAILED"
@@ -1766,6 +1769,8 @@ class SSHExecutor(AbstractExecutor):
     def _classify_socket_error(self, e: socket.error) -> str:
         errno = e.errno if hasattr(e, "errno") else 0
         msg = str(e).lower()
+        if self._is_transient_socket_error(e):
+            return "EXEC_ERROR"
         if errno == 13 or "permission" in msg or "eacces" in msg:
             return "EXEC_SKIPPED_PORT_BLOCKED"
         if errno == 111 or "connection refused" in msg:
@@ -1775,6 +1780,20 @@ class SSHExecutor(AbstractExecutor):
         if errno in (113, 101) or "unreachable" in msg:
             return "EXEC_SKIPPED_PRECHECK_FAILED"
         return "EXEC_ERROR"
+
+    @staticmethod
+    def _is_transient_socket_error(e: BaseException) -> bool:
+        winerror = getattr(e, "winerror", None)
+        msg = str(e).lower()
+        return (
+            winerror == 10054
+            or "10054" in msg
+            or "connection reset" in msg
+            or "forcibly closed" in msg
+            or "远程主机强迫关闭" in msg
+            or "remote host closed" in msg
+            or "connection aborted" in msg
+        )
 
     def _disable_paging(self, client, device, strategy="exec_command") -> bool:
         disable_commands = [

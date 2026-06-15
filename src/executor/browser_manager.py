@@ -119,12 +119,22 @@ class BrowserManager:
         return await tb.get_context()
 
     def reset_thread(self):
-        """Force current thread's browser to be recreated on next get_context()."""
+        """Close and drop the current thread's browser before recreating it."""
+        import asyncio as asyncio_mod
         tid = threading.get_ident()
         with self._tls_lock:
             tb = self._tls.pop(tid, None)
         if tb is not None:
             logger.warning("重置线程浏览器 %d after failure", tid)
+            loop = _get_thread_loop()
+            if loop.is_closed():
+                tb._drop_refs()
+                return
+            try:
+                loop.run_until_complete(asyncio_mod.wait_for(tb.close(), timeout=15))
+            except Exception as e:
+                logger.warning("重置线程浏览器 %d close failed: %s", tid, e)
+                tb._drop_refs()
 
     def close_current_thread_browser(self):
         """Close the current thread's browser on its own event loop.

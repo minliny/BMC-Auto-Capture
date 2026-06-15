@@ -298,7 +298,30 @@ class App:
     # Route guard callback
     # ------------------------------------------------------------------
     def _on_route_change(self, changes: list[str]):
-        logger.warning("RouteGuard: %d route changes detected — stopping dispatch", len(changes))
+        threshold = int(getattr(self.config, "route_guard_stop_threshold", 100) or 100)
+        if len(changes) < threshold:
+            logger.warning(
+                "RouteGuard: %d route changes detected — observe only "
+                "(scope=system_routes impact=none threshold=%d). "
+                "Dispatch continues; BMC SPA navigation/session recovery is handled per device/session.",
+                len(changes),
+                threshold,
+            )
+            self.event_bus.emit(
+                "route_changed",
+                changes=changes,
+                scope="system_routes",
+                impact="observe",
+                threshold=threshold,
+            )
+            return
+
+        logger.warning(
+            "RouteGuard: %d route changes detected — global route storm, stopping dispatch "
+            "(scope=system_routes impact=global threshold=%d)",
+            len(changes),
+            threshold,
+        )
         self._stop_reason = "route_change"
         self._stop_event.set()
         self._pause_event.set()  # unblock pause so stop can take effect
@@ -319,6 +342,7 @@ class App:
                                idle_timeout=self.config.ssh_idle_timeout)
         bm = BrowserManager(headless=self.config.browser_headless)
         bmc_exec = BMCExecutor(bm, connect_timeout=self.config.tcp_connect_timeout,
+                                 page_timeout=self.config.bmc_page_timeout,
                                  popup_timeout=self.config.popup_dismiss_selector_timeout,
                                  artifact_profile=getattr(self.config, "bmc_artifact_profile", "full"))
 

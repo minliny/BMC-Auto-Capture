@@ -49,6 +49,7 @@ class AppConfig:
     preflight_enabled: bool = True
     route_guard_enabled: bool = True
     route_guard_check_interval: float = 30.0
+    route_guard_stop_threshold: int = 100
 
     # --- Output ---
     output_root: str = "./output"
@@ -133,6 +134,7 @@ class AppConfig:
             preflight_enabled=bool(data.get("preflight_enabled", True)),
             route_guard_enabled=bool(data.get("route_guard_enabled", True)),
             route_guard_check_interval=float(data.get("route_guard_check_interval", 30.0)),
+            route_guard_stop_threshold=int(data.get("route_guard_stop_threshold", 100)),
             output_root=str(data.get("output_root", "./output")),
             api_host=str(data.get("api_host", "0.0.0.0")),
             api_port=int(data.get("api_port", 8080)),

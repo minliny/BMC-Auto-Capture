@@ -27,7 +27,7 @@ from .captcha_handler import detect_captcha, handle_captcha, CaptchaDetected
 from .bmc_health_check import (
     check_bmc_page_health, check_evidence_files,
     scan_html_for_keywords, scan_mhtml_for_keywords,
-    HealthResult,
+    HealthResult, is_page_recoverable_status, is_session_recoverable_status,
 )
 from ..models.task_plan import TaskPlan
 from ..models.task import resolve_task_timeout_seconds
@@ -41,6 +41,7 @@ from ..rules.condition_evaluator import (
 from ..out.file_writer import write_html_file, write_log_file
 from ..utils.html_redaction import capture_redacted_html
 from ..utils.path_safety import safe_join_under_root, is_safe_path_component
+from ..utils.sensitive import redact_sensitive_text
 from ..utils.template import resolve_template, check_unreplaced_vars
 
 logger = logging.getLogger("bmc_auto_capture.bmc")
@@ -97,6 +98,35 @@ LOGIN_SUBMIT_SELECTORS = [
     'button:has-text("登 录")',
     'input[type="submit"]',
     'button.btn-primary',
+]
+
+SESSION_DIALOG_SELECTORS = [
+    '.custom-dialog.timeout',
+    '[class*="custom-dialog"][class*="timeout"]',
+    '[role="dialog"][aria-label*="提示"]',
+    '[role="dialog"][aria-label*="Tip"]',
+    '.el-dialog[aria-label*="提示"]',
+    '.el-dialog__wrapper [role="dialog"]',
+]
+
+SESSION_EXPIRED_DIALOG_KEYWORDS = [
+    "请重新登录", "重新登录", "please login", "re-login",
+    "session expired", "会话已过期", "登录已过期", "login expired",
+]
+
+TIMEOUT_DIALOG_KEYWORDS = [
+    "登录超时", "会话超时", "login timeout", "session timeout",
+    "custom-dialog timeout",
+]
+
+TIMEOUT_DIALOG_CLOSE_SELECTORS = [
+    '.custom-dialog.timeout button:has-text("确定")',
+    '.custom-dialog.timeout button:has-text("OK")',
+    '[role="dialog"][aria-label*="提示"] button:has-text("确定")',
+    '[role="dialog"][aria-label*="提示"] button:has-text("OK")',
+    '.el-dialog__footer button:has-text("确定")',
+    '.el-message-box__btns button:has-text("确定")',
+    '.el-dialog__headerbtn',
 ]
 
 
@@ -381,12 +411,17 @@ class BMCExecutor(AbstractExecutor):
         """
         # Validate URL host matches device BMC IP before navigation
         self._validate_goto_url(bmc_url, device.bmc_ip)
-        logger.info(f"[{device.device_name}] 正在访问BMC:  {bmc_url}")
+        goto_timeout_ms = max(float(self._page_timeout), 20.0) * 1000
+        logger.info(
+            "[%s] 正在访问BMC target_type=login_home timeout=%.0fs",
+            device.device_name,
+            goto_timeout_ms / 1000,
+        )
 
         try:
-            await page.goto(bmc_url, wait_until="domcontentloaded", timeout=self._connect_timeout * 1000)
+            await page.goto(bmc_url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
         except Exception as e:
-            reason = f"BMC页面无法访问: {e}"
+            reason = f"BMC页面无法访问 target_type=login_home timeout={goto_timeout_ms / 1000:.0f}s: {e}"
             logger.error("[%s] %s", device.device_name, reason)
             return False, reason
 
@@ -400,7 +435,7 @@ class BMCExecutor(AbstractExecutor):
         # Navigate directly to target URL (existing session works for same BMC).
         if await self._detect_account_conflict(page, device):
             logger.info("[%s] 检测到已有登录会话,跳过登录", device.device_name)
-            await page.goto(bmc_url, wait_until="domcontentloaded", timeout=self._connect_timeout * 1000)
+            await page.goto(bmc_url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
             await asyncio.sleep(2)
             if await self._bypass_cert_warning(page, device):
                 await asyncio.sleep(2)
@@ -474,7 +509,7 @@ class BMCExecutor(AbstractExecutor):
             # Check for account conflict message that may appear after redirect
             if await self._detect_account_conflict(page, device):
                 logger.info("[%s] 登录后检测到会话冲突,重新导航到目标页", device.device_name)
-                await page.goto(bmc_url, wait_until="domcontentloaded", timeout=self._connect_timeout * 1000)
+                await page.goto(bmc_url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
                 await asyncio.sleep(2)
 
         return True, ""
@@ -718,6 +753,167 @@ class BMCExecutor(AbstractExecutor):
             if not clicked:
                 break  # No more blockers found
 
+    def _classify_session_dialog_text(self, text: str, selector: str = "") -> str:
+        raw = f"{selector}\n{text or ''}"
+        lower = raw.lower()
+        if any(kw.lower() in lower for kw in SESSION_EXPIRED_DIALOG_KEYWORDS):
+            return "BMC_SESSION_EXPIRED"
+        if any(kw.lower() in lower for kw in TIMEOUT_DIALOG_KEYWORDS):
+            return "BMC_TIMEOUT_DIALOG"
+        if "custom-dialog" in lower and "timeout" in lower:
+            return "BMC_TIMEOUT_DIALOG"
+        if "role=\"dialog\"" in lower and "aria-label=\"提示\"" in lower:
+            return "BMC_TIMEOUT_DIALOG"
+        if '[role="dialog"][aria-label*="提示"]' in selector:
+            return "BMC_TIMEOUT_DIALOG"
+        return ""
+
+    @staticmethod
+    def _dialog_health(stage: str, status: str, text: str = "", selector: str = "") -> HealthResult:
+        hr = HealthResult(stage)
+        hr.healthy = False
+        hr.status = status
+        hr.matched_keyword = (text or selector or status)[:100]
+        detail = text or selector or status
+        hr.details = f"{status}: session dialog detected: {redact_sensitive_text(detail[:300])}"
+        hr.recoverable = True
+        hr.terminal = False
+        return hr
+
+    async def _visible_text_for_selector(self, page, selector: str) -> str | None:
+        try:
+            el = await page.query_selector(selector)
+            if not el:
+                return None
+            try:
+                if not await el.is_visible():
+                    return None
+            except Exception:
+                return None
+            try:
+                return await el.inner_text()
+            except Exception:
+                return selector
+        except Exception:
+            return None
+
+    async def _detect_session_dialog(self, page, stage: str) -> HealthResult:
+        """Detect BMC timeout/session dialogs before interacting with the page."""
+        healthy = HealthResult(stage)
+
+        for selector in SESSION_DIALOG_SELECTORS:
+            text = await self._visible_text_for_selector(page, selector)
+            if text is None:
+                continue
+            status = self._classify_session_dialog_text(text, selector)
+            if not status:
+                status = "BMC_TIMEOUT_DIALOG"
+            return self._dialog_health(stage, status, text, selector)
+
+        for keyword in SESSION_EXPIRED_DIALOG_KEYWORDS:
+            text = await self._visible_text_for_selector(page, f"text={keyword}")
+            if text is not None:
+                return self._dialog_health(stage, "BMC_SESSION_EXPIRED", text, keyword)
+
+        for keyword in TIMEOUT_DIALOG_KEYWORDS:
+            text = await self._visible_text_for_selector(page, f"text={keyword}")
+            if text is not None:
+                return self._dialog_health(stage, "BMC_TIMEOUT_DIALOG", text, keyword)
+
+        try:
+            html = await page.content()
+        except Exception:
+            html = ""
+        status = self._classify_session_dialog_text(html[:5000], "")
+        if status:
+            return self._dialog_health(stage, status, html[:300], "page.content")
+        return healthy
+
+    async def _close_timeout_dialog_once(self, page, device) -> bool:
+        for selector in TIMEOUT_DIALOG_CLOSE_SELECTORS:
+            try:
+                el = await page.query_selector(selector)
+                if not el:
+                    continue
+                try:
+                    if not await el.is_visible():
+                        continue
+                except Exception:
+                    continue
+                logger.warning(
+                    "[%s] recovery action=close_timeout_dialog_once selector=%s",
+                    device.device_name, selector,
+                )
+                try:
+                    await el.click(timeout=self._popup_timeout)
+                except TypeError:
+                    await el.click()
+                await asyncio.sleep(0.5)
+                return True
+            except Exception as exc:
+                logger.debug(
+                    "[%s] close timeout dialog selector failed: %s",
+                    device.device_name, exc,
+                )
+        return False
+
+    async def _precheck_session_dialog(
+        self,
+        page,
+        stage: str,
+        device,
+        *,
+        allow_close_timeout: bool = True,
+    ) -> HealthResult:
+        hr = await self._detect_session_dialog(page, stage)
+        if hr.healthy:
+            return hr
+
+        logger.warning(
+            "[%s] session dialog detected stage=%s status=%s dialog text=%s",
+            device.device_name,
+            stage,
+            hr.status,
+            redact_sensitive_text((hr.matched_keyword or hr.details or "")[:160]),
+        )
+
+        if hr.status == "BMC_TIMEOUT_DIALOG" and allow_close_timeout:
+            logger.warning(
+                "[%s] recovery action=close_timeout_dialog_once stage=%s",
+                device.device_name,
+                stage,
+            )
+            closed = await self._close_timeout_dialog_once(page, device)
+            if closed:
+                after = await self._detect_session_dialog(page, f"{stage}_after_close")
+                if not after.healthy:
+                    logger.warning(
+                        "[%s] session dialog still visible after close status=%s dialog text=%s",
+                        device.device_name,
+                        after.status,
+                        redact_sensitive_text((after.matched_keyword or after.details or "")[:160]),
+                    )
+                    return after
+                hr.details += "; timeout dialog closed once; require session recovery before continuing"
+            else:
+                logger.warning(
+                    "[%s] recovery action=close_timeout_dialog_once result=no_close_button",
+                    device.device_name,
+                )
+        return hr
+
+    def _dialog_health_from_action_error(self, stage: str, error: Exception) -> HealthResult | None:
+        text = str(error or "")
+        lower = text.lower()
+        if (
+            "custom-dialog" in lower
+            or "intercepts pointer events" in lower and ("dialog" in lower or "timeout" in lower)
+            or "element intercepts pointer events" in lower and "dialog" in lower
+        ):
+            status = self._classify_session_dialog_text(text, "") or "BMC_TIMEOUT_DIALOG"
+            return self._dialog_health(stage, status, text, "action_error")
+        return None
+
     # ------------------------------------------------------------------
     # BMC_URL mode
     # ------------------------------------------------------------------
@@ -779,6 +975,119 @@ class BMCExecutor(AbstractExecutor):
 
         # Evaluate evidence checkpoints (non-blocking, after artifacts saved)
         await self._evaluate_checkpoints(page, task, output_dir, result, ss_path)
+
+    async def _recover_page_health_once(
+        self,
+        page,
+        target_url: str,
+        device,
+        stage: str,
+        health: HealthResult,
+    ) -> bool:
+        """Best-effort one-shot recovery for transient BMC page health failures."""
+        status = health.status or ""
+        if is_session_recoverable_status(status):
+            logger.warning(
+                "[%s] %s recoverable=session target_type=bmc_page status=%s — "
+                "defer to session relogin",
+                device.device_name,
+                stage,
+                status,
+            )
+            return False
+        if not is_page_recoverable_status(status):
+            return False
+
+        logger.warning(
+            "[%s] %s recoverable=page target_type=bmc_page status=%s — "
+            "reload/recheck once",
+            device.device_name,
+            stage,
+            status,
+        )
+        timeout_ms = max(float(self._page_timeout), 20.0) * 1000
+        try:
+            await page.reload(wait_until="domcontentloaded", timeout=timeout_ms)
+            await asyncio.sleep(2)
+        except Exception as e:
+            logger.warning("[%s] %s reload failed during page recovery: %s",
+                           device.device_name, stage, e)
+
+        if target_url:
+            try:
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                await asyncio.sleep(2)
+            except Exception as e:
+                logger.warning("[%s] %s retry target navigation failed: %s",
+                               device.device_name, stage, e)
+                return False
+        return True
+
+    async def _check_and_recover_page_health(
+        self,
+        page,
+        target_url: str,
+        device,
+        stage: str,
+    ) -> HealthResult:
+        """Run one health check and one recoverable reload/re-navigation pass."""
+        hr = await check_bmc_page_health(page, stage, target_url=target_url)
+        if not hr.healthy:
+            if await self._recover_page_health_once(page, target_url, device, stage, hr):
+                hr = await check_bmc_page_health(page, stage, target_url=target_url)
+        return hr
+
+    @staticmethod
+    def _mark_health_failure(result: ExecutionResult, health: HealthResult) -> None:
+        result.execution_status = "EXEC_FAILED"
+        result.execution_failure_reason = (
+            f"BMC_PAGE_HEALTH_FAILED [{health.status}]: {health.details}"
+        )
+
+    async def _execute_one_pre_capture_action(
+        self,
+        page,
+        action: dict,
+        index: int,
+        device,
+        output_dir: str,
+    ) -> str:
+        """Execute one pre-capture action and return a human-readable detail."""
+        action_type = action.get("action") or action.get("type", "")
+        selector = action.get("selector", "")
+        value = action.get("value", "")
+        timeout_ms = int(action.get("timeout_ms") or action.get("timeout") or 5000)
+        description = action.get("description", "")
+
+        if action_type == "click":
+            await page.locator(selector).first.click(timeout=timeout_ms)
+        elif action_type == "fill":
+            await page.locator(selector).first.fill(value, timeout=timeout_ms)
+        elif action_type == "press":
+            await page.locator(selector).first.press(value)
+        elif action_type == "wait_for_selector":
+            await page.locator(selector).first.wait_for(timeout=timeout_ms)
+        elif action_type in ("wait", "sleep"):
+            await asyncio.sleep(float(value) if value else 1.0)
+        elif action_type == "intermediate_screenshot":
+            if self._screenshot_policy in ("all", "checkpoints"):
+                ss_path = safe_join_under_root(output_dir, f"intermediate_{index:02d}.png")
+                await page.screenshot(path=ss_path, full_page=True)
+                logger.debug(
+                    "[%s] intermediate screenshot saved (policy=%s): %s",
+                    device.device_name, self._screenshot_policy, ss_path,
+                )
+                return description or ss_path
+            logger.debug(
+                "[%s] intermediate screenshot skipped (policy=%s)",
+                device.device_name, self._screenshot_policy,
+            )
+        elif action_type == "goto":
+            pass
+        else:
+            logger.warning("[%s] Unknown pre_capture action: %s", device.device_name, action_type)
+
+        return description or f"{action_type} {selector}".strip()
 
     async def _evaluate_rules(self, page, task, device, output_dir: str, result: ExecutionResult) -> None:
         """Run task rules (basic first, then advanced) against the captured page."""
@@ -1056,10 +1365,14 @@ class BMCExecutor(AbstractExecutor):
             if result.execution_status not in ("EXEC_FAILED",):
                 hr = await check_bmc_page_health(page, "after_navigate", target_url=target_url)
                 if not hr.healthy:
-                    result.execution_status = "EXEC_FAILED"
-                    result.execution_failure_reason = (
-                        f"BMC_PAGE_HEALTH_FAILED [{hr.status}]: {hr.details}"
-                    )
+                    if await self._recover_page_health_once(
+                        page, target_url, device, "after_navigate", hr,
+                    ):
+                        hr = await check_bmc_page_health(
+                            page, "after_navigate", target_url=target_url,
+                        )
+                if not hr.healthy:
+                    self._mark_health_failure(result, hr)
                     logger.error("[%s] 导航后页面健康检查失败: %s", device.device_name, hr.status)
         else:
             # No target_url from either command_or_url (BMC_URL) or actions_json goto (BMC_ACTIONS).
@@ -1077,24 +1390,60 @@ class BMCExecutor(AbstractExecutor):
                     f"command_or_url is empty and actions_json has no goto"
                 )
 
-        await self._dismiss_all_blockers(page)
+        if result.execution_status == "EXEC_FAILED":
+            logger.warning(
+                "[%s] capture flow already failed before actions; skip business actions",
+                device.device_name,
+            )
+            await self._execute_final_capture(page, task, bmc_ip, file_base, output_dir, result)
+            return
+
+        try:
+            await self._dismiss_all_blockers(page)
+        except Exception as e:
+            result.execution_status = "EXEC_FAILED"
+            result.execution_failure_reason = f"BMC_SESSION_EXPIRED: blocker/session recovery required: {e}"
+            logger.warning("[%s] blocker dismiss failed before actions: %s", device.device_name, e)
+            await self._execute_final_capture(page, task, bmc_ip, file_base, output_dir, result)
+            return
 
         # Health check before actions
         if result.execution_status not in ("EXEC_FAILED",):
             hr = await check_bmc_page_health(page, "before_actions")
             if not hr.healthy:
-                result.execution_status = "EXEC_FAILED"
-                result.execution_failure_reason = (
-                    f"BMC_PAGE_HEALTH_FAILED [{hr.status}]: {hr.details}"
-                )
-                logger.error("[%s] actions前页面健康检查失败: %s", device.device_name, hr.status)
+                if await self._recover_page_health_once(
+                    page, target_url if raw_target else "", device, "before_actions", hr,
+                ):
+                    hr = await check_bmc_page_health(
+                        page, "before_actions", target_url=target_url if raw_target else "",
+                    )
+                if not hr.healthy:
+                    self._mark_health_failure(result, hr)
+                    logger.error("[%s] actions前页面健康检查失败: %s", device.device_name, hr.status)
+
+        if result.execution_status == "EXEC_FAILED":
+            logger.warning(
+                "[%s] page failed health before actions; skip business actions",
+                device.device_name,
+            )
+            await self._execute_final_capture(page, task, bmc_ip, file_base, output_dir, result)
+            return
 
         # --- Step 2: pre_capture_actions ---
         pre_actions = flow.get("pre_capture_actions", [])
         if pre_actions:
             await self._execute_pre_capture_actions(
                 page, pre_actions, device, output_dir, result,
+                target_url=target_url if raw_target else "",
             )
+
+        if result.execution_status == "EXEC_FAILED":
+            logger.warning(
+                "[%s] pre_capture failed with terminal status; skip ready/rules/checkpoints",
+                device.device_name,
+            )
+            await self._execute_final_capture(page, task, bmc_ip, file_base, output_dir, result)
+            return
 
         # --- Step 3: capture_ready_conditions ---
         ready_eval = await self._evaluate_capture_ready_conditions(page, task, device)
@@ -1112,17 +1461,31 @@ class BMCExecutor(AbstractExecutor):
                 result.ready_failure_reason = f"ready conditions failed: {ready_eval.summary()}"
 
         # --- Health check before final capture ---
-        if result.execution_status not in ("EXEC_FAILED",):
+        hr = await self._precheck_session_dialog(
+            page, "before_screenshot_dialog", device,
+        )
+        if hr.healthy and result.execution_status not in ("EXEC_FAILED",):
             hr = await check_bmc_page_health(page, "before_screenshot", target_url=target_url if raw_target else "")
             if not hr.healthy:
-                result.execution_status = "EXEC_FAILED"
-                result.execution_failure_reason = (
-                    f"BMC_PAGE_HEALTH_FAILED [{hr.status}]: {hr.details}"
-                )
-                logger.error("[%s] 截图前页面健康检查失败: %s", device.device_name, hr.status)
+                if await self._recover_page_health_once(
+                    page, target_url if raw_target else "", device, "before_screenshot", hr,
+                ):
+                    hr = await check_bmc_page_health(
+                        page, "before_screenshot", target_url=target_url if raw_target else "",
+                    )
+        if not hr.healthy:
+            self._mark_health_failure(result, hr)
+            logger.error("[%s] 截图前页面健康检查失败: %s", device.device_name, hr.status)
 
         # --- Step 4: final_capture (always runs if page is alive) ---
         await self._execute_final_capture(page, task, bmc_ip, file_base, output_dir, result)
+
+        if result.execution_status == "EXEC_FAILED":
+            logger.warning(
+                "[%s] final capture kept for debug; skip rules/checkpoints after terminal failure",
+                device.device_name,
+            )
+            return
 
         # --- Step 5: rules ---
         await self._evaluate_rules(page, task, device, output_dir, result)
@@ -1130,7 +1493,15 @@ class BMCExecutor(AbstractExecutor):
         # --- Step 6: evidence_checkpoints ---
         await self._evaluate_checkpoints(page, task, output_dir, result)
 
-    async def _execute_pre_capture_actions(self, page, actions: list, device, output_dir: str, result: ExecutionResult) -> None:
+    async def _execute_pre_capture_actions(
+        self,
+        page,
+        actions: list,
+        device,
+        output_dir: str,
+        result: ExecutionResult,
+        target_url: str = "",
+    ) -> None:
         """Execute pre_capture_actions: click/fill/press/wait/wait_for_selector.
 
         - required=True action failure → stop subsequent actions, set EXEC_PARTIAL
@@ -1140,60 +1511,129 @@ class BMCExecutor(AbstractExecutor):
         for i, action in enumerate(actions):
             action_type = action.get("action") or action.get("type", "")
             selector = action.get("selector", "")
-            value = action.get("value", "")
-            timeout_ms = int(action.get("timeout_ms") or action.get("timeout") or 5000)
             required = action.get("required", True)
             description = action.get("description", "")
 
+            pre_hr = await self._precheck_session_dialog(
+                page, f"pre_action_{i}_precheck", device,
+            )
+            if not pre_hr.healthy:
+                self._mark_health_failure(result, pre_hr)
+                result.ready_status = "READY_NOT_READY"
+                result.ready_failure_reason = (
+                    f"session/dialog failure before pre_capture step {i}: {pre_hr.status}"
+                )
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name=f"pre_{action_type}",
+                    status="FAILED",
+                    details=f"{description or action_type}: {pre_hr.details}",
+                ))
+                break
+
             try:
-                if action_type == "click":
-                    await page.locator(selector).first.click(timeout=timeout_ms)
-                elif action_type == "fill":
-                    await page.locator(selector).first.fill(value, timeout=timeout_ms)
-                elif action_type == "press":
-                    await page.locator(selector).first.press(value)
-                elif action_type == "wait_for_selector":
-                    await page.locator(selector).first.wait_for(timeout=timeout_ms)
-                elif action_type in ("wait", "sleep"):
-                    await asyncio.sleep(float(value) if value else 1.0)
-                elif action_type == "intermediate_screenshot":
-                    # Action-level screenshot: policy-controlled
-                    if self._screenshot_policy in ("all", "checkpoints"):
-                        ss_path = safe_join_under_root(output_dir, f"intermediate_{i:02d}.png")
-                        await page.screenshot(path=ss_path, full_page=True)
-                        logger.debug("[%s] intermediate screenshot saved (policy=%s): %s",
-                                   device.device_name, self._screenshot_policy, ss_path)
-                    else:
-                        logger.debug("[%s] intermediate screenshot skipped (policy=%s)", device.device_name,
-                                   self._screenshot_policy)
-                elif action_type == "goto":
-                    pass  # Already handled as target_url in _run_capture_flow
-                else:
-                    logger.warning("[%s] Unknown pre_capture action: %s", device.device_name, action_type)
+                details = await self._execute_one_pre_capture_action(
+                    page, action, i, device, output_dir,
+                )
 
                 result.step_results.append(StepResult(
                     step_index=len(result.step_results),
                     step_name=f"pre_{action_type}",
                     status="SUCCESS",
-                    details=description or f"{action_type} {selector}".strip(),
+                    details=details,
                 ))
 
             except Exception as e:
+                first_error = e
+                dialog_error = self._dialog_health_from_action_error(
+                    f"pre_action_{i}_intercept", e,
+                )
+                if dialog_error is None:
+                    detected_after_error = await self._precheck_session_dialog(
+                        page, f"pre_action_{i}_after_error", device,
+                    )
+                    if not detected_after_error.healthy:
+                        dialog_error = detected_after_error
+                if dialog_error is not None:
+                    logger.warning(
+                        "[%s] pre_capture action[%d] '%s' failed by session/dialog: %s",
+                        device.device_name, i, action_type,
+                        redact_sensitive_text(dialog_error.details[:200]),
+                    )
+                    self._mark_health_failure(result, dialog_error)
+                    result.ready_status = "READY_NOT_READY"
+                    result.ready_failure_reason = (
+                        f"session/dialog failure at step {i}: "
+                        f"{action_type} {selector}: {dialog_error.status}"
+                    )
+                    result.step_results.append(StepResult(
+                        step_index=len(result.step_results),
+                        step_name=f"pre_{action_type}",
+                        status="FAILED",
+                        details=f"{description or action_type}: {dialog_error.details}",
+                    ))
+                    break
+
+                logger.warning(
+                    "[%s] pre_capture action[%d] '%s' failed: %s; recovering and retrying once",
+                    device.device_name, i, action_type, e,
+                )
+
+                retry_error = None
+                try:
+                    await self._dismiss_all_blockers(page)
+                    hr = await self._check_and_recover_page_health(
+                        page, target_url, device, f"pre_action_{i}_recover",
+                    )
+                    if not hr.healthy:
+                        if is_session_recoverable_status(hr.status or ""):
+                            self._mark_health_failure(result, hr)
+                            result.step_results.append(StepResult(
+                                step_index=len(result.step_results),
+                                step_name=f"pre_{action_type}",
+                                status="FAILED",
+                                details=f"{description or action_type}: {first_error}; health={hr.status}",
+                            ))
+                            break
+                        retry_error = RuntimeError(
+                            f"BMC_PAGE_HEALTH_FAILED [{hr.status}]: {hr.details}"
+                        )
+                    else:
+                        details = await self._execute_one_pre_capture_action(
+                            page, action, i, device, output_dir,
+                        )
+                        result.step_results.append(StepResult(
+                            step_index=len(result.step_results),
+                            step_name=f"pre_{action_type}",
+                            status="SUCCESS",
+                            details=(details or description or action_type) + " (after recovery)",
+                        ))
+                        continue
+                except Exception as recover_error:
+                    retry_error = recover_error
+
+                final_error = retry_error or first_error
                 result.step_results.append(StepResult(
                     step_index=len(result.step_results),
                     step_name=f"pre_{action_type}",
                     status="FAILED",
-                    details=f"{description or action_type}: {e}",
+                    details=f"{description or action_type}: {final_error}",
                 ))
-                logger.warning("[%s] pre_capture action[%d] '%s' failed: %s",
-                               device.device_name, i, action_type, e)
+                logger.warning(
+                    "[%s] pre_capture action[%d] '%s' failed after recovery: %s",
+                    device.device_name, i, action_type, final_error,
+                )
 
                 if required:
-                    result.execution_status = "EXEC_PARTIAL"
+                    if "BMC_SESSION" in str(final_error) or "BMC_PAGE_HEALTH_FAILED [BMC_SESSION" in str(final_error):
+                        result.execution_status = "EXEC_FAILED"
+                        result.execution_failure_reason = str(final_error)
+                    else:
+                        result.execution_status = "EXEC_PARTIAL"
                     result.ready_status = "READY_NOT_READY"
                     result.ready_failure_reason = (
                         f"required action failed at step {i}: "
-                        f"{action_type} {selector}: {e}"
+                        f"{action_type} {selector}: {final_error}"
                     )
                     # Stop subsequent actions, but continue to final_capture
                     break
@@ -1252,6 +1692,11 @@ class BMCExecutor(AbstractExecutor):
 
         errors = []
         artifact_profile = self._resolve_artifact_profile(task)
+        evidence_step_status = (
+            "SUCCESS"
+            if result.execution_status not in ("EXEC_FAILED", "EXEC_ERROR", "EXEC_TIMEOUT", "EXEC_PARTIAL")
+            else "FAILURE_EVIDENCE"
+        )
 
         # html/ subdirectory for non-visual evidence
         html_dir = safe_join_under_root(output_dir, "html")
@@ -1268,7 +1713,7 @@ class BMCExecutor(AbstractExecutor):
             result.step_results.append(StepResult(
                 step_index=len(result.step_results),
                 step_name="final_screenshot",
-                status="SUCCESS",
+                status=evidence_step_status,
                 screenshot=ss_path,
             ))
         except Exception as e:
@@ -1288,7 +1733,7 @@ class BMCExecutor(AbstractExecutor):
             result.step_results.append(StepResult(
                 step_index=len(result.step_results),
                 step_name="final_save_html",
-                status="SUCCESS",
+                status=evidence_step_status,
             ))
         except Exception as e:
             errors.append(f"html: {e}")
@@ -1313,7 +1758,7 @@ class BMCExecutor(AbstractExecutor):
             result.step_results.append(StepResult(
                 step_index=len(result.step_results),
                 step_name="evidence_summary",
-                status="SUCCESS",
+                status=evidence_step_status,
                 details=(
                     f"profile=fast png={ss_path} html={getattr(result, 'html_file', '')} "
                     "state_json=skipped mhtml=skipped state_mirror=skipped"
@@ -1340,7 +1785,7 @@ class BMCExecutor(AbstractExecutor):
             result.step_results.append(StepResult(
                 step_index=len(result.step_results),
                 step_name="final_save_evidence_html",
-                status="SUCCESS",
+                status=evidence_step_status,
                 details=evidence_path,
             ))
         except Exception as e:
@@ -1617,7 +2062,7 @@ class BMCExecutor(AbstractExecutor):
         result.step_results.append(StepResult(
             step_index=len(result.step_results),
             step_name="evidence_summary",
-            status="SUCCESS",
+            status=evidence_step_status,
             details=(
                 f"png={ss_path} html={getattr(result, 'html_file', '')} "
                 f"state_json={state_json_path} mhtml={'ok' if mhtml_ok else 'failed'} "

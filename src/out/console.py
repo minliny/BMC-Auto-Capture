@@ -48,6 +48,11 @@ def start(protocol: str, device_group: str = "", device: str = "", task: str = "
 def done(idx: int, total: int, status: str, device_group: str = "", device: str = "", task: str = "", reason: str = ""):
     """Print task completion. status: OK/FAIL/SKIP/ERR"""
     dg = device_group or "-"
+    display_idx = idx
+    attempts_note = ""
+    if total > 0 and idx > total:
+        display_idx = total
+        attempts_note = f" attempts={idx}"
     if status == "OK":
         level = _color(_GREEN, "[ OK ]")
     elif status in ("FAIL", "ERR"):
@@ -55,7 +60,7 @@ def done(idx: int, total: int, status: str, device_group: str = "", device: str 
     else:
         level = _color(_YELLOW, f"[{status}]")
     r = f"  [{reason[:50]}]" if reason else ""
-    print(f"  {level} [{idx:>4}/{total}] [{dg}] {device}  {task}{r}", flush=True)
+    print(f"  {level} [{display_idx:>4}/{total}] [{dg}] {device}  {task}{attempts_note}{r}", flush=True)
 
 
 def progress_event(protocol: str, device_group: str = "", device: str = "", task: str = "", event: str = ""):

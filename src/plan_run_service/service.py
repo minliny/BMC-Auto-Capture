@@ -922,47 +922,157 @@ class PlanRunService:
             from ..job_runner_adapter import RealRunnerAdapter
             runner = RealRunnerAdapter(output_root=run.output_root or "./output_api_direct")
 
-        # Execute each item serially. Every status transition is reported.
-        for item in run.items:
-            item.status = "IN_PROGRESS"
-            item.started_at = time.time()
-            item.add_info_event("INFO", f"PlanItem started: device={item.device_name} task={item.task_name}")
-            self._persist_run(run)
-            self._deliver_item_status(run, item, cb)
-
-            # Lock
-            if item.lock_uri:
-                if not self._lock_mgr.acquire(item.lock_uri, f"{run.plan_id}:{item.device_name}:{item.task_name}"):
-                    item.status = "FAILED"
-                    item.error_message = f"LOCK_CONFLICT: {item.lock_uri}"
-                    item.finished_at = time.time()
-                    item.add_info_event("ERROR", f"Lock conflict: {item.lock_uri}")
-                    self._persist_run(run)
-                    self._deliver_item_status(run, item, cb)
+        # Execute in plan order.  Consecutive same-endpoint BMC items can share
+        # one login/session; all other items keep the legacy one-by-one path.
+        item_index = 0
+        while item_index < len(run.items):
+            item = run.items[item_index]
+            if is_real and self._is_bmc_item(item):
+                group = self._collect_bmc_session_group(run.items, item_index)
+                if len(group) > 1:
+                    self._execute_real_bmc_group(run, group, runner, cb)
+                    item_index += len(group)
                     continue
 
-            try:
-                if is_real:
-                    self._execute_real(item, runner)
-                else:
-                    self._execute_fake(item)
-            finally:
-                if item.lock_uri:
-                    self._lock_mgr.release(item.lock_uri, f"{run.plan_id}:{item.device_name}:{item.task_name}")
-
-            item.finished_at = time.time()
-            if item.status == "SUCCESS":
-                item.add_info_event("INFO", f"PlanItem completed: status={item.status}")
-            else:
-                item.add_info_event("ERROR", f"PlanItem failed: status={item.status} error={item.error_message}")
-            self._persist_run(run)
-            self._deliver_item_status(run, item, cb)
+            self._execute_run_item(run, item, cb, is_real=is_real, runner=runner)
+            item_index += 1
 
         run.finished_at = time.time()
         run.status = "COMPLETED"
         self._write_plan_result_reports(run)
         self._persist_run(run)
         self._deliver_plan_summary(run, cb)
+
+    def _execute_run_item(
+        self, run: PlanRun, item: PlanRunItem, cb: PlanItemStatusCallbackClient,
+        is_real: bool, runner: Any,
+    ) -> None:
+        self._mark_item_started(run, item, cb)
+        owner = self._lock_owner(run, item)
+
+        if item.lock_uri:
+            if not self._lock_mgr.acquire(item.lock_uri, owner):
+                item.status = "FAILED"
+                item.error_message = f"LOCK_CONFLICT: {item.lock_uri}"
+                item.add_info_event("ERROR", f"Lock conflict: {item.lock_uri}")
+                self._mark_item_finished(run, item, cb)
+                return
+
+        try:
+            if is_real:
+                self._execute_real(item, runner)
+            else:
+                self._execute_fake(item)
+        finally:
+            if item.lock_uri:
+                self._lock_mgr.release(item.lock_uri, owner)
+
+        self._mark_item_finished(run, item, cb)
+
+    def _mark_item_started(
+        self, run: PlanRun, item: PlanRunItem, cb: PlanItemStatusCallbackClient,
+    ) -> None:
+        item.status = "IN_PROGRESS"
+        item.started_at = time.time()
+        item.add_info_event("INFO", f"PlanItem started: device={item.device_name} task={item.task_name}")
+        self._persist_run(run)
+        self._deliver_item_status(run, item, cb)
+
+    def _mark_item_finished(
+        self, run: PlanRun, item: PlanRunItem, cb: PlanItemStatusCallbackClient,
+    ) -> None:
+        item.finished_at = time.time()
+        if item.status == "SUCCESS":
+            item.add_info_event("INFO", f"PlanItem completed: status={item.status}")
+        else:
+            item.add_info_event("ERROR", f"PlanItem failed: status={item.status} error={item.error_message}")
+        self._persist_run(run)
+        self._deliver_item_status(run, item, cb)
+
+    def _lock_owner(self, run: PlanRun, item: PlanRunItem) -> str:
+        return f"{run.plan_id}:{item.device_name}:{item.task_name}"
+
+    def _is_bmc_item(self, item: PlanRunItem) -> bool:
+        task_type = (item.task_type or "").upper()
+        exec_mode = (item.execution_mode or "").upper()
+        return task_type == "BMC" or exec_mode in ("BMC_URL", "BMC_ACTIONS")
+
+    def _bmc_endpoint_key(self, item: PlanRunItem) -> str:
+        if not self._is_bmc_item(item) or item._device is None or item._task is None:
+            return ""
+        try:
+            from ..models.task_plan import TaskPlan
+            return TaskPlan(device=item._device, task=item._task).endpoint_key
+        except Exception:
+            if item.lock_uri:
+                return item.lock_uri
+            bmc_ip = getattr(item._device, "bmc_ip", "") or ""
+            return f"BMC:{bmc_ip}:443" if bmc_ip else ""
+
+    def _collect_bmc_session_group(
+        self, items: list[PlanRunItem], start_index: int,
+    ) -> list[PlanRunItem]:
+        first = items[start_index]
+        endpoint_key = self._bmc_endpoint_key(first)
+        if not endpoint_key:
+            return [first]
+
+        group: list[PlanRunItem] = []
+        idx = start_index
+        while idx < len(items):
+            item = items[idx]
+            if not self._is_bmc_item(item):
+                break
+            if self._bmc_endpoint_key(item) != endpoint_key:
+                break
+            group.append(item)
+            idx += 1
+        return group
+
+    def _execute_real_bmc_group(
+        self, run: PlanRun, items: list[PlanRunItem], runner: Any,
+        cb: PlanItemStatusCallbackClient,
+    ) -> None:
+        for item in items:
+            self._mark_item_started(run, item, cb)
+
+        owner = f"{run.plan_id}:bmc-session:{self._bmc_endpoint_key(items[0])}"
+        acquired_locks: list[str] = []
+        for lock_uri in dict.fromkeys(item.lock_uri for item in items if item.lock_uri):
+            if not self._lock_mgr.acquire(lock_uri, owner):
+                for item in items:
+                    item.status = "FAILED"
+                    item.error_message = f"LOCK_CONFLICT: {lock_uri}"
+                    item.add_info_event("ERROR", f"Lock conflict: {lock_uri}")
+                for held in reversed(acquired_locks):
+                    self._lock_mgr.release(held, owner)
+                for item in items:
+                    self._mark_item_finished(run, item, cb)
+                return
+            acquired_locks.append(lock_uri)
+
+        try:
+            payloads = [self._build_job_payload(item) for item in items]
+            results = runner.run_bmc_session_group(payloads)
+        except Exception as exc:
+            for item in items:
+                item.status = "FAILED"
+                item.error_message = f"RUNNER_CRASH: {exc}"
+                item.add_info_event("ERROR", item.error_message)
+        else:
+            for idx, item in enumerate(items):
+                if idx >= len(results):
+                    item.status = "FAILED"
+                    item.error_message = "RUNNER_RESULT_MISSING"
+                    item.add_info_event("ERROR", item.error_message)
+                    continue
+                self._apply_real_result(item, results[idx])
+        finally:
+            for lock_uri in reversed(acquired_locks):
+                self._lock_mgr.release(lock_uri, owner)
+
+        for item in items:
+            self._mark_item_finished(run, item, cb)
 
     def _build_callback_body(self, run: PlanRun, item: PlanRunItem) -> dict[str, Any]:
         started_at_iso = (
@@ -1153,6 +1263,9 @@ class PlanRunService:
             item.add_info_event("ERROR", item.error_message)
             return
 
+        self._apply_real_result(item, result)
+
+    def _apply_real_result(self, item: PlanRunItem, result: Any) -> None:
         if result.status == "SUCCEEDED":
             item.status = "SUCCESS"
             item.error_message = None
@@ -1260,6 +1373,11 @@ class PlanRunService:
             task_snapshot["no_split"] = True
 
         return {
+            "job_id": (
+                f"{item.plan_id}:{item.device_group}:"
+                f"{item.device_name}:{item.task_name}:"
+                f"{task_snapshot.get('sequence', 0)}"
+            ),
             "device_snapshot": device_snapshot,
             "task_snapshot": task_snapshot,
         }
