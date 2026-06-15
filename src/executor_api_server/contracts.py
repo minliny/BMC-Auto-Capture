@@ -13,13 +13,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from src._version import APP_VERSION
+
 
 # ---------------------------------------------------------------------------
 # Contract index
 # ---------------------------------------------------------------------------
 
 CONTRACT_INDEX: dict[str, Any] = {
-    "version": "0.2.4",
+    "version": APP_VERSION,
     "description": "Executor API contract index — read-only, no side effects",
     "contracts": [
         {

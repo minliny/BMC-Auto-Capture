@@ -98,6 +98,15 @@ output/20260608_120000/
 
 ## CLI 命令行
 
+源码 checkout 或 pip 安装形态建议使用正式包名入口：
+
+```bash
+python -m bmc_auto_capture --help
+bmc-auto-capture --help
+```
+
+Windows release 包继续使用内置引擎入口：
+
 ```cmd
 :: 顺序执行
 bmc-engine.exe --app-dir app --excel tasks.xlsx --mode sequential

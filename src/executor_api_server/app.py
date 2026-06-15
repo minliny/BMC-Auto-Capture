@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
+from src._version import APP_VERSION
 from .schemas import (
     JobDispatchRequest, JobAcceptResponse, JobStatusResponse, ExecutorStatusResponse,
     PlanRunCallbackConfig, PlanRunRequest, ExternalPlanRequest,
@@ -46,7 +47,7 @@ def create_app(
     debug_callback_receiver: bool = False,  # Enable built-in debug callback receiver
     managed_config_dir: str | None = None,  # Dir for uploaded Excel files
 ) -> FastAPI:
-    app = FastAPI(title="BMC Auto-Capture Executor API v0.2", version="0.2.4")
+    app = FastAPI(title="BMC Auto-Capture Executor API v0.2", version=APP_VERSION)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                        allow_methods=["*"], allow_headers=["*"])
 
@@ -161,7 +162,7 @@ def _register_legacy_routes(app: FastAPI):
         info = {
             "name": "bmc-auto-capture",
             "mode": "executor-api",
-            "version": "0.2.4",
+            "version": APP_VERSION,
             "status": "ok",
             "legacyCompatible": True,
         }

@@ -10,7 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest
 
 from src.plan_run_service.service import PlanRunService, _set_latest_excel, _get_latest_excel, _excel_store, _store_lock
-from src.plan_item_status_callback_client import PlanItemStatusCallbackClient, FakeCallbackTransport, HttpCallbackTransport
+from src.plan_item_status_callback_client import (
+    FakeCallbackTransport,
+    HttpCallbackTransport,
+    PlanItemStatusCallbackClient,
+    validate_callback_url,
+)
 
 EXCEL_FILE = str(Path(__file__).parent.parent / "examples" / "task_template.xlsx")
 
@@ -899,6 +904,47 @@ class TestBatchModeIntegration:
         assert (output_root / "final_result.csv").is_file()
         assert (output_root / "execution_summary.json").is_file()
 
+    def test_plan_run_reports_use_injected_result_writer(self, tmp_path):
+        from src.plan_run_service.service import PlanRun, PlanRunItem
+
+        class RecordingResultWriter:
+            def __init__(self):
+                self.calls = []
+
+            def write(self, results, output_dir, **kwargs):
+                self.calls.append((results, output_dir, kwargs))
+                return {"total": len(results)}
+
+        writer = RecordingResultWriter()
+        svc = PlanRunService(workspace_root=str(tmp_path), result_writer=writer)
+        run = PlanRun(
+            plan_id="p-writer",
+            run_id="run-writer",
+            output_root=str(tmp_path / "outputs" / "p-writer"),
+            started_at=10.0,
+            items=[
+                PlanRunItem(
+                    plan_id="p-writer",
+                    device_group="A3",
+                    device_name="D1",
+                    task_name="T1",
+                    status="SUCCESS",
+                    started_at=11.0,
+                    finished_at=12.0,
+                )
+            ],
+        )
+
+        svc._write_plan_result_reports(run)
+
+        assert len(writer.calls) == 1
+        results, output_dir, kwargs = writer.calls[0]
+        assert output_dir == run.output_root
+        assert results[0].execution_status == "EXEC_SUCCESS"
+        assert kwargs["execution_started_at"] == run.started_at
+        assert kwargs["execution_id"] == run.run_id
+        assert kwargs["emit_terminal_summary"] is False
+
     def test_external_plan_default_batch_mode(self):
         svc = PlanRunService()
         svc.set_latest_excel(EXCEL_FILE)
@@ -1284,6 +1330,39 @@ class _FakeResponse:
 # ===========================================================================
 
 
+class TestCallbackUrlValidation:
+    def test_intranet_callback_urls_are_allowed(self):
+        for url in (
+            "http://10.0.0.1/api/plans/items/status",
+            "http://127.0.0.1:18080/callback",
+            "http://192.168.1.10/callback",
+            "http://172.16.0.5:6003/api/plans/items/status",
+        ):
+            ok, reason = validate_callback_url(url)
+            assert ok is True, f"{url} rejected as {reason}"
+            assert reason == ""
+
+    def test_callback_url_basic_validation_still_rejects_bad_urls(self):
+        cases = {
+            "ftp://callback.local/status": "CALLBACK_INVALID_SCHEME",
+            "http://user:pass@callback.local/status": "CALLBACK_USERINFO_FORBIDDEN",
+            "http:///missing-host": "CALLBACK_HOST_REQUIRED",
+            "http://[::1": "CALLBACK_INVALID_URL",
+        }
+        for url, expected_reason in cases.items():
+            ok, reason = validate_callback_url(url)
+            assert ok is False
+            assert reason == expected_reason
+
+    def test_contract_does_not_document_private_ip_blocking(self):
+        from src.executor_api_server.contracts import PLAN_ITEM_STATUS_CALLBACK_CONTRACT
+
+        policy = PLAN_ITEM_STATUS_CALLBACK_CONTRACT["transportPreconditions"]["urlPolicy"]
+        assert "CALLBACK_PRIVATE_IP_FORBIDDEN" not in policy
+        assert "EXECUTOR_CALLBACK_ALLOWED_HOSTS" not in policy
+        assert "Private/link-local literal IPs require" not in policy
+
+
 class TestCallbackUrlResolution:
     """Tests for _resolve_callback_url priority chain."""
 
@@ -1298,7 +1377,6 @@ class TestCallbackUrlResolution:
 
         monkeypatch.setattr("urllib.request.urlopen", FakeRegistryHandler().urlopen)
         monkeypatch.setenv("EXECUTOR_MASTER_REGISTRY_URL", "http://reg/test")
-        monkeypatch.setenv("EXECUTOR_CALLBACK_ALLOWED_HOSTS", "10.0.99.1")
 
         svc = PlanRunService()
         svc.set_latest_excel(EXCEL_FILE)

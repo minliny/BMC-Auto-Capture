@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse
 import sys
 
+from src._version import APP_DESCRIPTION
 
-_DESCRIPTION = "BMC Auto-Capture v0.2.4 — BMC/SSH 自动化测试证据采集平台"
+
+_DESCRIPTION = APP_DESCRIPTION
 
 _EPILOG = """
 Examples:

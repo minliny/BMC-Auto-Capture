@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import threading
 import time
 from pathlib import Path
@@ -28,8 +27,8 @@ from .connectivity.route_guard import RouteGuard
 from .executor.ssh_executor import SSHExecutor
 from .executor.bmc_executor import BMCExecutor
 from .executor.browser_manager import BrowserManager
-from .out.collector import write_result_csv, write_final_result_csv, compute_summary
-from .out.summary import build_pivot_csv, print_terminal_summary, write_failure_csv
+from .out.result_writer import ResultWriter
+from .run_session import RunSession
 
 logger = logging.getLogger("bmc_auto_capture.app")
 
@@ -68,6 +67,7 @@ class App:
         self._stop_triggered_by = ""
         self._stopped_at = 0.0
         self._affected_pending_count = 0
+        self._result_writer = ResultWriter()
 
     # ------------------------------------------------------------------
     # Public API
@@ -93,15 +93,8 @@ class App:
         excel_path = Path(excel_path)
 
         # 0. Set up timestamped output root to avoid cross-run overwrites
-        run_ts = time.strftime("%Y%m%d_%H%M%S")
-        # P1-4: strip previous timestamp suffix if present to avoid nested dirs
-        base_root = str(self.config.output_root)
-        # Check if output_root already ends with a timestamp (from previous run)
-        # Pattern: YYYYMMDD_HHMMSS
-        if re.match(r'.*/\d{8}_\d{6}$', base_root):
-            base_root = str(Path(base_root).parent)
-            self.config.output_root = base_root
-        self.config.output_root = str(Path(self.config.output_root) / run_ts)
+        session = RunSession.start(self.config.output_root)
+        self.config.output_root = session.output_root
         logger.info("输出目录:  %s", self.config.output_root)
 
         # 1. Load
@@ -178,40 +171,11 @@ class App:
 
         # 8. Collect — with fallback if output dir is not writable
         output_dir = self._ensure_writable_output_dir()
-
-        write_result_csv(self._results, str(output_dir))
-        write_final_result_csv(self._results, str(output_dir))
-
-        try:
-            build_pivot_csv(self._results, str(output_dir))
-        except Exception as e:
-            logger.warning("Failed to build pivot table: %s", e)
-
-        try:
-            write_failure_csv(self._results, str(output_dir))
-        except Exception as e:
-            logger.warning("Failed to write connectivity summary: %s", e)
-
-        # Timing reports
-        try:
-            from .out.timing import write_all_timing_reports
-            write_all_timing_reports(
-                self._results, str(output_dir),
-                stop_metadata=self._stop_metadata(),
-            )
-        except Exception as e:
-            logger.warning("Failed to write timing reports: %s", e)
-
-        # Evidence audit
-        try:
-            from .out.evidence_audit import write_evidence_audit_csv
-            write_evidence_audit_csv(self._results, str(output_dir))
-        except Exception as e:
-            logger.warning("Failed to write evidence audit: %s", e)
-
-        summary = compute_summary(self._results)
-        logger.info("汇总:  %s", summary)
-        print_terminal_summary(self._results)
+        self._result_writer.write(
+            self._results,
+            str(output_dir),
+            stop_metadata=self._stop_metadata(),
+        )
 
         return self._results
 
@@ -566,15 +530,9 @@ class App:
         self._stop_reason = "scheduler_stop"
         self._clear_stop_metadata()
 
-        # Set up timestamped output root
-        run_ts = time.strftime("%Y%m%d_%H%M%S")
-        # AUDIT-003: strip previous timestamp suffix if present to avoid nested dirs
-        base_root = str(self.config.output_root)
-        if re.match(r'.*/\d{8}_\d{6}$', base_root):
-            base_root = str(Path(base_root).parent)
-            self.config.output_root = base_root
-        execution_started_at = time.time()
-        self.config.output_root = str(Path(self.config.output_root) / run_ts)
+        session = RunSession.start(self.config.output_root)
+        execution_started_at = session.started_at
+        self.config.output_root = session.output_root
         logger.info("输出目录 (in-memory):  %s", self.config.output_root)
 
         self.event_bus.emit("plans_generated", count=len(plans))
@@ -633,40 +591,11 @@ class App:
 
         # Collect
         output_dir = self._ensure_writable_output_dir()
-
-        write_result_csv(self._results, str(output_dir))
-        write_final_result_csv(self._results, str(output_dir))
-
-        try:
-            build_pivot_csv(self._results, str(output_dir))
-        except Exception as e:
-            logger.warning("Failed to build pivot table: %s", e)
-
-        try:
-            write_failure_csv(self._results, str(output_dir))
-        except Exception as e:
-            logger.warning("Failed to write connectivity summary: %s", e)
-
-        # Timing reports
-        try:
-            from .out.timing import write_all_timing_reports
-            write_all_timing_reports(
-                self._results, str(output_dir),
-                execution_started_at=execution_started_at,
-                stop_metadata=self._stop_metadata(),
-            )
-        except Exception as e:
-            logger.warning("Failed to write timing reports: %s", e)
-
-        # Evidence audit
-        try:
-            from .out.evidence_audit import write_evidence_audit_csv
-            write_evidence_audit_csv(self._results, str(output_dir))
-        except Exception as e:
-            logger.warning("Failed to write evidence audit: %s", e)
-
-        summary = compute_summary(self._results)
-        logger.info("汇总:  %s", summary)
-        print_terminal_summary(self._results)
+        self._result_writer.write(
+            self._results,
+            str(output_dir),
+            execution_started_at=execution_started_at,
+            stop_metadata=self._stop_metadata(),
+        )
 
         return self._results

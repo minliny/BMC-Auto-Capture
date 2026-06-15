@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src._version import APP_VERSION, APP_VERSION_LABEL
+
 from .routes import router
 
 logger = logging.getLogger("bmc_auto_capture.api")
@@ -22,9 +24,9 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     _app = FastAPI(
-        title="BMC Auto-Capture v0.2.1",
+        title=f"BMC Auto-Capture {APP_VERSION_LABEL}",
         description="智算项目 BMC/SSH 自动化测试证据采集平台 API",
-        version="0.2.1",
+        version=APP_VERSION,
         lifespan=lifespan,
     )
 

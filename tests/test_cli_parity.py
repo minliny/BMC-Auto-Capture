@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from src._version import APP_VERSION, APP_VERSION_LABEL
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -24,6 +26,7 @@ RUNTIME_SERVER_IMPORTS = [
 ]
 
 RUNTIME_COLLECT_SUBMODULE_PACKAGES = [
+    "playwright",
     "fastapi",
     "starlette",
     "uvicorn",
@@ -55,6 +58,16 @@ def _source_help() -> str:
         [sys.executable, str(PROJECT_ROOT / "run.py"), "--help"],
         capture_output=True, text=True, cwd=str(PROJECT_ROOT),
     )
+    return result.stdout + result.stderr
+
+
+def _module_help() -> str:
+    """Capture python -m bmc_auto_capture --help output."""
+    result = subprocess.run(
+        [sys.executable, "-m", "bmc_auto_capture", "--help"],
+        capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+    )
+    assert result.returncode == 0
     return result.stdout + result.stderr
 
 
@@ -197,11 +210,113 @@ def test_run_py_help_has_all_flags():
 
 
 def test_run_py_help_version_string():
-    """python run.py --help must show v0.2.4."""
+    """python run.py --help must show the canonical app version."""
     help_text = _source_help()
-    assert "v0.2.4" in help_text or "0.2.4" in help_text, (
+    assert APP_VERSION_LABEL in help_text or APP_VERSION in help_text, (
         "Version string missing in python run.py --help"
     )
+
+
+def test_public_module_help_matches_run_py_flags():
+    """python -m bmc_auto_capture --help must expose the canonical CLI flags."""
+    help_text = _module_help()
+    missing = [flag for flag in REQUIRED_FLAGS if flag not in help_text]
+    assert not missing, f"Missing flags in python -m bmc_auto_capture --help: {missing}"
+    assert APP_VERSION_LABEL in help_text or APP_VERSION in help_text
+
+
+def test_run_py_server_help_uses_shared_server_parser():
+    """python run.py --server --help must print server help and not start uvicorn."""
+    result = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "run.py"), "--server", "--help"],
+        capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=10,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0
+    assert f"Executor API Server {APP_VERSION_LABEL}" in output
+    assert "--callback-timeout" in output
+    assert "--enable-debug-callback-receiver" in output
+
+
+def test_run_py_server_real_requires_enable_returns_nonzero():
+    """run.py must propagate server startup validation failures as process errors."""
+    result = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "run.py"), "--server", "--runner", "real"],
+        capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=10,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 2
+    assert "--runner real requires --enable-real-runner" in output
+
+
+def test_pyproject_declares_public_console_script_and_packages():
+    """Package metadata must expose the official public CLI name."""
+    text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "[project.scripts]" in text
+    assert 'bmc-auto-capture = "bmc_auto_capture.cli.main:main"' in text
+    assert '"bmc_auto_capture.*"' in text
+    assert '"src.*"' in text
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="pyproject.toml declares requires-python >=3.11",
+)
+def test_install_package_entrypoints_smoke(tmp_path):
+    """Installed package must support module and console-script help."""
+    venv_dir = tmp_path / "venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(venv_dir)],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+    py = venv_dir / ("Scripts/python.exe" if sys.platform.startswith("win") else "bin/python")
+    script = venv_dir / ("Scripts/bmc-auto-capture.exe" if sys.platform.startswith("win") else "bin/bmc-auto-capture")
+
+    bootstrap = subprocess.run(
+        [
+            str(py), "-m", "pip", "install", "--upgrade",
+            "setuptools>=68", "wheel",
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    if bootstrap.returncode != 0:
+        pytest.skip("local offline build tools do not satisfy setuptools>=68 and wheel")
+
+    wheel_check = subprocess.run(
+        [
+            str(py), "-c",
+            (
+                "import setuptools, wheel\n"
+                "parts = tuple(int(p) for p in setuptools.__version__.split('.')[:2])\n"
+                "raise SystemExit(0 if parts >= (68, 0) else 1)\n"
+            ),
+        ],
+        capture_output=True, text=True, timeout=10,
+    )
+    if wheel_check.returncode != 0:
+        pytest.skip("local offline build tools do not satisfy setuptools>=68 and wheel")
+
+    subprocess.run(
+        [
+            str(py), "-m", "pip", "install", "--no-deps", "--no-build-isolation",
+            str(PROJECT_ROOT),
+        ],
+        check=True, capture_output=True, text=True, timeout=120,
+    )
+
+    module_result = subprocess.run(
+        [str(py), "-m", "bmc_auto_capture", "--help"],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert module_result.returncode == 0
+    assert "--preflight-auth" in (module_result.stdout + module_result.stderr)
+
+    script_result = subprocess.run(
+        [str(script), "--help"],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert script_result.returncode == 0
+    assert "--preflight-auth" in (script_result.stdout + script_result.stderr)
 
 
 # ── Test: frozen exe --help parity (if exe exists) ─────────

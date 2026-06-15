@@ -24,6 +24,7 @@ from ..server_callback_client import (
     FakeCallbackTransport,
     HttpCallbackTransport,
 )
+from .._version import APP_VERSION
 from ..api_models.lock_uri import derive_lock_uri, LockUriDerivationError
 from ..plan_item_status_callback_client import validate_callback_url
 
@@ -320,7 +321,7 @@ class DirectDispatchService:
         return {
             "executor_id": self.executor_id,
             "status": "ONLINE",
-            "version": "0.2.4",
+            "version": APP_VERSION,
             "job_counts": counts,
             "total_jobs": len(self._store),
             "active_locks": len(lock_snap),

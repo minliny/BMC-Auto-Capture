@@ -10,7 +10,6 @@ Directory layout:
 
 from __future__ import annotations
 
-import argparse
 import importlib
 import logging
 import os
@@ -208,72 +207,8 @@ def main():
 
     # --- Server mode: Executor API (replaces legacy Network Boot API) ---
     if "--server" in sys.argv:
-        server_parser = argparse.ArgumentParser(add_help=False)
-        server_parser.add_argument("--server", action="store_true", default=True)
-        server_parser.add_argument("--app-dir", default=None)
-        server_parser.add_argument("--host", default="127.0.0.1")
-        server_parser.add_argument("--port", type=int, default=8080)
-        server_parser.add_argument("--log-level", default="info")
-        server_parser.add_argument("--runner", default="fake", choices=("fake","real"))
-        server_parser.add_argument("--callback-transport", default="fake", choices=("fake","http"))
-        server_parser.add_argument("--executor-id", default="exec-default")
-        server_parser.add_argument("--enable-real-runner", action="store_true",
-                                   help="Allow API requests to execute real BMC/SSH tasks")
-        server_parser.add_argument("--enable-debug-callback-receiver", action="store_true",
-                                   help="Enable built-in debug callback receiver at /debug/plan-item-statuses")
-        server_parser.add_argument("--legacy-network-boot", action="store_true",
-                                   help="Start legacy Network Boot API instead of Executor API")
-        server_args, _ = server_parser.parse_known_args()
-
-        # Legacy mode (explicit opt-in)
-        if server_args.legacy_network_boot:
-            start_minimal_server = _import_attr("api.boot", "start_minimal_server")
-            start_minimal_server(
-                host=server_args.host, port=server_args.port,
-                log_level=server_args.log_level, app_dir=str(initial_app_dir),
-            )
-            return 0
-
-        # New Executor API (default)
-        DirectDispatchService = _import_attr(
-            "src.executor_api_server.service", "DirectDispatchService",
-        )
-        create_app = _import_attr("src.executor_api_server.app", "create_app")
-        PlanRunService = _import_attr("src.plan_run_service", "PlanRunService")
-        import uvicorn
-
-        use_http = server_args.callback_transport == "http"
-        use_real = server_args.runner == "real"
-        if use_real and not server_args.enable_real_runner:
-            print("ERROR: --runner real requires --enable-real-runner", file=sys.stderr)
-            return 2
-
-        svc = DirectDispatchService(
-            executor_id=server_args.executor_id,
-            use_http_callback=use_http, runner_mode="real" if use_real else "fake",
-            allow_real_runner=server_args.enable_real_runner,
-        )
-        svc.start_background_worker()
-
-        prs = PlanRunService(
-            use_http_callback=use_http,
-            allow_real_runner=server_args.enable_real_runner,
-        )
-
-        app = create_app(svc, plan_run_service=prs,
-                         debug_callback_receiver=server_args.enable_debug_callback_receiver)
-
-        print(f"Executor API server starting (legacy compat enabled):")
-        print(f"  host={server_args.host} port={server_args.port}")
-        print(f"  runner={server_args.runner} callback={server_args.callback_transport}")
-        print(f"  realRunnerEnabled={server_args.enable_real_runner}")
-        print(f"  Legacy endpoints: /health /version /network/ping /routes")
-        print(f"  Executor endpoints: /executor/v1/status /executor/v1/plans/...")
-        if server_args.enable_debug_callback_receiver:
-            print(f"  Debug callback: POST/GET/DELETE /debug/plan-item-statuses")
-
-        uvicorn.run(app, host=server_args.host, port=server_args.port,
-                    log_level=server_args.log_level)
+        server_main = _import_attr("src.cli.server", "server_main")
+        return server_main(sys.argv[1:], app_dir=initial_app_dir)
 
     # 检查是否为 launcher 模式 (由 启动.cmd 调用)
     if "--launcher" in sys.argv:
@@ -564,4 +499,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

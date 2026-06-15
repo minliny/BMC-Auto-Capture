@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from src._version import APP_VERSION
+
 
 class ExecutorStatus(str, Enum):
     REGISTERING = "REGISTERING"
@@ -54,7 +56,7 @@ class Executor:
     hostname: str = ""
     ip: str = ""
     os: str = ""
-    version: str = "0.2.4"
+    version: str = APP_VERSION
     status: ExecutorStatus = ExecutorStatus.REGISTERING
     capabilities: ExecutorCapabilities = field(default_factory=ExecutorCapabilities)
     registered_at: str = ""
@@ -80,7 +82,7 @@ class Executor:
             hostname=d.get("hostname", ""),
             ip=d.get("ip", ""),
             os=d.get("os", ""),
-            version=d.get("version", "0.2.4"),
+            version=d.get("version", APP_VERSION),
             status=ExecutorStatus(d.get("status", "REGISTERING")),
             capabilities=ExecutorCapabilities.from_dict(d.get("capabilities", {})),
             registered_at=d.get("registered_at", ""),

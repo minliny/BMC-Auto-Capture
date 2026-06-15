@@ -111,19 +111,18 @@ class TestVersionConsistency:
         return m.group(1)
 
     def _read_version_from_main(self) -> str:
-        """Extract version from __main__.py or shared parser (args.py)."""
-        # Check shared parser first (post-refactor: version lives in src/cli/args.py)
-        args_path = self.PROJ / "src" / "cli" / "args.py"
-        if args_path.exists():
-            text = args_path.read_text("utf-8")
-            m = re.search(r"BMC Auto-Capture\s+(v?[\w.-]+)", text)
+        """Extract version from canonical runtime version source."""
+        version_path = self.PROJ / "src" / "_version.py"
+        if version_path.exists():
+            text = version_path.read_text("utf-8")
+            m = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', text, re.MULTILINE)
             if m:
                 return m.group(1)
         # Fallback: check __main__.py (pre-refactor)
         path = self.PROJ / "src" / "__main__.py"
         text = path.read_text("utf-8")
         m = re.search(r"BMC Auto-Capture\s+(v?[\w.-]+)", text)
-        assert m, "version not found in __main__.py or args.py"
+        assert m, "version not found in src/_version.py or __main__.py"
         return m.group(1)
 
     def _read_version_from_config(self) -> str:

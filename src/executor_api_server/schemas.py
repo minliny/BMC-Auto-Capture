@@ -6,6 +6,8 @@ from __future__ import annotations
 from typing import Any, Optional, Union
 from pydantic import BaseModel, Field
 
+from src._version import APP_VERSION
+
 
 class CallbackInfo(BaseModel):
     status_url: str = ""
@@ -92,7 +94,7 @@ class JobStatusResponse(BaseModel):
 class ExecutorStatusResponse(BaseModel):
     executor_id: str
     status: str = "ONLINE"
-    version: str = "0.2.4"
+    version: str = APP_VERSION
     job_counts: dict[str, int] = Field(default_factory=dict)
     total_jobs: int = 0
     uptime_seconds: float = 0.0

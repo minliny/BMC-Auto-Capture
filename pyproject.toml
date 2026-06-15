@@ -28,8 +28,35 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    "httpx2>=2.0",
     "pyinstaller>=5.13",
 ]
 
+[project.scripts]
+bmc-auto-capture = "bmc_auto_capture.cli.main:main"
+
+[tool.setuptools]
+py-modules = ["run"]
+
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = [
+    "bmc_auto_capture",
+    "bmc_auto_capture.*",
+    "src",
+    "src.*",
+    "api",
+    "api.*",
+    "tui",
+    "tui.*",
+]
+exclude = [
+    "tests",
+    "tests.*",
+    "build",
+    "build.*",
+    "dist",
+    "dist.*",
+    "runtime",
+    "runtime.*",
+]
