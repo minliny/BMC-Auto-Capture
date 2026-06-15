@@ -183,6 +183,9 @@ class BMCExecutor(AbstractExecutor):
             return self._normalise_artifact_profile(value)
         return self._artifact_profile
 
+    def _page_goto_timeout_ms(self) -> int:
+        return int(max(float(self._page_timeout), 20.0) * 1000)
+
     def execute(self, plan: TaskPlan, output_root: str) -> ExecutionResult:
         from .browser_manager import _get_thread_loop
 
@@ -411,17 +414,17 @@ class BMCExecutor(AbstractExecutor):
         """
         # Validate URL host matches device BMC IP before navigation
         self._validate_goto_url(bmc_url, device.bmc_ip)
-        goto_timeout_ms = max(float(self._page_timeout), 20.0) * 1000
+        goto_timeout_ms = self._page_goto_timeout_ms()
         logger.info(
-            "[%s] 正在访问BMC target_type=login_home timeout=%.0fs",
+            "[%s] 正在访问BMC target_type=login_home timeout_ms=%d",
             device.device_name,
-            goto_timeout_ms / 1000,
+            goto_timeout_ms,
         )
 
         try:
             await page.goto(bmc_url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
         except Exception as e:
-            reason = f"BMC页面无法访问 target_type=login_home timeout={goto_timeout_ms / 1000:.0f}s: {e}"
+            reason = f"BMC_PAGE_GOTO_TIMEOUT target_type=login_home timeout_ms={goto_timeout_ms}: {e}"
             logger.error("[%s] %s", device.device_name, reason)
             return False, reason
 
@@ -922,14 +925,18 @@ class BMCExecutor(AbstractExecutor):
         target_url = self._resolve_url(task.command_or_url, device.bmc_ip, device, task)
         if target_url and target_url != bmc_url:
             self._validate_goto_url(target_url, device.bmc_ip)
+            goto_timeout_ms = self._page_goto_timeout_ms()
 
             # Retry loop: dismiss blockers and re-navigate up to 3 times
             for attempt in range(3):
-                logger.info("正在导航到目标:  %s (attempt %d)", target_url, attempt + 1)
+                logger.info(
+                    "正在导航到目标:  %s (attempt %d target_type=business_page timeout_ms=%d)",
+                    target_url, attempt + 1, goto_timeout_ms,
+                )
                 try:
-                    await page.goto(target_url, wait_until="networkidle", timeout=self._page_timeout * 1000)
+                    await page.goto(target_url, wait_until="networkidle", timeout=goto_timeout_ms)
                 except Exception:
-                    await page.goto(target_url, wait_until="domcontentloaded", timeout=self._page_timeout * 1000)
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=goto_timeout_ms)
                 await asyncio.sleep(2)
 
                 # Aggressively dismiss any blockers (password risk, popups, etc.)
@@ -1259,12 +1266,21 @@ class BMCExecutor(AbstractExecutor):
             action_type = action.get("action", action.get("type", ""))
             selector = action.get("selector", "")
             value = action.get("value", "")
-            timeout_ms = int(action.get("timeout", self._page_timeout)) * 1000
+            if action_type == "goto" and "timeout" not in action and "timeout_ms" not in action:
+                timeout_ms = self._page_goto_timeout_ms()
+            elif "timeout_ms" in action:
+                timeout_ms = int(action.get("timeout_ms") or self._page_goto_timeout_ms())
+            else:
+                timeout_ms = int(action.get("timeout", self._page_timeout)) * 1000
 
             try:
                 if action_type == "goto":
                     resolved = self._resolve_url(value, bmc_ip, device, task)
                     self._validate_goto_url(resolved, bmc_ip)
+                    logger.info(
+                        "BMC action goto target_type=business_page timeout_ms=%d",
+                        timeout_ms,
+                    )
                     await page.goto(resolved, wait_until="networkidle", timeout=timeout_ms)
                 elif action_type == "click":
                     await page.click(selector, timeout=timeout_ms)
@@ -1326,6 +1342,7 @@ class BMCExecutor(AbstractExecutor):
         """
         flow = task.to_capture_flow()
         file_base, _ = self._resolve_file_basename(task, device)
+        goto_timeout_ms = self._page_goto_timeout_ms()
 
         # --- Step 1: goto target_url ---
         raw_target = flow.get("target_url", "")
@@ -1333,12 +1350,27 @@ class BMCExecutor(AbstractExecutor):
             target_url = self._resolve_url(raw_target, bmc_ip, device, task)
             self._validate_goto_url(target_url, bmc_ip)
             try:
+                logger.info(
+                    "[%s] goto target_url target_type=business_page timeout_ms=%d",
+                    device.device_name,
+                    goto_timeout_ms,
+                )
                 await page.goto(target_url, wait_until="domcontentloaded",
-                                timeout=self._page_timeout * 1000)
+                                timeout=goto_timeout_ms)
             except Exception as e:
-                logger.warning("[%s] goto target_url failed: %s", device.device_name, e)
+                logger.warning(
+                    "[%s] goto target_url failed target_type=business_page timeout_ms=%d: %s",
+                    device.device_name,
+                    goto_timeout_ms,
+                    e,
+                )
+                result.execution_status = "EXEC_FAILED"
+                result.execution_failure_reason = (
+                    f"BMC_PAGE_GOTO_TIMEOUT target_type=business_page "
+                    f"timeout_ms={goto_timeout_ms}: {e}"
+                )
                 result.ready_status = "READY_NOT_READY"
-                result.ready_failure_reason = f"goto target_url failed: {e}"
+                result.ready_failure_reason = result.execution_failure_reason
                 # Do NOT return — continue to final_capture for debugging
 
             # Check if we landed on login page (session expired or redirect)

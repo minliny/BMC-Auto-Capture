@@ -82,6 +82,9 @@ class DynamicScheduler:
 
         # AUDIT-003: track WHY stop was triggered
         self._stop_reason: str = "scheduler_stop"  # or "route_change"
+        self._stop_triggered_by: str = ""
+        self._stopped_at: float = 0.0
+        self._affected_pending_count: int = 0
 
         # Pools — max_bmc_workers = max concurrent BMC endpoint groups,
         # max_ssh_workers = max concurrent INBAND endpoint groups.
@@ -197,7 +200,10 @@ class DynamicScheduler:
 
         except KeyboardInterrupt:
             logger.info("用户中断 — stopping scheduler")
+            self._record_stop("user_interrupt", "KeyboardInterrupt")
         finally:
+            if self._stop_event.is_set() and self._stopped_at <= 0:
+                self._record_stop(self._stop_reason, "external_stop_event")
             # AUDIT-003: generate results for all remaining pending plans
             # (stop / route change / exception — plans that never got dispatched)
             pending_plans: list[TaskPlan] = []
@@ -207,9 +213,12 @@ class DynamicScheduler:
 
             if pending_plans:
                 _now = time.time()
+                self._affected_pending_count = len(pending_plans)
+                stop_label = self._stop_reason_label()
                 logger.warning(
-                    "AUDIT-003: %d pending plans will be marked SKIPPED (%s)",
-                    len(pending_plans), self._stop_reason,
+                    "AUDIT-003: %d pending plans will be marked SKIPPED "
+                    "(stopReason=%s triggeredBy=%s)",
+                    len(pending_plans), stop_label, self._stop_triggered_by,
                 )
                 for plan in pending_plans:
                     plan.status = "EXEC_SKIPPED_ROUTE_CHANGED" if self._stop_reason == "route_change" else "EXEC_SKIPPED_STOPPED"
@@ -228,7 +237,11 @@ class DynamicScheduler:
                         task_type=plan.task.task_type,
                         execution_mode=plan.task.execution_mode,
                         execution_status=plan.status,
-                        execution_failure_reason=f"调度停止: {self._stop_reason}",
+                        execution_failure_reason=(
+                            f"调度停止: {stop_label} "
+                            f"triggered_by={self._stop_triggered_by or 'unknown'} "
+                            f"affectedPendingCount={self._affected_pending_count}"
+                        ),
                         started_at=_now,
                         ended_at=_now,
                         duration_seconds=0.001,
@@ -275,10 +288,36 @@ class DynamicScheduler:
 
         return self._results
 
-    def stop(self, reason: str = "scheduler_stop"):
-        self._stop_reason = reason
+    def stop(self, reason: str = "scheduler_stop", triggered_by: str = "DynamicScheduler.stop"):
+        self._record_stop(reason, triggered_by)
         self._stop_event.set()
         self._pause_event.set()
+
+    def _record_stop(self, reason: str, triggered_by: str) -> None:
+        if not self._stop_event.is_set() or self._stopped_at <= 0:
+            self._stop_reason = reason or self._stop_reason or "scheduler_stop"
+            self._stop_triggered_by = triggered_by or "unknown"
+            self._stopped_at = time.time()
+
+    def _stop_reason_label(self) -> str:
+        if self._stop_reason == "route_change":
+            return "ROUTE_GUARD_STOPPED"
+        if self._stop_reason == "user_interrupt":
+            return "USER_INTERRUPT"
+        if self._stop_reason in ("scheduler_stop", "user_stop"):
+            return "USER_STOPPED"
+        if self._stop_reason:
+            return self._stop_reason.upper()
+        return ""
+
+    @property
+    def stop_metadata(self) -> dict:
+        return {
+            "stopReason": self._stop_reason_label() if self._stopped_at > 0 else "",
+            "stopTriggeredBy": self._stop_triggered_by if self._stopped_at > 0 else "",
+            "stoppedAt": self._stopped_at,
+            "affectedPendingCount": self._affected_pending_count,
+        }
 
     def pause(self):
         self._pause_event.clear()

@@ -165,6 +165,12 @@ def audit_plan_evidence(result: ExecutionResult) -> dict:
             if audit["evidence_status"] == "OK":
                 audit["evidence_status"] = "HTML_MISSING"
                 audit["evidence_reason"] = "No HTML file for BMC task"
+        if audit["evidence_status"] == "HTML_MISSING" and result.execution_status != "EXEC_SUCCESS":
+            audit["evidence_reason"] = (
+                "HTML_MISSING explained by "
+                f"result_status={result.execution_status}; "
+                f"failure_reason={(result.execution_failure_reason or result.artifact_failure_reason or '')[:200]}"
+            )
 
         # Read page_health_debug.json for gate results
         phd = _read_page_health_debug(out_dir)
@@ -209,7 +215,14 @@ def audit_plan_evidence(result: ExecutionResult) -> dict:
 
         if not txt_ok and not log_ok:
             audit["evidence_status"] = "TXT_LOG_MISSING"
-            audit["evidence_reason"] = "No TXT or log file for SSH/TELNET task"
+            if result.execution_status.startswith("EXEC_SKIPPED"):
+                audit["evidence_reason"] = (
+                    "TXT_LOG_MISSING explained by "
+                    f"result_status={result.execution_status}; "
+                    f"failure_reason={(result.execution_failure_reason or '')[:200]}"
+                )
+            else:
+                audit["evidence_reason"] = "No TXT or log file for SSH/TELNET task"
         elif not txt_ok:
             audit["evidence_status"] = "TXT_MISSING"
             audit["evidence_reason"] = "No TXT file for SSH/TELNET task"

@@ -12,6 +12,7 @@ from typing import Sequence
 
 from ..models.execution_result import ExecutionResult
 from ..utils.path_safety import safe_join_under_root, is_safe_path_component
+from .failure_classification import classify_failure, normalized_failure_reason
 
 logger = logging.getLogger("bmc_auto_capture.summary")
 
@@ -101,7 +102,7 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
         if r.execution_status == "EXEC_SUCCESS":
             td["ok"] += 1
         else:
-            cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
+            cat = _categorize_failure(r)
             td["fail"][cat].append(r)
 
     # Calculate display width for CJK text
@@ -145,8 +146,18 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
     print("=" * 70)
 
 
-def _categorize_failure(status: str, reason: str) -> str:
+def _categorize_failure(result_or_status, reason: str | None = None) -> str:
     """Categorize a failure reason into a short label."""
+    if isinstance(result_or_status, ExecutionResult):
+        stable = classify_failure(result_or_status)
+        if stable:
+            return stable
+        status = result_or_status.execution_status
+        reason = result_or_status.execution_failure_reason
+    else:
+        status = str(result_or_status or "")
+        reason = reason or ""
+
     if status == "EXEC_SUCCESS":
         return "OK"
     if "IP为空" in reason or "IP empty" in reason.lower():
@@ -198,9 +209,9 @@ def write_failure_csv(results: Sequence[ExecutionResult], output_dir: str,
         writer.writerow(["设备分组", "设备名称", "任务名称", "任务类型",
                          "执行状态", "失败分类", "失败原因"])
         for r in sorted(failed, key=lambda r: (r.device_group, r.device_name, r.task_name)):
-            cat = _categorize_failure(r.execution_status, r.execution_failure_reason)
+            cat = _categorize_failure(r)
             writer.writerow([r.device_group, r.device_name, r.task_name, r.task_type,
-                            r.execution_status, cat, r.execution_failure_reason])
+                            r.execution_status, cat, normalized_failure_reason(r)])
 
     logger.info("Wrote %d failures to %s", len(failed), path)
     return path

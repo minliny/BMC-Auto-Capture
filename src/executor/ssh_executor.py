@@ -181,6 +181,28 @@ class StreamEvent:
     data: bytes
 
 
+def infer_command_role(command: str, explicit_role: str = "") -> str:
+    """Classify SSH command role for evidence quality decisions."""
+    explicit = _normalized_option(explicit_role)
+    if explicit in ("setup", "context", "evidence"):
+        return explicit
+
+    cmd = (command or "").strip().lower()
+    if not cmd:
+        return "evidence"
+    if cmd.startswith("screen-length"):
+        return "setup"
+    if cmd == "system-view" or cmd.startswith("system-view "):
+        return "context"
+    if cmd.startswith("interface "):
+        return "context"
+    if cmd in ("quit", "return") or cmd.startswith("quit ") or cmd.startswith("return "):
+        return "context"
+    if cmd.startswith("display ") or "hccn_tool" in cmd:
+        return "evidence"
+    return "evidence"
+
+
 class SSHExecutor(AbstractExecutor):
     """Execute SSH_CMD or TELNET_CMD tasks via Paramiko."""
 
@@ -502,8 +524,16 @@ class SSHExecutor(AbstractExecutor):
                 )
                 result.execution_failure_reason = "; ".join(failure_reasons[:3])
             elif result.execution_status == "EXEC_SUCCESS":
-                # Only set SUCCESS if none of the above checks flagged a failure
-                pass
+                evidence_failure = self._evidence_output_failure(
+                    commands, cmd_outputs, cmd_spec, strategy,
+                )
+                if evidence_failure:
+                    result.execution_status = (
+                        "EXEC_FAILED"
+                        if strategy in ("exec_command", "terminal_session")
+                        else "EXEC_PARTIAL"
+                    )
+                    result.execution_failure_reason = evidence_failure
 
             # P0-6: evaluate SSH rules (required_patterns, forbidden_patterns, min_output_lines, etc.)
             rule_failure = self._evaluate_ssh_rules(
@@ -636,6 +666,57 @@ class SSHExecutor(AbstractExecutor):
             return self._execute_terminal_session(client, device, commands, cmd_spec, options)
         else:
             return self._execute_exec_command(client, device, commands, cmd_spec, options)
+
+    def _command_role(self, cmd_spec: dict, cmd_name: str, cmd: str) -> str:
+        return (cmd_spec.get("command_roles") or {}).get(cmd_name) or infer_command_role(cmd)
+
+    def _evidence_output_failure(
+        self,
+        commands: list[tuple[str, str]],
+        cmd_outputs: dict[str, str],
+        cmd_spec: dict,
+        strategy: str,
+    ) -> str:
+        evidence_commands = [
+            (name, cmd)
+            for name, cmd in commands
+            if self._command_role(cmd_spec, name, cmd) == "evidence"
+        ]
+        if not evidence_commands:
+            return "EVIDENCE_COMMAND_MISSING: no evidence command resolved"
+
+        first_missing = ""
+        for name, cmd in evidence_commands:
+            output = cmd_outputs.get(name, "")
+            if self._command_output_has_effective_content(output, cmd, strategy):
+                return ""
+            if not first_missing:
+                first_missing = cmd
+        target = first_missing or evidence_commands[0][1]
+        return f"EVIDENCE_COMMAND_OUTPUT_MISSING: {target} produced no effective output"
+
+    @staticmethod
+    def _command_output_has_effective_content(output: str, cmd: str, strategy: str) -> bool:
+        clean = _clean_interactive_detection_text(output or "").replace("\r\n", "\n").replace("\r", "\n")
+        if strategy == "exec_command":
+            return bool(clean.strip())
+
+        cmd_stripped = (cmd or "").strip()
+        if cmd_stripped and cmd_stripped in clean:
+            echo_pos = clean.rfind(cmd_stripped)
+            clean = clean[echo_pos + len(cmd_stripped):]
+
+        effective_lines = []
+        for line in clean.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if cmd_stripped and stripped == cmd_stripped:
+                continue
+            if VRP_PROMPT_RE.search(stripped):
+                continue
+            effective_lines.append(stripped)
+        return bool(effective_lines)
 
     # ------------------------------------------------------------------
     # Strategy A: exec_command (Linux OpenSSH / A3 / Cisco)
@@ -1031,6 +1112,7 @@ class SSHExecutor(AbstractExecutor):
 
         for cmd_name, cmd in commands:
             step_name = cmd_name or f"cmd_{step_index}"
+            command_role = self._command_role(cmd_spec, cmd_name, cmd)
             logger.info("[%s] interactive_shell: %s", device.device_name, cmd[:60])
 
             try:
@@ -1089,10 +1171,25 @@ class SSHExecutor(AbstractExecutor):
                 if output_cls in ("ONLY_COMMAND_ECHO", "NO_COMMAND_OUTPUT",
                                   "ONLY_LOGIN_BANNER", "PROMPT_TIMEOUT",
                                   "FIRST_OUTPUT_TIMEOUT", "SESSION_LOST"):
+                    if (
+                        command_role in ("setup", "context")
+                        and output_cls == "ONLY_COMMAND_ECHO"
+                        and read_meta.get("prompt_detected")
+                    ):
+                        read_meta["command_role"] = command_role
+                        step_results.append(StepResult(
+                            step_index=step_index,
+                            step_name=step_name,
+                            status="SUCCESS",
+                            details=json.dumps(read_meta, ensure_ascii=False),
+                        ))
+                        step_index += 1
+                        continue
                     has_failure = True
                     failure_reasons.append(
-                        f"命令输出异常: {cmd[:50]}... ({output_cls})"
+                        f"命令输出异常: {cmd[:50]}... ({output_cls}, role={command_role})"
                     )
+                    read_meta["command_role"] = command_role
                     step_results.append(StepResult(
                         step_index=step_index,
                         step_name=step_name,
@@ -1126,7 +1223,7 @@ class SSHExecutor(AbstractExecutor):
                 step_results.append(StepResult(
                     step_index=step_index, step_name=step_name,
                     status="SUCCESS",
-                    details=json.dumps(read_meta, ensure_ascii=False),
+                    details=json.dumps({**read_meta, "command_role": command_role}, ensure_ascii=False),
                 ))
 
             except TimeoutError as e:
@@ -1582,12 +1679,15 @@ class SSHExecutor(AbstractExecutor):
             try:
                 spec = json.loads(raw)
                 commands = []
-                for item in spec.get("commands", []):
-                    name = item.get("name", "")
+                command_roles = {}
+                for i, item in enumerate(spec.get("commands", [])):
+                    name = item.get("name", "") or f"cmd_{i}"
                     cmd = _resolve_var(item.get("cmd", ""), {})
                     commands.append((name, cmd))
+                    command_roles[name] = infer_command_role(cmd, item.get("role", ""))
                 return {
                     "commands": commands,
+                    "command_roles": command_roles,
                     "extractors": spec.get("extractors", []),
                     "checkpoints": spec.get("checkpoints", []),
                     "stderr_allow_patterns": spec.get("stderr_allow_patterns", []),
@@ -1599,9 +1699,14 @@ class SSHExecutor(AbstractExecutor):
                 pass
 
         cmd_list = self._parse_commands(raw, no_split=no_split)
+        commands = [(f"cmd_{i}", c) for i, c in enumerate(cmd_list)]
         task_def = getattr(task, "_task_def", None) or {}
         return {
-            "commands": [(f"cmd_{i}", c) for i, c in enumerate(cmd_list)],
+            "commands": commands,
+            "command_roles": {
+                name: infer_command_role(cmd)
+                for name, cmd in commands
+            },
             "extractors": [],
             "checkpoints": [],
             "stderr_allow_patterns": task_def.get("stderr_allow_patterns", []),

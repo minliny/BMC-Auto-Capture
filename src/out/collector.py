@@ -11,6 +11,7 @@ from typing import Sequence
 from ..models.execution_result import ExecutionResult
 from ..models.verdict import compute_verdict
 from ..utils.path_safety import safe_join_under_root, is_safe_path_component
+from .failure_classification import normalized_failure_reason
 
 logger = logging.getLogger("bmc_auto_capture.collector")
 
@@ -18,6 +19,13 @@ logger = logging.getLogger("bmc_auto_capture.collector")
 def _ensure_final_verdict(result: ExecutionResult) -> None:
     if not result.final_verdict:
         result.final_verdict = compute_verdict(result)
+
+
+def _csv_row_with_normalized_reason(result: ExecutionResult) -> list:
+    row = result.to_csv_row()
+    # Keep the existing CSV schema; make the failure reason itself actionable.
+    row[12] = normalized_failure_reason(result)
+    return row
 
 
 def write_result_csv(results: Sequence[ExecutionResult], output_dir: str, filename: str = "result.csv") -> str:
@@ -32,7 +40,7 @@ def write_result_csv(results: Sequence[ExecutionResult], output_dir: str, filena
         writer.writerow(ExecutionResult.csv_header())
         for r in sorted(results, key=lambda r: (r.device_group, r.device_name, r.task_name)):
             _ensure_final_verdict(r)
-            writer.writerow(r.to_csv_row())
+            writer.writerow(_csv_row_with_normalized_reason(r))
 
     logger.info("Wrote %d results to %s", len(results), path)
     return path
@@ -50,7 +58,7 @@ def write_final_result_csv(results: Sequence[ExecutionResult], output_dir: str, 
         writer.writerow(ExecutionResult.csv_header())
         for r in sorted(results, key=lambda r: (r.execution_status, r.device_name, r.task_name)):
             _ensure_final_verdict(r)
-            writer.writerow(r.to_csv_row())
+            writer.writerow(_csv_row_with_normalized_reason(r))
 
     logger.info("Wrote final_result.csv to %s", path)
     return path

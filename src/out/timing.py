@@ -193,6 +193,7 @@ def write_execution_summary(
     output_dir: str,
     execution_started_at: float | None = None,
     execution_id: str = "",
+    stop_metadata: dict | None = None,
 ) -> str:
     """Write execution summary to JSON (and CSV)."""
     path = safe_join_under_root(output_dir, "execution_summary.json")
@@ -244,6 +245,14 @@ def write_execution_summary(
         "slowest_task": slowest_task,
         "top_wait_endpoint": top_wait_endpoint,
     }
+    stop_metadata = stop_metadata or {}
+    stopped_at = float(stop_metadata.get("stoppedAt") or 0.0)
+    summary.update({
+        "stopReason": str(stop_metadata.get("stopReason") or ""),
+        "stopTriggeredBy": str(stop_metadata.get("stopTriggeredBy") or ""),
+        "stoppedAt": _fmt_ts(stopped_at),
+        "affectedPendingCount": int(stop_metadata.get("affectedPendingCount") or 0),
+    })
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
@@ -265,13 +274,16 @@ def write_all_timing_reports(
     output_dir: str,
     execution_started_at: float | None = None,
     execution_id: str = "",
+    stop_metadata: dict | None = None,
 ) -> dict[str, str]:
     """Write all timing reports and return paths dict."""
     return {
         "plan_timing": write_plan_timing_csv(results, output_dir),
         "device_timing": write_device_timing_csv(results, output_dir),
         "endpoint_timing": write_endpoint_timing_csv(results, output_dir),
-        "execution_summary": write_execution_summary(results, output_dir, execution_started_at, execution_id),
+        "execution_summary": write_execution_summary(
+            results, output_dir, execution_started_at, execution_id, stop_metadata,
+        ),
     }
 
 

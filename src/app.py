@@ -65,6 +65,9 @@ class App:
         self._active_scheduler: object | None = None
         self._run_lock = threading.Lock()
         self._stop_reason = "scheduler_stop"
+        self._stop_triggered_by = ""
+        self._stopped_at = 0.0
+        self._affected_pending_count = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -85,6 +88,7 @@ class App:
         self._stop_event.clear()
         self._pause_event.set()
         self._stop_reason = "scheduler_stop"
+        self._clear_stop_metadata()
 
         excel_path = Path(excel_path)
 
@@ -191,7 +195,10 @@ class App:
         # Timing reports
         try:
             from .out.timing import write_all_timing_reports
-            write_all_timing_reports(self._results, str(output_dir))
+            write_all_timing_reports(
+                self._results, str(output_dir),
+                stop_metadata=self._stop_metadata(),
+            )
         except Exception as e:
             logger.warning("Failed to write timing reports: %s", e)
 
@@ -266,13 +273,13 @@ class App:
         raise OSError("No writable output directory found")
 
     def stop(self):
-        self._stop_reason = "scheduler_stop"
+        self._record_stop("user_stop", "App.stop")
         self._stop_event.set()
         self._pause_event.set()  # Unblock pause so stop can take effect
         # P0-3: forward to active scheduler if running in full mode
         if self._active_scheduler is not None:
             try:
-                self._active_scheduler.stop()
+                self._active_scheduler.stop(reason="user_stop", triggered_by="App.stop")
             except Exception:
                 pass
 
@@ -322,13 +329,13 @@ class App:
             len(changes),
             threshold,
         )
-        self._stop_reason = "route_change"
+        self._record_stop("route_change", "RouteGuard")
         self._stop_event.set()
         self._pause_event.set()  # unblock pause so stop can take effect
         # AUDIT-003: forward to active scheduler with route_change reason
         if self._active_scheduler is not None:
             try:
-                self._active_scheduler.stop(reason="route_change")
+                self._active_scheduler.stop(reason="route_change", triggered_by="RouteGuard")
             except Exception:
                 pass
         self.event_bus.emit("route_changed", changes=changes)
@@ -352,6 +359,9 @@ class App:
         for i, plan in enumerate(plans):
             if self._stop_event.is_set():
                 logger.info("Stop requested — %d plans remaining", total - i)
+                self._affected_pending_count = total - i
+                if self._stopped_at <= 0:
+                    self._record_stop(self._stop_reason, "external_stop_event")
                 for remaining in plans[i:]:
                     remaining.status = (
                         "EXEC_SKIPPED_ROUTE_CHANGED"
@@ -371,7 +381,11 @@ class App:
                         task_type=remaining.task.task_type,
                         execution_mode=remaining.task.execution_mode,
                         execution_status=remaining.status,
-                        execution_failure_reason=f"顺序执行停止: {self._stop_reason}",
+                        execution_failure_reason=(
+                            f"顺序执行停止: {self._stop_reason_label()} "
+                            f"triggered_by={self._stop_triggered_by or 'unknown'} "
+                            f"affectedPendingCount={self._affected_pending_count}"
+                        ),
                         started_at=now,
                         ended_at=now,
                         duration_seconds=0.001,
@@ -470,8 +484,46 @@ class App:
         try:
             results = scheduler.run(plans)
             self._results.extend(results)
+            self._apply_scheduler_stop_metadata(scheduler)
         finally:
             self._active_scheduler = None
+
+    # ------------------------------------------------------------------
+    def _clear_stop_metadata(self) -> None:
+        self._stop_triggered_by = ""
+        self._stopped_at = 0.0
+        self._affected_pending_count = 0
+
+    def _record_stop(self, reason: str, triggered_by: str) -> None:
+        if self._stopped_at <= 0:
+            self._stop_reason = reason or self._stop_reason or "scheduler_stop"
+            self._stop_triggered_by = triggered_by or "unknown"
+            self._stopped_at = time.time()
+
+    def _stop_reason_label(self) -> str:
+        if self._stop_reason == "route_change":
+            return "ROUTE_GUARD_STOPPED"
+        if self._stop_reason in ("scheduler_stop", "user_stop"):
+            return "USER_STOPPED"
+        if self._stop_reason == "user_interrupt":
+            return "USER_INTERRUPT"
+        return (self._stop_reason or "").upper()
+
+    def _stop_metadata(self) -> dict:
+        return {
+            "stopReason": self._stop_reason_label() if self._stopped_at > 0 else "",
+            "stopTriggeredBy": self._stop_triggered_by if self._stopped_at > 0 else "",
+            "stoppedAt": self._stopped_at,
+            "affectedPendingCount": self._affected_pending_count,
+        }
+
+    def _apply_scheduler_stop_metadata(self, scheduler) -> None:
+        meta = getattr(scheduler, "stop_metadata", {}) or {}
+        if meta.get("stoppedAt"):
+            self._stop_reason = getattr(scheduler, "_stop_reason", self._stop_reason)
+            self._stop_triggered_by = str(meta.get("stopTriggeredBy") or "")
+            self._stopped_at = float(meta.get("stoppedAt") or 0.0)
+            self._affected_pending_count = int(meta.get("affectedPendingCount") or 0)
 
     # ------------------------------------------------------------------
     def _print_validation(self, report: ValidationReport):
@@ -512,6 +564,7 @@ class App:
         self._stop_event.clear()
         self._pause_event.set()
         self._stop_reason = "scheduler_stop"
+        self._clear_stop_metadata()
 
         # Set up timestamped output root
         run_ts = time.strftime("%Y%m%d_%H%M%S")
@@ -600,6 +653,7 @@ class App:
             write_all_timing_reports(
                 self._results, str(output_dir),
                 execution_started_at=execution_started_at,
+                stop_metadata=self._stop_metadata(),
             )
         except Exception as e:
             logger.warning("Failed to write timing reports: %s", e)
