@@ -108,11 +108,18 @@ Interface                   PHY   Protocol Description
 
     evaluation = evaluate_result_rules(rules, ctx)
     summary = evaluation.failure_summary()
+    failure = evaluation.failures[0]
+    check = evaluation.to_check_result(check_id="ssh.result_rules", source="result_rules")
 
     assert evaluation.rule_status == "RULE_FAILED"
     assert "interface=100GE1/0/1" in summary
     assert "field=protocol" in summary
     assert "raw_line=" in summary
+    assert failure.details["interface"] == "100GE1/0/1"
+    assert failure.details["field"] == "protocol"
+    assert failure.details["value"] == "down"
+    assert failure.details["raw_line"].startswith("100GE1/0/1")
+    assert check.details["failures"][0]["details"]["field"] == "protocol"
 
 
 def test_result_rules_unparseable_interface_status_is_parse_failed():

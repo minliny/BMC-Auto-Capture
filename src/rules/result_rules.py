@@ -203,7 +203,7 @@ def _evaluate_check(
             if not value:
                 continue
             if status_matches(value, "down") and _has_interface_brief_command(context):
-                message = _evaluate_interface_status_rule(
+                message, details = _evaluate_interface_status_rule(
                     rule_name,
                     desc,
                     _interface_brief_rule_output(context),
@@ -211,7 +211,7 @@ def _evaluate_check(
                     [value],
                 )
                 if message:
-                    return _failure(rule_name, check_type, message)
+                    return _failure(rule_name, check_type, message, details=details)
             elif value in context.combined_output:
                 return _failure(rule_name, check_type, f"[{rule_name}] {desc}: forbidden '{value}' found")
         return None
@@ -233,7 +233,7 @@ def _evaluate_check(
         forbidden_values = coerce_status_values(
             check.get("forbidden", check.get("forbidden_values", check.get("target"))),
         )
-        message = _evaluate_interface_status_rule(
+        message, details = _evaluate_interface_status_rule(
             rule_name,
             desc,
             _interface_brief_rule_output(context),
@@ -242,7 +242,7 @@ def _evaluate_check(
         )
         if message:
             status = CheckStatus.ERROR if "RULE_PARSE_FAILED" in message else CheckStatus.FAIL
-            return _failure(rule_name, check_type, message, status=status)
+            return _failure(rule_name, check_type, message, status=status, details=details)
         return None
 
     if check_type == "min_output_lines":
@@ -297,21 +297,35 @@ def _evaluate_interface_status_rule(
     output: str,
     fields: list[str],
     forbidden_values: list[str],
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     records = parse_interface_brief(output)
     if not records:
-        return f"[{rule_name}] {desc}: RULE_PARSE_FAILED no parseable interface rows"
+        return (
+            f"[{rule_name}] {desc}: RULE_PARSE_FAILED no parseable interface rows",
+            {"parse_error": "no parseable interface rows"},
+        )
 
     failures: list[str] = []
+    matches: list[dict[str, str]] = []
     for record in records:
         for field in fields:
             value = getattr(record, field, "")
             if any(status_matches(value, forbidden) for forbidden in forbidden_values):
+                matches.append({
+                    "interface": record.interface,
+                    "field": field,
+                    "value": value,
+                    "raw_line": record.raw_line,
+                })
                 failures.append(
                     f"[{rule_name}] {desc}: interface={record.interface} "
                     f"field={field} value={value!r} raw_line={record.raw_line!r}"
                 )
-    return "; ".join(failures[:5])
+    if not matches:
+        return "", {}
+    details: dict[str, Any] = dict(matches[0])
+    details["matches"] = matches[:5]
+    return "; ".join(failures[:5]), details
 
 
 def _coerce_values(raw: Any) -> list[str]:
@@ -330,8 +344,15 @@ def _failure(
     message: str,
     *,
     status: str = CheckStatus.FAIL,
+    details: dict[str, Any] | None = None,
 ) -> ResultRuleFailure:
-    return ResultRuleFailure(rule_name=rule_name, check_type=check_type, message=message, status=status)
+    return ResultRuleFailure(
+        rule_name=rule_name,
+        check_type=check_type,
+        message=message,
+        status=status,
+        details=details or {},
+    )
 
 
 def _parse_failure(rule_name: str, check_type: str, message: str) -> ResultRuleFailure:

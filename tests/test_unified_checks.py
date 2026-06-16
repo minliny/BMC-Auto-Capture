@@ -48,6 +48,40 @@ def test_result_check_failure_drives_verdict_and_failure_detail(tmp_path):
     assert "field=protocol" in rows[0]["失败原因"]
 
 
+def test_failure_detail_csv_flattens_structured_result_rule_details(tmp_path):
+    result = ExecutionResult(
+        plan_id="plan-1",
+        device_name="node-1",
+        task_id="task.019",
+        execution_status="EXEC_SUCCESS",
+    )
+    result.add_check_result(CheckResult(
+        stage=CheckStage.RESULT,
+        check_id="ssh.result_rules",
+        status="FAIL",
+        message="port status rule failed",
+        details={
+            "failures": [{
+                "details": {
+                    "interface": "100GE1/0/1",
+                    "field": "protocol",
+                    "value": "down",
+                    "raw_line": "100GE1/0/1                  up    down     uplink",
+                },
+            }],
+        },
+    ))
+
+    path = Path(write_failure_csv([result], str(tmp_path)))
+    rows = list(csv.DictReader(path.open(encoding="utf-8-sig", newline="")))
+    detail = rows[0]["检查失败明细"]
+
+    assert "interface=100GE1/0/1" in detail
+    assert "field=protocol" in detail
+    assert "value='down'" in detail
+    assert "raw_line='100GE1/0/1" in detail
+
+
 def test_post_audit_warning_is_reported_but_not_final_verdict_failure(tmp_path):
     result = ExecutionResult(
         plan_id="plan-1",

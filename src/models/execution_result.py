@@ -101,6 +101,9 @@ class ExecutionResult:
             if cr.status not in ("FAIL", "ERROR", "WARN"):
                 continue
             message = cr.message or cr.actual or cr.target
+            structured = _format_check_failure_details(cr.details)
+            if structured and structured not in message:
+                message = f"{message} ({structured})" if message else structured
             details.append(f"{cr.stage}/{cr.check_id}/{cr.status}: {message}")
             if len(details) >= limit:
                 break
@@ -194,3 +197,48 @@ class ExecutionResult:
 def _fmt_time(ts: float) -> str:
     if ts <= 0: return ""
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+
+
+def _format_check_failure_details(details: dict[str, Any]) -> str:
+    if not isinstance(details, dict):
+        return ""
+    hits: list[dict[str, Any]] = []
+    direct = _extract_structured_hit(details)
+    if direct:
+        hits.append(direct)
+    for failure in details.get("failures", []):
+        if not isinstance(failure, dict):
+            continue
+        failure_details = failure.get("details", {})
+        if not isinstance(failure_details, dict):
+            continue
+        matches = failure_details.get("matches", [])
+        has_matches = isinstance(matches, list) and bool(matches)
+        if has_matches:
+            hits.extend(match for match in matches if isinstance(match, dict))
+        else:
+            nested = _extract_structured_hit(failure_details)
+            if nested:
+                hits.append(nested)
+    formatted = [_format_structured_hit(hit) for hit in hits[:3]]
+    return "; ".join(part for part in formatted if part)
+
+
+def _extract_structured_hit(details: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(details, dict):
+        return {}
+    keys = ("interface", "field", "value", "raw_line")
+    return {key: details[key] for key in keys if details.get(key) not in ("", None)}
+
+
+def _format_structured_hit(hit: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("interface", "field", "value", "raw_line"):
+        if key not in hit:
+            continue
+        value = hit[key]
+        if key in ("value", "raw_line"):
+            parts.append(f"{key}={value!r}")
+        else:
+            parts.append(f"{key}={value}")
+    return " ".join(parts)
