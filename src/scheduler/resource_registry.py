@@ -55,7 +55,7 @@ class _AcquireContext:
     def __enter__(self) -> dict[str, Any]:
         meta = dict(self._holder_metadata)
         meta.setdefault("endpoint_key", self._endpoint_key)
-        holder_key = (meta.get("execution_id", ""), meta.get("plan_id", ""))
+        holder_key = _holder_key(meta)
 
         wait_start = time.time()
 
@@ -121,9 +121,10 @@ class _AcquireContext:
 class ResourceRegistry:
     """Process-wide singleton registry for endpoint_key serialization.
 
-    Thread-safe (threading.Condition).  Supports reentrant acquire from the same
-    holder (same execution_id + plan_id) to avoid deadlock when scheduler and
-    executor both try to acquire the same endpoint_key.
+    Thread-safe (threading.Condition). Supports reentrant acquire from the same
+    holder (same execution_id + plan_item_id, falling back to plan_id for legacy
+    callers) to avoid deadlock when scheduler and executor both try to acquire
+    the same endpoint_key.
 
     Optionally backed by FileLock for cross-process safety.  Call
     enable_file_lock() once before use to activate cross-process serialization.
@@ -178,8 +179,8 @@ class ResourceRegistry:
     ) -> _AcquireContext:
         """Return a context manager that acquires endpoint_key on enter, releases on exit.
 
-        Reentrant: if the same (execution_id, plan_id) already holds this key,
-        acquisition succeeds immediately without waiting.
+        Reentrant: if the same holder already holds this key, acquisition
+        succeeds immediately without waiting.
 
         Raises RuntimeError if timeout expires before acquisition.
         """
@@ -213,7 +214,7 @@ class ResourceRegistry:
                 self._file_lock_contexts[endpoint_key] = fl_ctx
 
             self._leases[endpoint_key] = _ResourceLease(dict(holder_metadata))
-            logger.debug("[ResourceRegistry] try_hold %s (holder=%s)", endpoint_key, holder_metadata.get("plan_id", "?"))
+            logger.debug("[ResourceRegistry] try_hold %s (holder=%s)", endpoint_key, _holder_summary(holder_metadata))
             return True
 
     def release(self, endpoint_key: str) -> None:
@@ -254,7 +255,7 @@ class ResourceRegistry:
                 self._file_lock_contexts[endpoint_key] = fl_ctx
 
             self._leases[endpoint_key] = _ResourceLease(dict(holder_metadata))
-            logger.debug("[ResourceRegistry] wait_and_hold %s (holder=%s)", endpoint_key, holder_metadata.get("plan_id", "?"))
+            logger.debug("[ResourceRegistry] wait_and_hold %s (holder=%s)", endpoint_key, _holder_summary(holder_metadata))
             return True
 
     def current_holder(self, endpoint_key: str) -> dict[str, str] | None:
@@ -306,13 +307,17 @@ class ResourceRegistry:
 
 
 def _holder_key(meta: dict[str, str]) -> tuple[str, str]:
-    return (meta.get("execution_id", ""), meta.get("plan_id", ""))
+    return (
+        meta.get("execution_id", ""),
+        meta.get("plan_item_id") or meta.get("plan_id", ""),
+    )
 
 
 def _holder_summary(meta: dict[str, str]) -> str:
     return (
         f"execution={meta.get('execution_id', '?')} "
         f"plan={meta.get('plan_id', '?')} "
+        f"item={meta.get('plan_item_id', '?')} "
         f"device={meta.get('device_name', '?')} "
         f"task={meta.get('task_name', '?')}"
     )

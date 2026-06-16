@@ -42,6 +42,8 @@ class PlanRunItem:
     plan_id: int | str
     device_name: str
     task_name: str
+    task_id: str = ""
+    plan_item_id: str = ""
     device_group: str = ""
     task_type: str = ""
     execution_mode: str = ""
@@ -87,6 +89,8 @@ class PlanRun:
     def summary(self) -> dict[str, Any]:
         failed_items = [
             {
+                "taskId": item.task_id,
+                "planItemId": item.plan_item_id,
                 "deviceGroup": item.device_group,
                 "deviceName": item.device_name,
                 "taskName": item.task_name,

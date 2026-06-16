@@ -67,11 +67,11 @@ class TestPlanImport:
         assert all("task_id" in t for t in tasks)
 
     def test_get_plan_task_by_id(self, svc):
-        """5. GET plan task by task_id returns full catalog entry."""
+        """5. GET plan task by plan_item_id returns full catalog entry."""
         r = _import_plan(svc)
         tasks = svc.get_plan_tasks(r["plan_id"])
-        tid = tasks[0]["task_id"]
-        cat = svc.get_plan_task(r["plan_id"], tid)
+        pid = tasks[0]["plan_item_id"]
+        cat = svc.get_plan_task(r["plan_id"], pid)
         assert cat is not None
         assert "device_snapshot" in cat
         assert "task_snapshot" in cat
@@ -156,7 +156,7 @@ class TestRunDispatch:
         svc.start_run({"command_id": "c1", "run_id": "run-1",
                         "plan_id": r["plan_id"], "plan_hash": r["plan_hash"]})
         tasks = svc.get_run_tasks("run-1")
-        t = svc.get_run_task("run-1", tasks[0]["task_id"])
+        t = svc.get_run_task("run-1", tasks[0]["plan_item_id"])
         assert t["status"] == TaskRunStatus.QUEUED
 
     def test_fake_runner_task_succeeded(self, svc):
@@ -291,7 +291,7 @@ class TestNetworkTestInRun:
                             "plan_id": plan_id,
                             "plan_hash": svc._plans[plan_id]["manifest"].plan_hash})
             run_tasks = svc.get_run_tasks("run-nt")
-            run_ids = {t["task_id"] for t in run_tasks}
+            run_ids = {t["plan_item_id"] for t in run_tasks}
             for tid in nt_ids:
                 assert tid in run_ids, f"NETWORK_TEST task {tid} should be in run"
 

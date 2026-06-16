@@ -3,6 +3,9 @@ Execution status and rule status are ALWAYS separate fields.
 """
 from dataclasses import dataclass, field
 import time
+from typing import Any
+
+from ..checks.models import CheckResult
 
 @dataclass
 class StepResult:
@@ -19,6 +22,7 @@ class ExecutionResult:
     plan_id: str
     device_name: str
     task_id: str = ""
+    plan_item_id: str = ""
     client_task_id: str = ""
     device_group: str = ""
     bmc_ip: str = ""
@@ -62,6 +66,11 @@ class ExecutionResult:
     retry_reasons: list[str] = field(default_factory=list)
     unknown_status: bool = False
     raw_execution_status: str = ""
+    check_results: list = field(default_factory=list)
+
+    def __post_init__(self):
+        if not self.plan_item_id and self.plan_id and self.device_name and self.task_id:
+            self.plan_item_id = f"{self.plan_id}:{self.device_name}:{self.task_id}"
 
     def _checkpoint_summary(self) -> str:
         if not self.checkpoint_results:
@@ -72,10 +81,46 @@ class ExecutionResult:
             counts[key] = counts.get(key, 0) + 1
         return ", ".join(f"{v}x{k}" for k, v in sorted(counts.items()))
 
+    def add_check_result(self, check_result: CheckResult | dict[str, Any]) -> None:
+        if isinstance(check_result, dict):
+            check_result = CheckResult.from_dict(check_result)
+        self.check_results.append(check_result)
+
+    def check_result_summary(self) -> str:
+        if not self.check_results:
+            return ""
+        counts: dict[str, int] = {}
+        for cr in self._iter_check_results():
+            key = f"{cr.stage}:{cr.status}"
+            counts[key] = counts.get(key, 0) + 1
+        return ", ".join(f"{v}x{k}" for k, v in sorted(counts.items()))
+
+    def check_failure_summary(self, limit: int = 5) -> str:
+        details: list[str] = []
+        for cr in self._iter_check_results():
+            if cr.status not in ("FAIL", "ERROR", "WARN"):
+                continue
+            message = cr.message or cr.actual or cr.target
+            details.append(f"{cr.stage}/{cr.check_id}/{cr.status}: {message}")
+            if len(details) >= limit:
+                break
+        return " | ".join(details)
+
+    def check_results_as_dicts(self) -> list[dict[str, Any]]:
+        return [cr.to_dict() for cr in self._iter_check_results()]
+
+    def _iter_check_results(self):
+        for cr in self.check_results or ():
+            if isinstance(cr, CheckResult):
+                yield cr
+            elif isinstance(cr, dict):
+                yield CheckResult.from_dict(cr)
+
     def to_csv_row(self) -> list:
         return [
             self.plan_id,
             self.task_id,
+            self.plan_item_id,
             self.client_task_id,
             self.device_group,
             self.device_name,
@@ -119,12 +164,14 @@ class ExecutionResult:
             " | ".join(self.retry_reasons),
             str(self.unknown_status).lower(),
             self.raw_execution_status,
+            self.check_result_summary(),
+            self.check_failure_summary(),
         ]
 
     @staticmethod
     def csv_header() -> list:
         return [
-            "计划ID", "任务ID", "客户端任务ID",
+            "计划ID", "任务ID", "执行项ID", "客户端任务ID",
             "设备分类", "设备名称", "带外管理IP", "带内管理IP",
             "任务序号", "任务名称", "任务类型", "执行模式",
             "执行状态", "执行失败原因",
@@ -141,6 +188,7 @@ class ExecutionResult:
             "duration_seconds", "resource_wait_seconds", "executor_duration_seconds",
             "attempt_count", "max_attempts", "final_attempt_index", "retry_reasons",
             "unknown_status", "raw_execution_status",
+            "检查结果汇总", "检查失败明细",
         ]
 
 def _fmt_time(ts: float) -> str:

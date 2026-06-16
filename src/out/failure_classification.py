@@ -31,7 +31,14 @@ BMC_FAILURE_CATEGORIES = {
 def classify_failure(result: ExecutionResult) -> str:
     """Return a stable report category, or an empty string when unknown."""
     status = result.execution_status or ""
-    reason = result.execution_failure_reason or ""
+    reason = (
+        result.execution_failure_reason
+        or result.rule_failure_reason
+        or result.ready_failure_reason
+        or result.artifact_failure_reason
+        or result._checkpoint_summary()
+        or ""
+    )
     artifact_reason = result.artifact_failure_reason or ""
     haystack = "\n".join(
         part for part in (
@@ -39,6 +46,7 @@ def classify_failure(result: ExecutionResult) -> str:
             reason,
             result.ready_failure_reason or "",
             artifact_reason,
+            result.check_failure_summary() if hasattr(result, "check_failure_summary") else "",
             _step_details(result.step_results),
         ) if part
     )
@@ -110,7 +118,15 @@ def classify_failure(result: ExecutionResult) -> str:
 
 def normalized_failure_reason(result: ExecutionResult) -> str:
     """Prefix existing failure reason with the stable category when available."""
-    reason = result.execution_failure_reason or ""
+    reason = (
+        result.execution_failure_reason
+        or result.rule_failure_reason
+        or result.ready_failure_reason
+        or result.artifact_failure_reason
+        or result._checkpoint_summary()
+        or (result.check_failure_summary() if hasattr(result, "check_failure_summary") else "")
+        or ""
+    )
     category = classify_failure(result)
     if not category:
         return reason

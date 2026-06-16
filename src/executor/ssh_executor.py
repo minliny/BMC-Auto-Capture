@@ -20,6 +20,7 @@ from pathlib import Path
 import paramiko
 
 from .base import AbstractExecutor
+from ..checks import CheckResult, CheckStage, check_result_from_checkpoint
 from ..models.task_plan import TaskPlan
 from ..models.task import resolve_task_timeout_seconds
 from ..models.execution_result import ExecutionResult, StepResult
@@ -349,6 +350,7 @@ class SSHExecutor(AbstractExecutor):
         _meta = {
             "execution_id": plan._execution_id,
             "plan_id": plan.plan_id,
+            "plan_item_id": plan.effective_plan_item_id,
             "device_name": plan.device.device_name,
             "task_name": plan.task.task_name,
         }
@@ -369,6 +371,7 @@ class SSHExecutor(AbstractExecutor):
         result = ExecutionResult(
             plan_id=plan.plan_id,
             task_id=plan.task_id,
+            plan_item_id=plan.effective_plan_item_id,
             client_task_id=plan.client_task_id,
             device_name=device.device_name,
             device_group=device.device_group,
@@ -539,8 +542,21 @@ class SSHExecutor(AbstractExecutor):
             )
             if rule_failure:
                 has_failure = True
-                result.rule_status = "RULE_FAILED"
+                result.rule_status = "RULE_PARSE_FAILED" if "RULE_PARSE_FAILED" in rule_failure else "RULE_FAILED"
                 result.rule_failure_reason = rule_failure
+                result.add_check_result(CheckResult(
+                    stage=CheckStage.RESULT,
+                    check_id="ssh.result_rules",
+                    status="ERROR" if result.rule_status == "RULE_PARSE_FAILED" else "FAIL",
+                    severity="ERROR",
+                    message=rule_failure,
+                    details={
+                        "rule_status": result.rule_status,
+                        "strategy": strategy,
+                    },
+                    source="result_rules",
+                    target=getattr(task, "command_or_url", "") or "",
+                ))
                 if result.execution_status == "EXEC_SUCCESS":
                     result.execution_status = "EXEC_PARTIAL"
                 result.execution_failure_reason = (
@@ -550,6 +566,16 @@ class SSHExecutor(AbstractExecutor):
                 logger.warning("[%s] SSH规则检查失败: %s", device.device_name, rule_failure)
             elif self._task_has_ssh_rules(task):
                 result.rule_status = "RULE_PASSED"
+                result.add_check_result(CheckResult(
+                    stage=CheckStage.RESULT,
+                    check_id="ssh.result_rules",
+                    status="PASS",
+                    severity="ERROR",
+                    message="SSH result rules passed",
+                    details={"strategy": strategy},
+                    source="result_rules",
+                    target=getattr(task, "command_or_url", "") or "",
+                ))
 
             # Write evidence
             # NEW-001: validate template before resolution, sanitize filename
@@ -1813,7 +1839,7 @@ class SSHExecutor(AbstractExecutor):
         Returns empty string on pass, or failure reason string on fail.
         """
         tdef = getattr(task, '_task_def', None) or {}
-        ssh_rules = tdef.get("ssh_rules") or tdef.get("rules") or []
+        ssh_rules = tdef.get("result_rules") or tdef.get("ssh_rules") or tdef.get("rules") or []
 
         if not ssh_rules:
             return ""
@@ -1895,7 +1921,7 @@ class SSHExecutor(AbstractExecutor):
     @staticmethod
     def _task_has_ssh_rules(task) -> bool:
         tdef = getattr(task, "_task_def", None) or {}
-        rules = tdef.get("ssh_rules") or tdef.get("rules") or []
+        rules = tdef.get("result_rules") or tdef.get("ssh_rules") or tdef.get("rules") or []
         if not isinstance(rules, list):
             return False
         return any(isinstance(rule, dict) and rule.get("enabled", True) is not False for rule in rules)
@@ -1923,6 +1949,11 @@ class SSHExecutor(AbstractExecutor):
         result.checkpoint_status = eval_result.rollup_status()
 
         for cp in eval_result.results:
+            result.add_check_result(check_result_from_checkpoint(
+                cp,
+                stage=CheckStage.RESULT,
+                source="ssh.checkpoint",
+            ))
             result.step_results.append(StepResult(
                 step_index=len(result.step_results),
                 step_name=f"checkpoint_{cp.checkpoint_name}",

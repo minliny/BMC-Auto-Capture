@@ -38,6 +38,7 @@ def resolve_template(tmpl: str, device, task, extra: Optional[dict] = None) -> s
 
     result = tmpl
     # 中文变量 (Excel 表头名)
+    result = result.replace("{任务ID}", getattr(task, "task_id", "") or task.task_name)
     result = result.replace("{任务序号}", seq)
     result = result.replace("{任务名称}", task.task_name)
     result = result.replace("{任务类型}", task.task_type)
@@ -53,6 +54,7 @@ def resolve_template(tmpl: str, device, task, extra: Optional[dict] = None) -> s
     result = result.replace("{设备标签}", getattr(device, "tags", ""))
 
     # 英文变量 (旧版默认模板兼容)
+    result = result.replace("{task_id}", getattr(task, "task_id", "") or task.task_name)
     result = result.replace("{task_sequence}", seq)
     result = result.replace("{task_name}", task.task_name)
     result = result.replace("{task_type}", task.task_type)
@@ -67,6 +69,7 @@ def resolve_template(tmpl: str, device, task, extra: Optional[dict] = None) -> s
     result = result.replace("{tags}", getattr(device, "tags", ""))
 
     # 英文别名 (双语表头兼容)
+    result = result.replace("{TaskID}", getattr(task, "task_id", "") or task.task_name)
     result = result.replace("{TaskName}", task.task_name)
     result = result.replace("{TaskType}", task.task_type)
     result = result.replace("{TaskSequence}", seq)

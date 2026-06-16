@@ -8,6 +8,7 @@ import os
 from collections import Counter
 from typing import Sequence
 
+from ..checks import CHECK_FAILED_STATUSES, CheckResult, CheckStage
 from ..models.execution_result import ExecutionResult
 from ..models.verdict import compute_verdict
 from ..utils.path_safety import safe_join_under_root, is_safe_path_component
@@ -23,8 +24,8 @@ def _ensure_final_verdict(result: ExecutionResult) -> None:
 
 def _csv_row_with_normalized_reason(result: ExecutionResult) -> list:
     row = result.to_csv_row()
-    # Keep the existing CSV schema; make the failure reason itself actionable.
-    row[12] = normalized_failure_reason(result)
+    # Keep the CSV schema flexible; make the failure reason itself actionable.
+    row[ExecutionResult.csv_header().index("执行失败原因")] = normalized_failure_reason(result)
     return row
 
 
@@ -93,6 +94,7 @@ def compute_summary(results: Sequence[ExecutionResult]) -> dict:
     unknown_statuses = Counter(
         r.execution_status for r in results if r.execution_status not in known_statuses
     )
+    check_counter = _count_check_results(results)
 
     return {
         "total": total,
@@ -122,7 +124,25 @@ def compute_summary(results: Sequence[ExecutionResult]) -> dict:
         "final_warn": sum(1 for r in results if r.final_verdict == "WARN"),
         "final_skipped": sum(1 for r in results if r.final_verdict == "SKIPPED"),
         "final_blocked": sum(1 for r in results if r.final_verdict == "BLOCKED"),
+        "check_failed": check_counter["failed"],
+        "check_warn": check_counter["warn"],
+        "check_post_audit_warn": check_counter["post_audit_warn"],
     }
+
+
+def _count_check_results(results: Sequence[ExecutionResult]) -> Counter:
+    counter: Counter = Counter()
+    for result in results:
+        for cr in getattr(result, "check_results", None) or ():
+            if isinstance(cr, dict):
+                cr = CheckResult.from_dict(cr)
+            if cr.status in CHECK_FAILED_STATUSES:
+                counter["failed"] += 1
+            if cr.status == "WARN":
+                counter["warn"] += 1
+                if cr.stage == CheckStage.POST_AUDIT:
+                    counter["post_audit_warn"] += 1
+    return counter
 
 
 def write_preflight_auth_csv(report, output_dir: str,

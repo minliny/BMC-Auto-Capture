@@ -3,7 +3,7 @@ RunDispatchService — plan import, run dispatch, execute, query.
 
 Orchestrates:
   - PlanCatalogPlanner for plan import
-  - TaskCatalogStore for task_id → PlannedTask lookup
+  - TaskCatalogStore for plan_item_id → PlannedTask lookup
   - ResourceLockManager for concurrency control
   - FakeRunner/RealRunnerAdapter for execution
   - ServerCallbackClient for per-task status callbacks

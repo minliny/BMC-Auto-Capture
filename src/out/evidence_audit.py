@@ -15,6 +15,7 @@ from typing import Sequence
 
 from ..utils.path_safety import safe_join_under_root, is_safe_path_component
 
+from ..checks import CheckResult, CheckStage
 from ..models.execution_result import ExecutionResult
 from ..executor.bmc_health_check import (
     scan_html_for_keywords,
@@ -292,6 +293,50 @@ def audit_all(results: Sequence[ExecutionResult]) -> list[dict]:
                            "evidence_status": "AUDIT_ERROR",
                            "evidence_reason": str(e)[:200]})
     return audits
+
+
+def evidence_audit_check_result(audit: dict) -> CheckResult:
+    evidence_status = str(audit.get("evidence_status", "") or "OK")
+    ok = evidence_status in ("OK", "")
+    return CheckResult(
+        stage=CheckStage.POST_AUDIT,
+        check_id=f"evidence_audit.{evidence_status or 'OK'}",
+        status="PASS" if ok else "WARN",
+        severity="WARNING" if not ok else "INFO",
+        message=str(audit.get("evidence_reason", "") or evidence_status),
+        details={
+            "evidence_status": evidence_status,
+            "matched_keyword": audit.get("matched_keyword", ""),
+            "page_health_gate": audit.get("page_health_gate", ""),
+        },
+        source="evidence_audit",
+        evidence_ref=str(audit.get("screenshot_path") or audit.get("html_path") or audit.get("log_path") or ""),
+    )
+
+
+def attach_evidence_audit_checks(results: Sequence[ExecutionResult]) -> None:
+    """Attach post-audit CheckResult entries without changing final verdicts."""
+    for r in results:
+        existing = getattr(r, "check_results", None) or []
+        if any(_check_id(cr).startswith("evidence_audit.") for cr in existing):
+            continue
+        try:
+            r.add_check_result(evidence_audit_check_result(audit_plan_evidence(r)))
+        except Exception as e:
+            r.add_check_result(CheckResult(
+                stage=CheckStage.POST_AUDIT,
+                check_id="evidence_audit.AUDIT_ERROR",
+                status="WARN",
+                severity="WARNING",
+                message=str(e)[:200],
+                source="evidence_audit",
+            ))
+
+
+def _check_id(check_result: object) -> str:
+    if isinstance(check_result, dict):
+        return str(check_result.get("check_id", check_result.get("checkId", "")))
+    return str(getattr(check_result, "check_id", ""))
 
 
 def write_evidence_audit_csv(results: Sequence[ExecutionResult], output_dir: str,

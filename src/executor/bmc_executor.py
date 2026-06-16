@@ -29,6 +29,12 @@ from .bmc_health_check import (
     scan_html_for_keywords, scan_mhtml_for_keywords,
     HealthResult, is_page_recoverable_status, is_session_recoverable_status,
 )
+from ..checks import (
+    CheckStage,
+    check_result_from_checkpoint,
+    check_result_from_condition,
+    check_result_from_rule_action,
+)
 from ..models.task_plan import TaskPlan
 from ..models.task import resolve_task_timeout_seconds
 from ..models.execution_result import ExecutionResult, StepResult
@@ -205,6 +211,7 @@ class BMCExecutor(AbstractExecutor):
         _meta = {
             "execution_id": plan._execution_id,
             "plan_id": plan.plan_id,
+            "plan_item_id": plan.effective_plan_item_id,
             "device_name": plan.device.device_name,
             "task_name": plan.task.task_name,
         }
@@ -227,6 +234,7 @@ class BMCExecutor(AbstractExecutor):
         result = ExecutionResult(
             plan_id=plan.plan_id,
             task_id=plan.task_id,
+            plan_item_id=plan.effective_plan_item_id,
             client_task_id=plan.client_task_id,
             device_name=dname,
             device_group=device.device_group,
@@ -1118,6 +1126,11 @@ class BMCExecutor(AbstractExecutor):
                 status="SUCCESS" if r.status == "PASS" else "FAILED",
                 details=r.message,
             ))
+            result.add_check_result(check_result_from_rule_action(
+                r,
+                stage=CheckStage.EXECUTION,
+                rule_scope="bmc.rule.basic",
+            ))
 
         # Record advanced rule results
         for r in eval_result.advanced_results:
@@ -1126,6 +1139,11 @@ class BMCExecutor(AbstractExecutor):
                 step_name=f"rule_advanced_{r.action_type}",
                 status="SUCCESS" if r.status == "PASS" else "FAILED",
                 details=r.message,
+            ))
+            result.add_check_result(check_result_from_rule_action(
+                r,
+                stage=CheckStage.RESULT,
+                rule_scope="bmc.rule.advanced",
             ))
 
         if not eval_result.basic_passed:
@@ -1188,6 +1206,12 @@ class BMCExecutor(AbstractExecutor):
                     details=f"{cr.details} target={cr.target}" if cr.details else f"target={cr.target}",
                     step_type="checkpoint",
                 ))
+                result.add_check_result(check_result_from_condition(
+                    cr,
+                    stage=CheckStage.RESULT,
+                    check_id_prefix="bmc.evidence_checkpoint",
+                    source="evidence_checkpoints",
+                ))
             return
 
         # --- Legacy format: checkpoints (CheckpointEngine) ---
@@ -1223,6 +1247,12 @@ class BMCExecutor(AbstractExecutor):
 
         result.checkpoint_results = eval_result.results
         result.checkpoint_status = eval_result.rollup_status()
+        for cp in eval_result.results:
+            result.add_check_result(check_result_from_checkpoint(
+                cp,
+                stage=CheckStage.RESULT,
+                source="bmc.checkpoint",
+            ))
 
         for cp in eval_result.results:
             result.step_results.append(StepResult(
@@ -1485,6 +1515,12 @@ class BMCExecutor(AbstractExecutor):
                 step_name=f"ready_{cr.condition_type}",
                 status="SUCCESS" if cr.is_pass else "FAILED",
                 details=cr.details or f"{cr.target} → {cr.actual[:60]}",
+            ))
+            result.add_check_result(check_result_from_condition(
+                cr,
+                stage=CheckStage.READY,
+                check_id_prefix="bmc.ready",
+                source="capture_ready_conditions",
             ))
         if ready_eval.rollup() == "FAIL":
             if result.ready_status != "READY_NOT_READY":

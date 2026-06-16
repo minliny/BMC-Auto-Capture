@@ -158,7 +158,8 @@ class TestCallbackOutboxIntegration:
         for key in d:
             assert key not in forbidden, f"Forbidden key in outbox: {key}"
         # Only allowed fields
-        allowed = {"outboxId", "planId", "deviceName", "taskName", "status",
+        allowed = {"outboxId", "planId", "taskId", "planItemId",
+                   "deviceName", "taskName", "status",
                    "deviceGroup", "updater", "errorMessage", "startedAt",
                    "finishedAt", "callbackUrl", "deliveryStatus",
                    "attemptCount", "lastErrorCode", "lastErrorMessage",
@@ -175,7 +176,8 @@ class TestCallbackOutboxIntegration:
         )
         body = item.to_callback_body()
         assert set(body.keys()) == {
-            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "planId", "taskId", "planItemId",
+            "deviceGroup", "deviceName", "taskName", "status",
             "updater", "errorMessage", "startedAt", "finishedAt",
         }
 

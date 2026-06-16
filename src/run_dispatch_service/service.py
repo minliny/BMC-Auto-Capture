@@ -66,6 +66,7 @@ class TaskRunStatus:
 @dataclass
 class _TaskRun:
     task_id: str
+    plan_item_id: str = ""
     run_id: str = ""
     status: str = TaskRunStatus.QUEUED
     started_at: float = 0.0
@@ -149,7 +150,7 @@ class RunDispatchService:
         self._runs: dict[str, _RunRecord] = {}
         self._command_ids: set[str] = set()  # for idempotency
         self._state_lock = threading.Lock()
-        self._pending: list[tuple[str, str]] = []  # (run_id, task_id)
+        self._pending: list[tuple[str, str]] = []  # (run_id, plan_item_id)
         self._queue_lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -263,20 +264,25 @@ class RunDispatchService:
             callback_auth_token=callback.get("auth_token", ""),
         )
 
-        # Enqueue all tasks from catalog
-        for pt in [catalog.get(tid) for tid in sorted(catalog.to_dict().keys())]:
+        # Enqueue all plan items from catalog
+        for pt in [catalog.get(pid) for pid in sorted(catalog.to_dict().keys())]:
             if pt is None or not pt.enabled:
                 continue
-            tr = _TaskRun(task_id=pt.task_id, run_id=run_id, status=TaskRunStatus.QUEUED)
-            run.tasks[pt.task_id] = tr
+            tr = _TaskRun(
+                task_id=pt.task_id,
+                plan_item_id=pt.effective_plan_item_id,
+                run_id=run_id,
+                status=TaskRunStatus.QUEUED,
+            )
+            run.tasks[pt.effective_plan_item_id] = tr
 
         with self._state_lock:
             self._command_ids.add(command_id)
             self._runs[run_id] = run
 
         with self._queue_lock:
-            for tid in run.tasks:
-                self._pending.append((run_id, tid))
+            for plan_item_id in run.tasks:
+                self._pending.append((run_id, plan_item_id))
 
         return {
             "accepted": True, "run_id": run_id, "plan_id": plan_id,
@@ -293,9 +299,9 @@ class RunDispatchService:
         with self._queue_lock:
             if not self._pending:
                 return False
-            run_id, task_id = self._pending.pop(0)
+            run_id, plan_item_id = self._pending.pop(0)
 
-        self._execute_task(run_id, task_id)
+        self._execute_task(run_id, plan_item_id)
         return True
 
     def run_all_pending(self) -> int:
@@ -339,15 +345,20 @@ class RunDispatchService:
             return None
         tr = run.tasks.get(task_id)
         if tr is None:
+            matches = [t for t in run.tasks.values() if t.task_id == task_id]
+            tr = matches[0] if len(matches) == 1 else None
+        if tr is None:
             return None
         return self._task_run_to_dict(tr)
 
     def _task_run_to_dict(self, tr: _TaskRun) -> dict[str, Any]:
         entry = self._plans.get(self._runs.get(tr.run_id, _RunRecord("")).plan_id)
         catalog = entry["catalog"] if entry else None
-        pt = catalog.get(tr.task_id) if catalog else None
+        pt = catalog.get(tr.plan_item_id or tr.task_id) if catalog else None
         return {
-            "run_id": tr.run_id, "task_id": tr.task_id,
+            "run_id": tr.run_id,
+            "task_id": tr.task_id,
+            "plan_item_id": tr.plan_item_id,
             "status": tr.status,
             "task_no": pt.task_no if pt else "",
             "task_name": pt.task_name if pt else "",
@@ -366,11 +377,11 @@ class RunDispatchService:
     # Internal: execute one task
     # ------------------------------------------------------------------
 
-    def _execute_task(self, run_id: str, task_id: str):
+    def _execute_task(self, run_id: str, plan_item_id: str):
         run = self._runs.get(run_id)
         if run is None:
             return
-        tr = run.tasks.get(task_id)
+        tr = run.tasks.get(plan_item_id)
         if tr is None:
             return
 
@@ -378,7 +389,7 @@ class RunDispatchService:
         if entry is None:
             return
         catalog = entry["catalog"]
-        pt = catalog.get(task_id)
+        pt = catalog.get(plan_item_id)
         if pt is None:
             tr.status = TaskRunStatus.SKIPPED
             return
@@ -386,9 +397,9 @@ class RunDispatchService:
         lock_uri = pt.lock_uri
 
         # Acquire lock
-        if lock_uri and not self._lock_mgr.acquire(lock_uri, task_id):
+        if lock_uri and not self._lock_mgr.acquire(lock_uri, plan_item_id):
             with self._queue_lock:
-                self._pending.append((run_id, task_id))
+                self._pending.append((run_id, plan_item_id))
             return
 
         # Mark run RUNNING
@@ -405,7 +416,8 @@ class RunDispatchService:
 
         # Build job payload
         job_payload = {
-            "job_id": f"{run_id}-{task_id}",
+            "job_id": tr.plan_item_id or f"{run_id}-{tr.task_id}",
+            "plan_id": run.plan_id,
             "device_snapshot": pt.device_snapshot,
             "task_snapshot": pt.task_snapshot,
         }
@@ -436,7 +448,7 @@ class RunDispatchService:
 
         # Release lock
         if lock_uri:
-            self._lock_mgr.release(lock_uri, task_id)
+            self._lock_mgr.release(lock_uri, plan_item_id)
 
         # Update run status
         self._update_run_status(run)
@@ -445,13 +457,18 @@ class RunDispatchService:
         url_tmpl = run.callback_task_status_url
         if not url_tmpl:
             return True
-        url = url_tmpl.replace("{task_id}", tr.task_id)
+        url = (
+            url_tmpl
+            .replace("{plan_item_id}", tr.plan_item_id)
+            .replace("{task_id}", tr.task_id)
+        )
 
         payload = {
             "run_id": run.run_id,
             "plan_id": run.plan_id,
             "task_id": tr.task_id,
-            "external_task_id": tr.task_id,
+            "plan_item_id": tr.plan_item_id,
+            "external_task_id": tr.plan_item_id or tr.task_id,
             "executor_id": self.executor_id,
             "status": status,
             "reported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

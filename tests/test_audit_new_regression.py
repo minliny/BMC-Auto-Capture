@@ -374,7 +374,7 @@ class TestAuditNew002CallbackLeak:
             error_message=None,
         )
         assert set(body.keys()) == {
-            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "planId", "taskId", "planItemId", "deviceGroup", "deviceName", "taskName", "status",
             "updater", "errorMessage", "startedAt", "finishedAt",
         }
 
@@ -391,7 +391,7 @@ class TestAuditNew002CallbackLeak:
         assert "excelHash" not in result
         assert "metadata" not in result
         assert set(result.keys()) == {
-            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "planId", "taskId", "planItemId", "deviceGroup", "deviceName", "taskName", "status",
             "updater", "errorMessage", "startedAt", "finishedAt",
         }
 

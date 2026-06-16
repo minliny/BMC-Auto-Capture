@@ -1,8 +1,8 @@
 {
-  "_schema": "1.0",
-  "_description": "任务执行定义文件。Excel 通过任务名称匹配此文件获取具体执行参数。支持 Agent 远程推送更新。",
+  "_schema": "2.0",
+  "_description": "任务执行定义文件。Excel 通过任务ID匹配此文件获取具体执行参数；任务名称仅用于展示，可修改。支持 Agent 远程推送更新。",
   "tasks": {
-    "RAID配置测试": {
+    "task.001": {
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
@@ -34,9 +34,11 @@
           ],
           "severity": "WARNING"
         }
-      ]
+      ],
+      "task_id": "task.001",
+      "task_name": "RAID配置测试"
     },
-    "机柜RM211的管理iBMC IP查询和设置测试": {
+    "task.002": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/manager/network",
@@ -44,9 +46,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.002",
+      "task_name": "机柜RM211的管理iBMC IP查询和设置测试"
     },
-    "计算节点远程上电和下电测试": {
+    "task.003": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/system/power/control",
@@ -54,9 +58,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.003",
+      "task_name": "计算节点远程上电和下电测试"
     },
-    "计算节点部件信息查询测试-资产摘要": {
+    "task.004": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/system/info/product",
@@ -64,9 +70,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.004",
+      "task_name": "计算节点部件信息查询测试-资产摘要"
     },
-    "计算节点部件信息查询测试-网络适配器": {
+    "task.005": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/system/info/net",
@@ -74,9 +82,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.005",
+      "task_name": "计算节点部件信息查询测试-网络适配器"
     },
-    "计算节点部件信息查询测试-门限传感器": {
+    "task.006": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/system/info/sensor",
@@ -84,9 +94,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.006",
+      "task_name": "计算节点部件信息查询测试-门限传感器"
     },
-    "计算节点部件信息查询测试-电源信息": {
+    "task.007": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/system/power/converter",
@@ -94,9 +106,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.007",
+      "task_name": "计算节点部件信息查询测试-电源信息"
     },
-    "计算节点部件信息查询测试-风扇信息": {
+    "task.008": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/system/fans/fans-info",
@@ -104,9 +118,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.008",
+      "task_name": "计算节点部件信息查询测试-风扇信息"
     },
-    "风扇冗余测试": {
+    "task.009": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/system/fans/fans-info",
@@ -114,9 +130,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.009",
+      "task_name": "风扇冗余测试"
     },
-    "A3 BMC首页截图": {
+    "task.010": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/home",
@@ -138,9 +156,11 @@
         }
       ],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.010",
+      "task_name": "A3 BMC首页截图"
     },
-    "操作系统安装测试": {
+    "task.011": {
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "uname -a",
@@ -148,9 +168,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带内管理IP}-{设备名称}"
+      "image_name_template": "{带内管理IP}-{设备名称}",
+      "task_id": "task.011",
+      "task_name": "操作系统安装测试"
     },
-    "NPU驱动和固件安装测试": {
+    "task.012": {
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "npu-smi info\n/usr/local/Ascend/driver/tools/upgrade-tool --device_index -1 --component -1 --version",
@@ -158,9 +180,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带内管理IP}-{设备名称}"
+      "image_name_template": "{带内管理IP}-{设备名称}",
+      "task_id": "task.012",
+      "task_name": "NPU驱动和固件安装测试"
     },
-    "灵衢网络管理网口IP查询和设置测试": {
+    "task.013": {
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "system-view\ninterface MEth0/0/0\ndisplay this",
@@ -168,9 +192,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带内管理IP}-{设备名称}"
+      "image_name_template": "{带内管理IP}-{设备名称}",
+      "task_id": "task.013",
+      "task_name": "灵衢网络管理网口IP查询和设置测试"
     },
-    "计算节点电子标签查询测试": {
+    "task.014": {
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "display device elabel",
@@ -178,9 +204,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带内管理IP}-{设备名称}"
+      "image_name_template": "{带内管理IP}-{设备名称}",
+      "task_id": "task.014",
+      "task_name": "计算节点电子标签查询测试"
     },
-    "计算节点灵衢总线板与灵衢总线和以太板CPLD版本信息查询测试": {
+    "task.015": {
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "display device card\ndisplay version",
@@ -188,9 +216,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带内管理IP}-{设备名称}"
+      "image_name_template": "{带内管理IP}-{设备名称}",
+      "task_id": "task.015",
+      "task_name": "计算节点灵衢总线板与灵衢总线和以太板CPLD版本信息查询测试"
     },
-    "计算节点光口状态查询测试": {
+    "task.016": {
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "screen-length 0 temporary\ndisplay interface brief\ndisplay interface 200GHL1/2/48",
@@ -231,9 +261,26 @@
           "target": "up",
           "severity": "WARNING"
         }
+      ],
+      "task_id": "task.016",
+      "task_name": "计算节点光口状态查询测试",
+      "result_rules": [
+        {
+          "rule_name": "check_no_interface_down",
+          "rule_type": "advanced",
+          "enabled": false,
+          "actions": [
+            {
+              "action_type": "assert_text",
+              "value": "up",
+              "_note": "接口状态应包含 up，如果接口 down 则规则 FAIL"
+            }
+          ],
+          "_note": "需在真实设备验证后启用。预期端口清单待业务方确认。"
+        }
       ]
     },
-    "计算节点光模块信息查询测试": {
+    "task.017": {
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "display interface transceiver",
@@ -257,9 +304,11 @@
       "image_name_template": "{带内管理IP}-{设备名称}",
       "per_group_no_split": {
         "A3": true
-      }
+      },
+      "task_id": "task.017",
+      "task_name": "计算节点光模块信息查询测试"
     },
-    "计算节点温度管理测试": {
+    "task.018": {
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "display device temperature",
@@ -267,9 +316,11 @@
       "retry_count": 0,
       "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带内管理IP}-{设备名称}"
+      "image_name_template": "{带内管理IP}-{设备名称}",
+      "task_id": "task.018",
+      "task_name": "计算节点温度管理测试"
     },
-    "计算节点L1交换网络端口查询测试": {
+    "task.019": {
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "display interface brief | include up",
@@ -282,17 +333,43 @@
           "checks": [
             {
               "type": "interface_status",
-              "fields": ["physical", "protocol"],
-              "forbidden": ["down"],
+              "fields": [
+                "physical",
+                "protocol"
+              ],
+              "forbidden": [
+                "down"
+              ],
               "desc": "真实接口记录的 physical/protocol 状态不得为 down"
             }
           ]
         }
       ],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带内管理IP}-{设备名称}"
+      "image_name_template": "{带内管理IP}-{设备名称}",
+      "task_id": "task.019",
+      "task_name": "计算节点L1交换网络端口查询测试",
+      "result_rules": [
+        {
+          "name": "端口状态检查",
+          "desc": "L1交换机接口状态字段应正常，不因描述文本中的 down 误判",
+          "checks": [
+            {
+              "type": "interface_status",
+              "fields": [
+                "physical",
+                "protocol"
+              ],
+              "forbidden": [
+                "down"
+              ],
+              "desc": "真实接口记录的 physical/protocol 状态不得为 down"
+            }
+          ]
+        }
+      ]
     },
-    "模块拔插告警上报测试": {
+    "task.020": {
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "display interface brief",
@@ -314,9 +391,26 @@
         }
       ],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带内管理IP}-{设备名称}"
+      "image_name_template": "{带内管理IP}-{设备名称}",
+      "task_id": "task.020",
+      "task_name": "模块拔插告警上报测试",
+      "result_rules": [
+        {
+          "rule_name": "check_no_error_down",
+          "rule_type": "advanced",
+          "enabled": false,
+          "actions": [
+            {
+              "action_type": "assert_text",
+              "value": "up",
+              "_note": "接口应处于 up 状态，如存在 down/error-down 则规则 FAIL"
+            }
+          ],
+          "_note": "需在真实设备验证后启用。拔插场景和目标端口未定义前不启用。"
+        }
+      ]
     },
-    "计算节点上电测试-内存": {
+    "task.021": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/system/info/memory",
@@ -326,9 +420,11 @@
       "_migrated_from": "CUSTOM_SCRIPT (bmc_page_capture wrapper, PAGE_MAP 映射缺失)",
       "_migrated_to": "BMC_URL — 旧版本仅打开 memory 页面截图，无点击交互",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.021",
+      "task_name": "计算节点上电测试-内存"
     },
-    "计算节点上电测试-CPU": {
+    "task.022": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/system/info/processor",
@@ -338,9 +434,11 @@
       "_migrated_from": "CUSTOM_SCRIPT (bmc_page_capture wrapper, PAGE_MAP 映射缺失)",
       "_migrated_to": "BMC_URL — 旧版本仅打开 processor 页面截图，无点击交互",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.022",
+      "task_name": "计算节点上电测试-CPU"
     },
-    "计算节点iBMC IP查询和设置测试": {
+    "task.023": {
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/manager/network",
@@ -350,9 +448,11 @@
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_2_ibmc_ip_network_test)",
       "_migrated_to": "BMC_URL — 旧版本源码仅打开 network 页面截图，无实际 IP 设置动作",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.023",
+      "task_name": "计算节点iBMC IP查询和设置测试"
     },
-    "计算节点部件信息查询测试-CPU": {
+    "task.024": {
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
@@ -364,9 +464,11 @@
       "_migrated_to": "BMC_ACTIONS — goto processor → click CPU tab → click expand → screenshot",
       "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.024",
+      "task_name": "计算节点部件信息查询测试-CPU"
     },
-    "计算节点部件信息查询测试-NPU": {
+    "task.025": {
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
@@ -378,9 +480,11 @@
       "_migrated_to": "BMC_ACTIONS — goto processor → click NPU tab → click expand → screenshot",
       "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.025",
+      "task_name": "计算节点部件信息查询测试-NPU"
     },
-    "计算节点部件信息查询测试-内存": {
+    "task.026": {
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
@@ -392,9 +496,11 @@
       "_migrated_to": "BMC_ACTIONS — goto memory → click table expand icon → screenshot",
       "_note": "未在真实设备验证，默认禁用。使用 el-table 展开图标 selector。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.026",
+      "task_name": "计算节点部件信息查询测试-内存"
     },
-    "电源冗余测试": {
+    "task.027": {
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
@@ -430,9 +536,11 @@
           ],
           "severity": "WARNING"
         }
-      ]
+      ],
+      "task_id": "task.027",
+      "task_name": "电源冗余测试"
     },
-    "硬盘冗余测试-系统日志": {
+    "task.028": {
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
@@ -444,9 +552,11 @@
       "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
       "_note": "未在真实设备验证，默认禁用。与电源冗余测试使用相同脚本。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.028",
+      "task_name": "硬盘冗余测试-系统日志"
     },
-    "硬盘冗余测试": {
+    "task.029": {
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
@@ -458,7 +568,9 @@
       "_migrated_to": "BMC_ACTIONS — goto storage → expand tree → click Logical Drive 0 → screenshot",
       "_note": "未在真实设备验证，默认禁用。只读查看，不涉及 RAID 配置变更。UI 控件可能因 BMC 版本不同而异。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}"
+      "image_name_template": "{带外管理IP}-{设备名称}",
+      "task_id": "task.029",
+      "task_name": "硬盘冗余测试"
     }
   }
 }

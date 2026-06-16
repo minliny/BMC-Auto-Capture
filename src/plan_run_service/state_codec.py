@@ -27,6 +27,8 @@ class PlanRunStateCodec:
             "items": [
                 {
                     "planId": str(item.plan_id),
+                    "taskId": item.task_id,
+                    "planItemId": item.plan_item_id,
                     "deviceName": item.device_name,
                     "taskName": item.task_name,
                     "deviceGroup": item.device_group,
@@ -66,6 +68,8 @@ class PlanRunStateCodec:
                 plan_id=plan_id,
                 device_name=str(raw.get("deviceName", "")),
                 task_name=str(raw.get("taskName", "")),
+                task_id=str(raw.get("taskId", "")),
+                plan_item_id=str(raw.get("planItemId", "")),
                 device_group=str(raw.get("deviceGroup", "")),
                 task_type=str(raw.get("taskType", "")),
                 execution_mode=str(raw.get("executionMode", "")),

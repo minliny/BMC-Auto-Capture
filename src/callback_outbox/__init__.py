@@ -159,6 +159,8 @@ class CallbackOutboxItem:
     device_name: str
     task_name: str
     status: str
+    task_id: str = ""
+    plan_item_id: str = ""
     device_group: str = ""
     updater: str = "downstream-system"
     error_message: str | None = None
@@ -193,6 +195,8 @@ class CallbackOutboxItem:
             }
         body = {
             "planId": str(self.plan_id),
+            "taskId": self.task_id,
+            "planItemId": self.plan_item_id,
             "deviceGroup": self.device_group,
             "deviceName": self.device_name,
             "taskName": self.task_name,
@@ -214,6 +218,8 @@ class CallbackOutboxItem:
         record = {
             "outboxId": self.outbox_id,
             "planId": str(self.plan_id),
+            "taskId": self.task_id,
+            "planItemId": self.plan_item_id,
             "deviceGroup": self.device_group,
             "deviceName": self.device_name,
             "taskName": self.task_name,
@@ -244,6 +250,8 @@ class CallbackOutboxItem:
             device_name=str(d.get("deviceName", "")),
             task_name=str(d.get("taskName", "")),
             status=str(d.get("status", "")),
+            task_id=str(d.get("taskId", "")),
+            plan_item_id=str(d.get("planItemId", "")),
             updater=str(d.get("updater", "downstream-system")),
             error_message=d.get("errorMessage"),
             started_at=d.get("startedAt"),
@@ -517,6 +525,8 @@ def build_outbox_item_from_callback_body(
     error_message: str | None = None,
     callback_url: str = "",
     device_group: str = "",
+    task_id: str = "",
+    plan_item_id: str = "",
     started_at: str | None = None,
     finished_at: str | None = None,
 ) -> CallbackOutboxItem:
@@ -526,6 +536,8 @@ def build_outbox_item_from_callback_body(
         device_group=device_group,
         device_name=device_name,
         task_name=task_name,
+        task_id=task_id,
+        plan_item_id=plan_item_id,
         status=status,
         updater=updater,
         error_message=error_message,

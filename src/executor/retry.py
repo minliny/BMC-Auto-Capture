@@ -58,6 +58,7 @@ def execute_with_retry(executor, plan: TaskPlan, output_root: str) -> ExecutionR
             result = ExecutionResult(
                 plan_id=plan.plan_id,
                 task_id=plan.task_id,
+                plan_item_id=plan.effective_plan_item_id,
                 client_task_id=plan.client_task_id,
                 device_name=plan.device.device_name,
                 device_group=plan.device.device_group,

@@ -106,6 +106,8 @@ class CallbackDeliveryService:
         )
         return build_callback_item(
             plan_id=str(run.plan_id),
+            task_id=item.task_id,
+            plan_item_id=item.plan_item_id,
             device_group=item.device_group,
             device_name=item.device_name,
             task_name=item.task_name,
@@ -132,6 +134,8 @@ class CallbackDeliveryService:
         cb_body = self.build_callback_body(run, item)
         outbox_item = build_outbox_item_from_callback_body(
             plan_id=cb_body["planId"],
+            task_id=cb_body.get("taskId", ""),
+            plan_item_id=cb_body.get("planItemId", ""),
             device_group=cb_body.get("deviceGroup", ""),
             device_name=cb_body["deviceName"],
             task_name=cb_body["taskName"],

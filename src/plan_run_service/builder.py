@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from ..models.task_plan import make_plan_item_id
+
 
 def derive_lock_uri(device: Any, task: Any) -> str:
     bmc_ip = (getattr(device, "bmc_ip", "") or "").strip()
@@ -45,10 +47,14 @@ class PlanRunBuilder:
                     allowed_groups = [group.strip().upper() for group in match_group.split("/") if group.strip()]
                     if device_group.upper() not in allowed_groups:
                         continue
+                task_id = getattr(task, "task_id", "") or getattr(task, "task_name", "")
+                device_name = getattr(device, "device_name", "")
                 items.append(item_factory(
                     plan_id=plan_id,
-                    device_name=getattr(device, "device_name", ""),
+                    device_name=device_name,
                     task_name=getattr(task, "task_name", ""),
+                    task_id=task_id,
+                    plan_item_id=make_plan_item_id(str(plan_id), device_name, task_id),
                     device_group=device_group,
                     task_type=getattr(task, "task_type", ""),
                     execution_mode=getattr(task, "execution_mode", ""),

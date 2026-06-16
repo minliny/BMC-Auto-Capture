@@ -22,6 +22,7 @@ class FakeDevice:
 
 @dataclass
 class FakeTask:
+    task_id: str = "task.ssh.version"
     task_name: str = "task-1"
     task_type: str = "SSH"
     execution_mode: str = "SSH_CMD"
@@ -43,13 +44,18 @@ def test_job_payload_builder_preserves_ssh_overrides_and_metadata():
         device_group="L1",
         device_name="device-1",
         task_name="task-1",
+        task_id="task.ssh.version",
+        plan_item_id="plan-1:device-1:task.ssh.version",
         _device=FakeDevice(),
         _task=FakeTask(),
     )
 
     payload = PlanRunJobPayloadBuilder().build(item)
 
-    assert payload["job_id"] == "plan-1:L1:device-1:task-1:7"
+    assert payload["job_id"] == "plan-1:device-1:task.ssh.version"
+    assert payload["plan_id"] == "plan-1"
+    assert payload["task_snapshot"]["task_id"] == "task.ssh.version"
+    assert payload["task_snapshot"]["plan_item_id"] == "plan-1:device-1:task.ssh.version"
     assert payload["device_snapshot"]["ssh_type"] == "SSH_VRP"
     assert payload["device_snapshot"]["inband_password_ref"] == "plain-ssh-password"
     assert payload["task_snapshot"]["command_or_url"] == "display version"

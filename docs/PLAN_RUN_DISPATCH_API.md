@@ -13,7 +13,7 @@ GET  /executor/v1/plans/{plan_id}/items
 POST /executor/v1/plans/{plan_id}/callbacks:retry
 ```
 
-`planId` 是服务端下发的执行批次 ID，也是调度端和执行端共同使用的主键。执行端内部可保留调试用 run id，但公开主契约不要求服务端理解、保存或回传 `runId`。
+`planId` 是服务端下发的执行批次 ID，也是调度端和执行端共同使用的主键。`taskId` 是 Excel 任务定义 ID，`planItemId` 是批次内“一台设备 + 一个任务”的执行项 ID。执行端内部可保留调试用 run id，但公开主契约不要求服务端理解、保存或回传 `runId`。
 
 ## 上传 Excel
 
@@ -96,7 +96,32 @@ Plan summary：
 }
 ```
 
-Items response adds `items[]` with `deviceGroup`, `deviceName`, `taskName`, `status`, `errorMessage`, `startedAt`, `finishedAt`, and `infoEvents`.
+Items response adds `items[]` with `taskId`, `planItemId`, `deviceGroup`, `deviceName`, `taskName`, `status`, `errorMessage`, `startedAt`, `finishedAt`, and `infoEvents`.
+
+When a real execution result is available, each item may also include structured status fields:
+
+```json
+{
+  "executionStatus": "EXEC_SUCCESS",
+  "ruleStatus": "RULE_PASSED",
+  "artifactStatus": "ARTIFACT_SAVED",
+  "readyStatus": "READY_OK",
+  "checkpointStatus": "CHECK_PASS",
+  "finalVerdict": "PASS",
+  "checkResults": [
+    {
+      "stage": "RESULT_CHECK",
+      "checkId": "ssh.result_rules",
+      "status": "PASS",
+      "severity": "ERROR",
+      "message": "SSH result rules passed",
+      "details": {}
+    }
+  ]
+}
+```
+
+`checkResults` 是统一检查输出；callback item payload 暂不包含该字段，避免外部回调契约扩散。
 
 ## Callback Retry
 

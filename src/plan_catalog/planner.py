@@ -1,7 +1,7 @@
 """
 PlanCatalogPlanner — deterministic plan generator from Excel + validation.json.
 
-Generates stable task_ids and plan_hash. Same inputs always produce same output.
+Generates stable plan_item_ids and plan_hash. Same inputs always produce same output.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from .models import (
     ValidationReport,
     ValidationError,
     NetworkTestDef,
-    make_task_id,
+    make_plan_item_id,
     make_device_key,
 )
 from .store import TaskCatalogStore
@@ -244,9 +244,10 @@ class PlanCatalogPlanner:
 
         row_ref = f"{source_prefix}:Sheet=device={device_name}:task={task_name}"
 
-        task_id = make_task_id(
+        task_id = _task_definition_id(task)
+        plan_item_id = make_plan_item_id(
             PLANNER_VERSION, self._excel_sha256, self._validation_sha256,
-            dg, device_key, task_no, task_name, task_type, exec_mode, row_ref,
+            dg, device_key, task_no, task_id, task_name, task_type, exec_mode, row_ref,
         )
 
         # Build device_snapshot
@@ -267,6 +268,7 @@ class PlanCatalogPlanner:
         # Build task_snapshot
         task_snapshot = {
             "task_id": task_id,
+            "plan_item_id": plan_item_id,
             "task_no": task_no,
             "task_name": task_name,
             "task_type": task_type,
@@ -291,6 +293,7 @@ class PlanCatalogPlanner:
 
         return PlannedTask(
             task_id=task_id,
+            plan_item_id=plan_item_id,
             plan_id=plan_id,
             task_no=task_no,
             task_name=task_name,
@@ -338,9 +341,10 @@ class PlanCatalogPlanner:
                 severity="error",
             ))
 
-        task_id = make_task_id(
+        task_id = (nt.network_test_id or f"network_test.{idx}").strip()
+        plan_item_id = make_plan_item_id(
             PLANNER_VERSION, self._excel_sha256, self._validation_sha256,
-            dg, device_key, task_no, nt.name, task_type, exec_mode, source_ref,
+            dg, device_key, task_no, task_id, nt.name, task_type, exec_mode, source_ref,
         )
 
         device_snapshot = {
@@ -353,7 +357,8 @@ class PlanCatalogPlanner:
         }
 
         task_snapshot = {
-            "task_id": task_id, "task_no": task_no, "task_name": nt.name,
+            "task_id": task_id, "plan_item_id": plan_item_id,
+            "task_no": task_no, "task_name": nt.name,
             "task_type": task_type, "execution_mode": exec_mode,
             "command_or_url": cmd, "ssh_cmd": cmd,
             "timeout_seconds": nt.timeout_seconds, "retry_count": 0,
@@ -368,7 +373,8 @@ class PlanCatalogPlanner:
         }
 
         return PlannedTask(
-            task_id=task_id, plan_id=plan_id, task_no=task_no,
+            task_id=task_id, plan_item_id=plan_item_id,
+            plan_id=plan_id, task_no=task_no,
             task_name=nt.name, task_type=task_type, execution_mode=exec_mode,
             device_group=dg, device_key=device_key,
             lock_uri=lock_uri, enabled=True, source_row_ref=source_ref,
@@ -425,6 +431,21 @@ def _derive_ssh_type(device: Any) -> str:
     if dg in ("L1", "L2"):
         return "SSH_VRP"
     return "SSH_LINUX"
+
+
+def _task_definition_id(task: Any) -> str:
+    """Return the table task ID, falling back to legacy task identity."""
+    effective = getattr(task, "effective_task_id", "")
+    if effective:
+        return str(effective)
+    task_id = (getattr(task, "task_id", "") or "").strip()
+    if task_id:
+        return task_id
+    task_name = (getattr(task, "task_name", "") or "").strip()
+    if task_name:
+        return task_name
+    sequence = str(getattr(task, "sequence", "") or "").strip()
+    return sequence or "task"
 
 
 def _make_secret_ref(prefix: str, device_name: str) -> str:

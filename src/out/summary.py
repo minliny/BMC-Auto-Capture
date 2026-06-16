@@ -10,6 +10,7 @@ import os
 from collections import defaultdict
 from typing import Sequence
 
+from ..checks import CHECK_FAILED_STATUSES, CheckResult, CheckStage
 from ..models.execution_result import ExecutionResult
 from ..utils.path_safety import safe_join_under_root, is_safe_path_component
 from .failure_classification import classify_failure, normalized_failure_reason
@@ -149,6 +150,12 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
 def _categorize_failure(result_or_status, reason: str | None = None) -> str:
     """Categorize a failure reason into a short label."""
     if isinstance(result_or_status, ExecutionResult):
+        if result_or_status.rule_status == "RULE_PARSE_FAILED":
+            return "规则解析失败"
+        if result_or_status.rule_status == "RULE_FAILED":
+            return "规则失败"
+        if result_or_status.checkpoint_status == "CHECK_FAIL":
+            return "检查点失败"
         stable = classify_failure(result_or_status)
         if stable:
             return stable
@@ -198,7 +205,13 @@ def _categorize_failure(result_or_status, reason: str | None = None) -> str:
 def write_failure_csv(results: Sequence[ExecutionResult], output_dir: str,
                       filename: str = "failure_detail.csv") -> str:
     """Write failed tasks with reasons to CSV for detailed review."""
-    failed = [r for r in results if r.execution_status != "EXEC_SUCCESS"]
+    failed = [
+        r for r in results
+        if r.execution_status != "EXEC_SUCCESS"
+        or r.rule_status in ("RULE_FAILED", "RULE_PARSE_FAILED")
+        or r.checkpoint_status == "CHECK_FAIL"
+        or _has_blocking_check_failure(r)
+    ]
     if not is_safe_path_component(filename):
         raise ValueError(f"Unsafe filename for report: {filename!r}")
     path = safe_join_under_root(output_dir, filename)
@@ -206,12 +219,31 @@ def write_failure_csv(results: Sequence[ExecutionResult], output_dir: str,
 
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        writer.writerow(["设备分组", "设备名称", "任务名称", "任务类型",
-                         "执行状态", "失败分类", "失败原因"])
-        for r in sorted(failed, key=lambda r: (r.device_group, r.device_name, r.task_name)):
+        writer.writerow([
+            "计划ID", "任务ID", "执行项ID",
+            "设备分组", "设备名称", "任务名称", "任务类型",
+            "执行状态", "规则状态", "检查点状态", "失败分类", "失败原因",
+            "检查失败明细",
+        ])
+        for r in sorted(failed, key=lambda r: (r.device_group, r.device_name, r.task_id, r.task_name)):
             cat = _categorize_failure(r)
-            writer.writerow([r.device_group, r.device_name, r.task_name, r.task_type,
-                            r.execution_status, cat, normalized_failure_reason(r)])
+            writer.writerow([
+                r.plan_id, r.task_id, r.plan_item_id,
+                r.device_group, r.device_name, r.task_name, r.task_type,
+                r.execution_status, r.rule_status, r.checkpoint_status,
+                cat, normalized_failure_reason(r), r.check_failure_summary(),
+            ])
 
     logger.info("Wrote %d failures to %s", len(failed), path)
     return path
+
+
+def _has_blocking_check_failure(result: ExecutionResult) -> bool:
+    for cr in getattr(result, "check_results", None) or ():
+        if isinstance(cr, dict):
+            cr = CheckResult.from_dict(cr)
+        if cr.stage == CheckStage.POST_AUDIT:
+            continue
+        if cr.status in CHECK_FAILED_STATUSES and cr.severity == "ERROR":
+            return True
+    return False

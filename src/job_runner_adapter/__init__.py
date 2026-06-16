@@ -228,8 +228,19 @@ class RealRunnerAdapter:
 
         # Build TaskPlan
         from ..models.task_plan import TaskPlan
-        plan = TaskPlan(device=device, task=task)
-        plan.plan_id = f"api-{job_payload.get('job_id', 'unknown')}"
+        plan_id = str(
+            job_payload.get("plan_id")
+            or task_snapshot.get("plan_id")
+            or f"api-{job_payload.get('job_id', 'unknown')}"
+        )
+        task_id = str(task_snapshot.get("task_id") or getattr(task, "task_id", "") or task.task_name)
+        plan = TaskPlan(
+            device=device,
+            task=task,
+            plan_id=plan_id,
+            task_id=task_id,
+            plan_item_id=str(task_snapshot.get("plan_item_id") or job_payload.get("job_id") or ""),
+        )
 
         execution_mode = task_snapshot.get("execution_mode", "")
         task_type = task_snapshot.get("task_type", "")
@@ -350,6 +361,7 @@ class RealRunnerAdapter:
             enabled=True,
             full_screenshot=bool(snapshot.get("full_screenshot", False)),
             screenshot_mode=snapshot.get("screenshot_mode", "auto") or "auto",
+            task_id=str(snapshot.get("task_id", "") or ""),
         )
         task_def = self._coerce_dict(snapshot.get("task_def"))
         for key in (

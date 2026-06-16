@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from .models.app_config import AppConfig
-from .models.task_plan import TaskPlan
+from .models.task_plan import TaskPlan, make_plan_item_id
 from .models.execution_result import ExecutionResult
 from .models.verdict import compute_verdict
 from .executor.retry import execute_with_retry
@@ -95,7 +95,9 @@ class App:
         # 0. Set up timestamped output root to avoid cross-run overwrites
         session = RunSession.start(self.config.output_root)
         self.config.output_root = session.output_root
+        batch_plan_id = session.plan_id
         logger.info("输出目录:  %s", self.config.output_root)
+        logger.info("本次执行批次 plan_id: %s", batch_plan_id)
 
         # 1. Load
         logger.info("正在加载Excel:  %s", excel_path)
@@ -110,7 +112,7 @@ class App:
             return []
 
         # 3. Generate plans
-        plans = generate_plans(devices, tasks)
+        plans = generate_plans(devices, tasks, plan_id=batch_plan_id)
         if not plans:
             logger.warning("未生成执行计划 — check device/task matching")
             return []
@@ -533,7 +535,9 @@ class App:
         session = RunSession.start(self.config.output_root)
         execution_started_at = session.started_at
         self.config.output_root = session.output_root
+        self._assign_batch_identity(plans, session.plan_id)
         logger.info("输出目录 (in-memory):  %s", self.config.output_root)
+        logger.info("本次执行批次 plan_id: %s", session.plan_id)
 
         self.event_bus.emit("plans_generated", count=len(plans))
 
@@ -599,3 +603,16 @@ class App:
         )
 
         return self._results
+
+    @staticmethod
+    def _assign_batch_identity(plans: list[TaskPlan], plan_id: str) -> None:
+        """Ensure all provided plans belong to one execution batch."""
+        for plan in plans:
+            plan.plan_id = plan_id
+            if not plan.task_id:
+                plan.task_id = plan.task.effective_task_id
+            plan.plan_item_id = make_plan_item_id(
+                plan.plan_id,
+                plan.device_id,
+                plan.effective_task_id,
+            )

@@ -26,6 +26,13 @@ class ResultWriter:
         stop_metadata: dict | None = None,
         emit_terminal_summary: bool = True,
     ) -> dict:
+        try:
+            from .evidence_audit import attach_evidence_audit_checks
+
+            attach_evidence_audit_checks(results)
+        except Exception as e:
+            logger.warning("Failed to attach evidence audit checks: %s", redact_sensitive_text(str(e)))
+
         write_result_csv(results, output_dir)
         write_final_result_csv(results, output_dir)
 

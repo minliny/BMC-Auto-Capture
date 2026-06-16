@@ -61,6 +61,8 @@ Batch mode payload：
   "items": [
     {
       "planId": "1",
+      "taskId": "task.bmc.login",
+      "planItemId": "1:Switch-A:task.bmc.login",
       "deviceGroup": "A3",
       "deviceName": "Switch-A",
       "taskName": "BMC login check",

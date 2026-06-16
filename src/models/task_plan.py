@@ -12,12 +12,18 @@ from .device import Device
 from .task import Task
 
 
+def make_plan_item_id(plan_id: str, device_id: str, task_id: str) -> str:
+    """Build the stable id for one device-task execution inside a plan batch."""
+    return f"{plan_id}:{device_id}:{task_id}"
+
+
 @dataclass
 class TaskPlan:
     device: Device
     task: Task
     plan_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     task_id: str = ""
+    plan_item_id: str = ""
     client_task_id: str = ""
     status: str = "PENDING"
     skip_reason: str = ""
@@ -72,7 +78,13 @@ class TaskPlan:
 
     @property
     def effective_task_id(self) -> str:
-        return self.task_id or self.task.task_name
+        return self.task_id or self.task.effective_task_id
+
+    @property
+    def effective_plan_item_id(self) -> str:
+        if self.plan_item_id:
+            return self.plan_item_id
+        return make_plan_item_id(self.plan_id, self.device_id, self.effective_task_id)
 
     @property
     def protocol(self) -> str:

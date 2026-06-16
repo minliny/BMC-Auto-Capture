@@ -23,6 +23,8 @@ class PlanRunJobPayloadBuilder:
         exec_mode = getattr(task, "execution_mode", "")
         cmd = getattr(task, "command_or_url", "") or ""
         raw_cmd = cmd
+        task_id = item.task_id or getattr(task, "task_id", "") or item.task_name
+        plan_item_id = item.plan_item_id or f"{item.plan_id}:{item.device_name}:{task_id}"
 
         try:
             per_group_commands = getattr(task, "_per_group_commands", None) or {}
@@ -62,6 +64,9 @@ class PlanRunJobPayloadBuilder:
         }
 
         task_snapshot = {
+            "plan_id": str(item.plan_id),
+            "task_id": task_id,
+            "plan_item_id": plan_item_id,
             "task_name": item.task_name,
             "sequence": int(getattr(task, "sequence", 0) or 0),
             "sequence_str": str(getattr(task, "sequence_str", "") or ""),
@@ -107,11 +112,8 @@ class PlanRunJobPayloadBuilder:
             task_snapshot["no_split"] = True
 
         return {
-            "job_id": (
-                f"{item.plan_id}:{item.device_group}:"
-                f"{item.device_name}:{item.task_name}:"
-                f"{task_snapshot.get('sequence', 0)}"
-            ),
+            "job_id": plan_item_id,
+            "plan_id": str(item.plan_id),
             "device_snapshot": device_snapshot,
             "task_snapshot": task_snapshot,
         }

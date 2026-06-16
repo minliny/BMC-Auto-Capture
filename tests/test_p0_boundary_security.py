@@ -464,7 +464,7 @@ class TestCallbackOutboxSensitiveRedaction:
         )
         body = item.to_callback_body()
         assert set(body.keys()) == {
-            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "planId", "taskId", "planItemId", "deviceGroup", "deviceName", "taskName", "status",
             "updater", "errorMessage", "startedAt", "finishedAt",
         }
         # The token is redacted in outbox storage but NOT present in callback body
@@ -587,7 +587,7 @@ class TestLegacyCallbackBackdoor:
         payload = transport.calls[0]["payload"]
         assert "excelHash" not in payload, f"excelHash leaked: {payload}"
         assert set(payload.keys()) == {
-            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "planId", "taskId", "planItemId", "deviceGroup", "deviceName", "taskName", "status",
             "updater", "errorMessage", "startedAt", "finishedAt",
         }, \
             f"Payload has extra fields: {payload}"
@@ -623,7 +623,7 @@ class TestLegacyCallbackBackdoor:
 
         payload = transport.calls[0]["payload"]
         assert set(payload.keys()) == {
-            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "planId", "taskId", "planItemId", "deviceGroup", "deviceName", "taskName", "status",
             "updater", "errorMessage", "startedAt", "finishedAt",
         }
 
@@ -648,7 +648,7 @@ class TestLegacyCallbackBackdoor:
 
         item = build_callback_item("1", "d1", "t1", "SUCCESS")
         assert set(item.keys()) == {
-            "planId", "deviceGroup", "deviceName", "taskName", "status",
+            "planId", "taskId", "planItemId", "deviceGroup", "deviceName", "taskName", "status",
             "updater", "errorMessage", "startedAt", "finishedAt",
         }
 
@@ -676,7 +676,7 @@ class TestLegacyCallbackBackdoor:
         payload = transport.calls[0]["payload"]
         for item in payload["items"]:
             assert set(item.keys()) == {
-                "planId", "deviceGroup", "deviceName", "taskName", "status",
+                "planId", "taskId", "planItemId", "deviceGroup", "deviceName", "taskName", "status",
                 "updater", "errorMessage", "startedAt", "finishedAt",
             }
 

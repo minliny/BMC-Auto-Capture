@@ -29,6 +29,7 @@ def build_timestamped_output_root(output_root: str | Path, timestamp: str) -> st
 class RunSession:
     """State that belongs to one App run."""
 
+    plan_id: str
     started_at: float
     timestamp: str
     output_root: str
@@ -38,12 +39,15 @@ class RunSession:
         cls,
         configured_output_root: str | Path,
         *,
+        plan_id: str | None = None,
         timestamp: str | None = None,
         started_at: float | None = None,
     ) -> "RunSession":
         run_ts = timestamp or time.strftime("%Y%m%d_%H%M%S")
         run_started_at = time.time() if started_at is None else started_at
+        batch_plan_id = plan_id or f"plan-{run_ts}"
         return cls(
+            plan_id=batch_plan_id,
             started_at=run_started_at,
             timestamp=run_ts,
             output_root=build_timestamped_output_root(configured_output_root, run_ts),

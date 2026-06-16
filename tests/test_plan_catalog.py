@@ -265,13 +265,13 @@ class TestPlanHash:
 class TestTaskCatalog:
     """Tests 16: TaskCatalogStore lookup."""
 
-    def test_catalog_lookup_by_task_id(self, planner):
-        """16. task_catalog can look up PlannedTask by task_id."""
+    def test_catalog_lookup_by_plan_item_id(self, planner):
+        """16. task_catalog can look up PlannedTask by plan_item_id."""
         m, catalog, _ = planner.build()
         for t in m.tasks:
-            found = catalog.get(t.task_id)
+            found = catalog.get(t.plan_item_id)
             assert found is not None
-            assert found.task_id == t.task_id
+            assert found.plan_item_id == t.plan_item_id
 
     def test_catalog_to_dict(self, planner):
         """catalog.to_dict() produces valid JSON-serializable dict."""

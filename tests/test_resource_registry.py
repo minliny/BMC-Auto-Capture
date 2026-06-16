@@ -77,6 +77,24 @@ def test_reentrant_acquire():
     check("released after outer exit", not reg.is_held(ekey))
 
 
+def test_same_batch_different_plan_items_not_reentrant():
+    print("\n── plan_item holder key ──")
+    reg = ResourceRegistry()
+    reg._reset_for_test()
+    ekey = "BMC:10.0.0.22:443"
+    meta1 = {"execution_id": "e1", "plan_id": "batch-1", "plan_item_id": "batch-1:D1:task.a"}
+    meta2 = {"execution_id": "e1", "plan_id": "batch-1", "plan_item_id": "batch-1:D1:task.b"}
+
+    with reg.acquire(ekey, meta1):
+        blocked = False
+        try:
+            reg.acquire(ekey, meta2, timeout=0.01).__enter__()
+        except RuntimeError:
+            blocked = True
+        check("same batch different plan_item_id blocks", blocked)
+    check("released after item-key test", not reg.is_held(ekey))
+
+
 def test_cross_thread_serialization():
     print("\n── cross-thread serialization ──")
     reg = ResourceRegistry()
@@ -156,6 +174,7 @@ def test_different_keys_independent():
 if __name__ == "__main__":
     test_try_hold_release()
     test_reentrant_acquire()
+    test_same_batch_different_plan_items_not_reentrant()
     test_cross_thread_serialization()
     test_different_keys_independent()
     test_file_lock_integration()

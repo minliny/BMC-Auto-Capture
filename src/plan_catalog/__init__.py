@@ -1,8 +1,9 @@
 """
 plan_catalog — deterministic planner from Excel + validation.json.
 
-Generates stable task_ids and plan_hash so server and executor produce
-identical plans from the same inputs.
+Generates stable plan_item_ids and plan_hash so server and executor produce
+identical plan-item catalogs from the same inputs. task_id is the table task
+definition id.
 """
 
 from .models import (

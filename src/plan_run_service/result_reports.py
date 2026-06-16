@@ -53,6 +53,8 @@ class PlanRunResultReporter:
             return ExecutionResult(
                 plan_id=str(run.plan_id),
                 device_name=item.device_name,
+                task_id=item.task_id,
+                plan_item_id=item.plan_item_id,
                 device_group=item.device_group,
                 bmc_ip=getattr(device, "bmc_ip", "") if device is not None else "",
                 inband_ip=getattr(device, "inband_ip", "") if device is not None else "",
@@ -73,6 +75,8 @@ class PlanRunResultReporter:
             )
 
         result.plan_id = str(run.plan_id)
+        result.task_id = result.task_id or item.task_id
+        result.plan_item_id = result.plan_item_id or item.plan_item_id
         result.device_name = result.device_name or item.device_name
         result.device_group = result.device_group or item.device_group
         result.task_name = result.task_name or item.task_name

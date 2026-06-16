@@ -31,7 +31,7 @@ def clear_debug_store():
 EXCEL_FILE = str(Path(__file__).parent.parent / "examples" / "task_template.xlsx")
 
 CALLBACK_ITEM_FIELDS = {
-    "planId", "deviceGroup", "deviceName", "taskName", "status",
+    "planId", "taskId", "planItemId", "deviceGroup", "deviceName", "taskName", "status",
     "updater", "errorMessage", "startedAt", "finishedAt",
 }
 CALLBACK_FORBIDDEN_FIELDS = {

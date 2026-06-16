@@ -2,7 +2,8 @@
 Excel V2 reader — parses 设备信息 and 任务列表 sheets into Device and Task lists.
 
 Task execution details (URL, commands, rules) are resolved from tasks.json
-by matching task_name. Excel columns for execution details are fallbacks only.
+by matching task_id first. task_name matching is retained only as a migration
+fallback for older spreadsheets and task definitions.
 """
 
 from __future__ import annotations
@@ -66,6 +67,7 @@ def _parse_tags(raw: str) -> tuple[str, ...]:
 
 # Column name → canonical field name mapping (header-based, order-independent)
 DEVICE_HEADER_MAP: dict[str, str] = {}
+TASK_HEADER_MAP: dict[str, str] = {}
 
 def _parse_bilingual_header(raw: str) -> list[str]:
     """Parse a bilingual header like '设备名称(DeviceName)' into [中文, 英文].
@@ -123,6 +125,33 @@ def _build_header_map(headers: list[str]) -> dict[str, int]:
                 matched = True
                 break
 
+    return col_map
+
+
+def _build_task_header_map(headers: list[str]) -> dict[str, int]:
+    """Build canonical task field → column_index map from the task header row."""
+    if not TASK_HEADER_MAP:
+        _init_task_header_map()
+
+    col_map: dict[str, int] = {}
+    for idx, h in enumerate(headers):
+        h_clean = _str(h)
+        if not h_clean:
+            continue
+        parts = _parse_bilingual_header(h_clean)
+        matched = False
+        for part in parts:
+            field = TASK_HEADER_MAP.get(part, "")
+            if field:
+                col_map[field] = idx
+                matched = True
+                break
+        if matched:
+            continue
+        for key, val in TASK_HEADER_MAP.items():
+            if key.lower() == h_clean.lower():
+                col_map[val] = idx
+                break
     return col_map
 
 
@@ -202,6 +231,100 @@ def _init_header_map():
         "标签": "tags",
         "Tags": "tags",
         "tags": "tags",
+    })
+
+
+def _init_task_header_map():
+    """One-time init of task header name → field mapping."""
+    bilingual: list[tuple[str, str]] = [
+        ("任务ID(TaskID)", "task_id"),
+        ("任务序号(TaskSequence)", "sequence"),
+        ("任务名称(TaskName)", "task_name"),
+        ("任务类型(TaskType)", "task_type"),
+        ("设备分组(DeviceGroup)", "match_group"),
+        ("设备分类(DeviceGroup)", "match_group"),
+        ("截图保存目录(OutputDir)", "output_dir_template"),
+        ("输出目录(OutputDir)", "output_dir_template"),
+        ("图片命名格式(FileNamePattern)", "image_name_template"),
+        ("文件名模板(FileNamePattern)", "image_name_template"),
+        ("是否启用(Enabled)", "enabled"),
+        ("是否全量截图(FullScreenshot)", "full_screenshot"),
+        ("截图模式(ScreenshotMode)", "screenshot_mode"),
+        ("执行模式(ExecutionMode)", "execution_mode"),
+        ("执行命令(CommandOrUrl)", "command_or_url"),
+        ("动作JSON(ActionsJSON)", "actions_json"),
+        ("超时时间(TimeoutSeconds)", "timeout_seconds"),
+        ("重试次数(RetryCount)", "retry_count"),
+        ("规则JSON(RulesJSON)", "rules_json"),
+    ]
+    for cn_en, field in bilingual:
+        TASK_HEADER_MAP[cn_en] = field
+
+    TASK_HEADER_MAP.update({
+        "任务ID": "task_id",
+        "TaskID": "task_id",
+        "task_id": "task_id",
+        "taskId": "task_id",
+        "任务序号": "sequence",
+        "序号": "sequence",
+        "TaskSequence": "sequence",
+        "sequence": "sequence",
+        "任务名称": "task_name",
+        "TaskName": "task_name",
+        "task_name": "task_name",
+        "任务类型": "task_type",
+        "类型": "task_type",
+        "TaskType": "task_type",
+        "task_type": "task_type",
+        "设备分组": "match_group",
+        "设备分类": "match_group",
+        "分组": "match_group",
+        "DeviceGroup": "match_group",
+        "match_group": "match_group",
+        "截图保存目录": "output_dir_template",
+        "输出目录": "output_dir_template",
+        "OutputDir": "output_dir_template",
+        "output_dir_template": "output_dir_template",
+        "图片命名格式": "image_name_template",
+        "文件名模板": "image_name_template",
+        "图片名": "image_name_template",
+        "FileNamePattern": "image_name_template",
+        "image_name_template": "image_name_template",
+        "是否启用": "enabled",
+        "Enabled": "enabled",
+        "enabled": "enabled",
+        "是否全量截图": "full_screenshot",
+        "FullScreenshot": "full_screenshot",
+        "full_screenshot": "full_screenshot",
+        "截图模式": "screenshot_mode",
+        "ScreenshotMode": "screenshot_mode",
+        "screenshot_mode": "screenshot_mode",
+        "执行模式": "execution_mode",
+        "模式": "execution_mode",
+        "ExecutionMode": "execution_mode",
+        "execution_mode": "execution_mode",
+        "执行命令": "command_or_url",
+        "命令": "command_or_url",
+        "CommandOrUrl": "command_or_url",
+        "command_or_url": "command_or_url",
+        "URL": "command_or_url",
+        "SSH_CMD": "command_or_url",
+        "动作JSON": "actions_json",
+        "动作": "actions_json",
+        "ActionsJSON": "actions_json",
+        "actions_json": "actions_json",
+        "超时时间": "timeout_seconds",
+        "超时": "timeout_seconds",
+        "TimeoutSeconds": "timeout_seconds",
+        "timeout_seconds": "timeout_seconds",
+        "重试次数": "retry_count",
+        "重试": "retry_count",
+        "RetryCount": "retry_count",
+        "retry_count": "retry_count",
+        "规则JSON": "rules_json",
+        "规则": "rules_json",
+        "RulesJSON": "rules_json",
+        "rules_json": "rules_json",
     })
 
 
@@ -337,8 +460,51 @@ def _load_task_defs(tasks_json_path: str | Path | None = None) -> dict[str, dict
         data = json.load(f)
 
     tasks_def = data.get("tasks", {})
-    logger.info("Loaded %d task definitions from %s", len(tasks_def), found_path)
-    return tasks_def
+    if not isinstance(tasks_def, dict):
+        logger.warning("tasks.json 'tasks' must be an object, got %s", type(tasks_def).__name__)
+        return {}
+
+    indexed: dict[str, dict] = {}
+    for key, raw_def in tasks_def.items():
+        if not isinstance(raw_def, dict):
+            continue
+        tdef = dict(raw_def)
+        tdef.setdefault("_config_key", key)
+        task_id = _str(tdef.get("task_id"))
+        task_name = _str(tdef.get("task_name"))
+
+        indexed[key] = tdef
+        if task_id:
+            indexed.setdefault(task_id, tdef)
+        if task_name:
+            indexed.setdefault(task_name, tdef)
+
+    logger.info(
+        "Loaded %d task definitions (%d lookup aliases) from %s",
+        len(tasks_def), len(indexed), found_path,
+    )
+    return indexed
+
+
+def _lookup_task_def(task_defs: dict[str, dict], task_id: str, task_name: str) -> tuple[dict, str]:
+    """Resolve a task definition by stable task_id first, then legacy task_name."""
+    task_id = _str(task_id)
+    task_name = _str(task_name)
+    if task_id:
+        direct = task_defs.get(task_id)
+        if isinstance(direct, dict):
+            return direct, "task_id"
+        for raw in task_defs.values():
+            if isinstance(raw, dict) and _str(raw.get("task_id")) == task_id:
+                return raw, "task_id"
+    if task_name:
+        direct = task_defs.get(task_name)
+        if isinstance(direct, dict):
+            return direct, "task_name"
+        for raw in task_defs.values():
+            if isinstance(raw, dict) and _str(raw.get("task_name")) == task_name:
+                return raw, "task_name"
+    return {}, ""
 
 
 def load_tasks(
@@ -346,7 +512,7 @@ def load_tasks(
     sheet_name: str = "任务列表",
     tasks_json_path: str | Path | None = None,
 ) -> list[Task]:
-    """Load tasks from Excel, merging with tasks.json definitions by task_name."""
+    """Load tasks from Excel, merging with tasks.json definitions by task_id."""
     task_defs = _load_task_defs(tasks_json_path)
 
     wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
@@ -357,15 +523,9 @@ def load_tasks(
     # Read header to find optional columns
     header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
     task_headers = [_str(v) for v in header_row] if header_row else []
-    full_screenshot_col = -1
-    screenshot_mode_col = -1
-    for idx, h in enumerate(task_headers):
-        parts = _parse_bilingual_header(h)
-        for p in parts:
-            if p.lower() in ("fullscreenshot", "是否全量截图"):
-                full_screenshot_col = idx
-            if p.lower() in ("screenshotmode", "截图模式"):
-                screenshot_mode_col = idx
+    task_col_map = _build_task_header_map(task_headers)
+    full_screenshot_col = task_col_map.get("full_screenshot", -1)
+    screenshot_mode_col = task_col_map.get("screenshot_mode", -1)
 
     rows = list(ws.iter_rows(min_row=2, values_only=True))
     wb.close()
@@ -376,12 +536,35 @@ def load_tasks(
             continue
 
         vals = [_str(v) for v in row]
-        task_name = vals[1] if len(vals) > 1 else ""
+        has_task_header_map = bool(task_col_map)
+
+        def _task_val(field: str, fallback_idx: int = -1) -> str:
+            idx = task_col_map.get(field, fallback_idx)
+            if idx >= 0 and idx < len(vals):
+                return vals[idx]
+            return ""
+
+        task_id = _task_val("task_id")
+        task_name = _task_val("task_name", 1)
 
         # Resolve execution details: JSON takes priority, Excel is fallback
-        tdef = task_defs.get(task_name, {})
+        tdef, matched_by = _lookup_task_def(task_defs, task_id, task_name)
+        if matched_by == "task_name" and task_id:
+            logger.warning(
+                "Task row %d task_id=%s did not directly match tasks.json; "
+                "matched by legacy task_name=%s instead",
+                i + 2, task_id, task_name,
+            )
+        elif matched_by == "task_name":
+            logger.warning(
+                "Task row %d has no task_id; matched tasks.json by legacy task_name=%s",
+                i + 2, task_name,
+            )
+        resolved_task_id = task_id or _str(tdef.get("task_id")) or _str(tdef.get("_config_key"))
+        if not task_name and tdef:
+            task_name = _str(tdef.get("task_name")) or task_name
 
-        task_type = tdef.get("task_type") or (vals[2] if len(vals) > 2 else "")
+        task_type = tdef.get("task_type") or _task_val("task_type", 2)
         execution_mode = tdef.get("execution_mode") or ""
         command_or_url = tdef.get("command_or_url") or ""
         actions_json = tdef.get("actions_json") or ""
@@ -393,34 +576,43 @@ def load_tasks(
 
         # Excel columns depend on format:
         # Simplified (7 cols):  seq | name | type | group | outdir | imgname | enabled
+        # Simplified with task_id (8+ cols): id | seq | name | type | group | outdir | imgname | enabled ...
         # Extended (9 cols):    seq | name | type | group | outdir | imgname | enabled | full_ss | ss_mode
         # Full legacy (14 cols): seq | name | type | group | mode | cmd | actions | outdir | imgname | timeout | retry | enabled | rules
-        is_simplified_or_extended = len(vals) <= 9
+        has_legacy_exec_fields = any(
+            field in task_col_map
+            for field in ("execution_mode", "command_or_url", "actions_json", "timeout_seconds", "retry_count", "rules_json")
+        )
+        is_simplified_or_extended = (
+            not has_legacy_exec_fields if has_task_header_map else len(vals) <= 9
+        )
 
         # Column mapping diagnostics
         if col_count := len(vals):
             logger.info(
                 "任务行 %d [%s]: %d列 → "
-                "seq[0]=%s name[1]=%s type[2]=%s group[3]=%s "
-                "outdir[4]=%s imgname[5]=%s enabled[6]=%s"
+                "task_id=%s seq=%s name=%s type=%s group=%s "
+                "outdir=%s imgname=%s enabled=%s"
                 "%s%s",
                 i + 2, task_name, col_count,
-                vals[0] if col_count > 0 else "?",
-                vals[1] if col_count > 1 else "?",
-                vals[2] if col_count > 2 else "?",
-                vals[3] if col_count > 3 else "?",
-                vals[4] if col_count > 4 else "?",
-                vals[5] if col_count > 5 else "?",
-                vals[6] if col_count > 6 else "?",
+                task_id,
+                _task_val("sequence", 0),
+                task_name,
+                task_type,
+                _task_val("match_group", 3),
+                _task_val("output_dir_template", 4),
+                _task_val("image_name_template", 5),
+                _task_val("enabled", 6),
                 f" full_ss[7]={vals[7]}" if col_count > 7 else "",
                 f" ss_mode[8]={vals[8]}" if col_count > 8 else "",
             )
 
         if is_simplified_or_extended:
-            match_group = vals[3] if len(vals) > 3 else ""
-            output_dir_template = vals[4] if len(vals) > 4 else "{device_group}/{device_name}/{task_name}"
-            image_name_template = vals[5] if len(vals) > 5 else "{device_name}_{task_name}_{timestamp}"
-            enabled = _bool(vals[6]) if len(vals) > 6 else True
+            match_group = _task_val("match_group", 3)
+            output_dir_template = _task_val("output_dir_template", 4) or "{device_group}/{device_name}/{task_name}"
+            image_name_template = _task_val("image_name_template", 5) or "{device_name}_{task_name}_{timestamp}"
+            enabled_raw = _task_val("enabled", 6)
+            enabled = _bool(enabled_raw) if enabled_raw else True
             # Task definition overrides: actions_json, enabled (from JSON)
             actions_json = tdef.get("actions_json") or ""
             # Only allow JSON to force-DISABLE (security gate).
@@ -450,24 +642,27 @@ def load_tasks(
                     )
         else:
             # Legacy full-column format — Excel provides everything as before
-            match_group = vals[3] if len(vals) > 3 else ""
+            match_group = _task_val("match_group", 3)
             if not execution_mode:
-                execution_mode = vals[4] if len(vals) > 4 else ""
+                execution_mode = _task_val("execution_mode", 4)
             if not command_or_url:
-                command_or_url = vals[5] if len(vals) > 5 else ""
+                command_or_url = _task_val("command_or_url", 5)
+            if not actions_json:
+                actions_json = _task_val("actions_json", 6)
             if not tdef.get("timeout_seconds"):
-                timeout_seconds = _int(vals[9], 60) if len(vals) > 9 else 60
+                timeout_seconds = _int(_task_val("timeout_seconds", 9), 60)
             if not tdef.get("retry_count"):
-                retry_count = _int(vals[10], 0) if len(vals) > 10 else 0
-            output_dir_template = vals[7] if len(vals) > 7 else "{device_group}/{device_name}/{task_name}"
-            image_name_template = vals[8] if len(vals) > 8 else "{device_name}_{task_name}_{timestamp}"
-            enabled = _bool(vals[11]) if len(vals) > 11 else True
+                retry_count = _int(_task_val("retry_count", 10), 0)
+            output_dir_template = _task_val("output_dir_template", 7) or "{device_group}/{device_name}/{task_name}"
+            image_name_template = _task_val("image_name_template", 8) or "{device_name}_{task_name}_{timestamp}"
+            enabled_raw = _task_val("enabled", 11)
+            enabled = _bool(enabled_raw) if enabled_raw else True
 
         # CUSTOM_SCRIPT tasks are always disabled unless explicitly enabled in JSON
         if execution_mode == "CUSTOM_SCRIPT" and not tdef.get("enabled", False):
             enabled = False
 
-        raw_seq = _str(vals[0]) if len(vals) > 0 else str(i + 1)
+        raw_seq = _task_val("sequence", 0) or str(i + 1)
         # Parse optional header-based columns
         raw_full_ss = _str(row[full_screenshot_col]) if full_screenshot_col >= 0 and len(row) > full_screenshot_col else ""
         full_ss = raw_full_ss.strip().lower() in ("是", "true", "1", "yes", "y")
@@ -475,7 +670,7 @@ def load_tasks(
 
         task = Task(
             row_index=i + 2,
-            sequence=_int(vals[0]) if len(vals) > 0 else i + 1,
+            sequence=_int(raw_seq, i + 1),
             sequence_str=raw_seq,
             task_name=task_name,
             task_type=task_type,
@@ -491,6 +686,7 @@ def load_tasks(
             full_screenshot=full_ss,
             screenshot_mode=raw_ss_mode.strip() or "auto",
             rules_json=rules_json,
+            task_id=resolved_task_id,
         )
         # Attach tasks.json definition for runtime lookup (checkpoints, ready conditions, etc.)
         if tdef:

@@ -34,7 +34,7 @@ from ..utils.sensitive import (
 # ---------------------------------------------------------------------------
 
 _ALLOWED_CALLBACK_FIELDS = frozenset({
-    "planId", "deviceGroup", "deviceName", "taskName",
+    "planId", "taskId", "planItemId", "deviceGroup", "deviceName", "taskName",
     "status", "updater", "errorMessage",
     "startedAt", "finishedAt",
 })
@@ -457,17 +457,21 @@ def build_callback_item(plan_id: str, device_name: str, task_name: str,
                          error_message: str | None = None,
                          started_at: str | None = None,
                          finished_at: str | None = None,
-                         device_group: str = "") -> dict[str, Any]:
+                         device_group: str = "",
+                         task_id: str = "",
+                         plan_item_id: str = "") -> dict[str, Any]:
     """Build a single callback item dict with server-mapped status.
 
     The returned dict contains up to 9 fields:
-      {planId, deviceGroup, deviceName, taskName, status, updater, errorMessage,
+      {planId, taskId, planItemId, deviceGroup, deviceName, taskName, status, updater, errorMessage,
        startedAt, finishedAt}
 
     No excelHash, jobId, password, token, or secret is included.
     """
     item = _sanitize_callback_item({
         "planId": str(plan_id),
+        "taskId": task_id,
+        "planItemId": plan_item_id,
         "deviceGroup": device_group,
         "deviceName": device_name,
         "taskName": task_name,

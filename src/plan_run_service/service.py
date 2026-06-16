@@ -653,7 +653,11 @@ class PlanRunService:
     ) -> None:
         item.status = "IN_PROGRESS"
         item.started_at = time.time()
-        item.add_info_event("INFO", f"PlanItem started: device={item.device_name} task={item.task_name}")
+        item.add_info_event(
+            "INFO",
+            f"PlanItem started: planItemId={item.plan_item_id} taskId={item.task_id} "
+            f"device={item.device_name} task={item.task_name}",
+        )
         self._persist_run(run)
         self._deliver_item_status(run, item, cb)
 
@@ -669,7 +673,7 @@ class PlanRunService:
         self._deliver_item_status(run, item, cb)
 
     def _lock_owner(self, run: PlanRun, item: PlanRunItem) -> str:
-        return f"{run.plan_id}:{item.device_name}:{item.task_name}"
+        return item.plan_item_id or f"{run.plan_id}:{item.device_name}:{item.task_id or item.task_name}"
 
     def _is_bmc_item(self, item: PlanRunItem) -> bool:
         task_type = (item.task_type or "").upper()
@@ -775,7 +779,11 @@ class PlanRunService:
         time.sleep(0.001)
         item.status = "SUCCESS"
         item.error_message = None
-        item.add_info_event("INFO", f"Fake execution completed: device={item.device_name} task={item.task_name}")
+        item.add_info_event(
+            "INFO",
+            f"Fake execution completed: planItemId={item.plan_item_id} "
+            f"device={item.device_name} task={item.task_name}",
+        )
 
     def _execute_real(self, item: PlanRunItem, runner: Any):
         task_type = item.task_type.upper()

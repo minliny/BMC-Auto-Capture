@@ -67,6 +67,12 @@ class Task:
     screenshot_mode: str = "auto"
     sequence_str: str = ""
     per_group_commands: str = ""  # JSON string: {"GROUP": "command", ...}
+    task_id: str = ""
+
+    @property
+    def effective_task_id(self) -> str:
+        """Stable task definition id, falling back to task_name for legacy configs."""
+        return self.task_id or self.task_name
 
     def parsed_rules(self) -> tuple[Rule, ...]:
         """Parse rules_json into Rule objects.

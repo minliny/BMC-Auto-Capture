@@ -66,7 +66,7 @@ class DynamicScheduler:
         # Results
         self._results: list[ExecutionResult] = []
         self._results_lock = threading.Lock()
-        self._result_index_by_plan_id: dict[str, int] = {}
+        self._result_index_by_plan_item_id: dict[str, int] = {}
         self._result_sources: dict[str, str] = {}
 
         # Control — P0-3: accept external events from App for unified stop/pause
@@ -229,6 +229,7 @@ class DynamicScheduler:
                     r = ExecutionResult(
                         plan_id=plan.plan_id,
                         task_id=plan.task_id,
+                        plan_item_id=plan.effective_plan_item_id,
                         client_task_id=plan.client_task_id,
                         device_name=plan.device.device_name,
                         device_group=plan.device.device_group,
@@ -251,7 +252,7 @@ class DynamicScheduler:
                     )
                     r.final_verdict = compute_verdict(r)
                     self._append_result_once(
-                        plan.plan_id, r, source=f"stop:{self._stop_reason}",
+                        plan.effective_plan_item_id, r, source=f"stop:{self._stop_reason}",
                     )
                 logger.info(
                     "AUDIT-003: %d pending plans → SKIPPED (total results now %d)",
@@ -404,6 +405,7 @@ class DynamicScheduler:
                 result = ExecutionResult(
                     plan_id=plan.plan_id,
                     task_id=plan.task_id,
+                    plan_item_id=plan.effective_plan_item_id,
                     client_task_id=plan.client_task_id,
                     device_name=plan.device.device_name,
                     device_group=plan.device.device_group,
@@ -422,7 +424,7 @@ class DynamicScheduler:
                 )
                 result.final_verdict = compute_verdict(result)
                 self._append_result_once(
-                    plan.plan_id,
+                    plan.effective_plan_item_id,
                     result,
                     source="bmc_dependency_preflight",
                 )
@@ -534,6 +536,7 @@ class DynamicScheduler:
                 holder_meta = {
                     "execution_id": self._execution_id,
                     "plan_id": plan.plan_id,
+                    "plan_item_id": plan.effective_plan_item_id,
                     "device_name": plan.device.device_name,
                     "task_name": plan.task.task_name,
                     "endpoint_key": endpoint_key,
@@ -687,6 +690,9 @@ class DynamicScheduler:
             else:
                 r = ExecutionResult(
                     plan_id=plan.plan_id,
+                    task_id=plan.task_id,
+                    plan_item_id=plan.effective_plan_item_id,
+                    client_task_id=plan.client_task_id,
                     device_name=plan.device.device_name,
                     task_name=plan.task.task_name,
                     execution_status="EXEC_FAILED",
@@ -716,6 +722,9 @@ class DynamicScheduler:
                          plan.device.device_name, plan.task.task_name, e)
             r = ExecutionResult(
                 plan_id=plan.plan_id,
+                task_id=plan.task_id,
+                plan_item_id=plan.effective_plan_item_id,
+                client_task_id=plan.client_task_id,
                 device_name=plan.device.device_name,
                 task_name=plan.task.task_name,
                 execution_status="EXEC_ERROR",
@@ -747,7 +756,7 @@ class DynamicScheduler:
         result.final_verdict = compute_verdict(result)
 
         accepted = self._append_result_once(
-            plan.plan_id, result, source="worker_callback",
+            plan.effective_plan_item_id, result, source="worker_callback",
         )
         if not accepted:
             return
@@ -786,7 +795,7 @@ class DynamicScheduler:
         result.final_verdict = compute_verdict(result)
 
         accepted = self._append_result_once(
-            plan.plan_id, result, source="bmc_plan_callback",
+            plan.effective_plan_item_id, result, source="bmc_plan_callback",
         )
         if not accepted:
             return
@@ -841,41 +850,43 @@ class DynamicScheduler:
         return 50
 
     def _append_result_once(
-        self, plan_id: str, result: ExecutionResult, source: str,
+        self, plan_item_id: str, result: ExecutionResult, source: str,
     ) -> bool:
-        """Append or upgrade one final result per plan_id.
+        """Append or upgrade one final result per plan item.
 
         Executed terminal results outrank scheduler-generated skipped results.
         Results at the same priority are first-wins.
         """
-        stable_plan_id = plan_id or result.plan_id
-        if not stable_plan_id:
+        stable_plan_item_id = plan_item_id or result.plan_item_id
+        if not stable_plan_item_id and result.plan_id and result.device_name and result.task_id:
+            stable_plan_item_id = f"{result.plan_id}:{result.device_name}:{result.task_id}"
+        if not stable_plan_item_id:
             logger.error(
-                "Result rejected without plan_id: status=%s source=%s",
+                "Result rejected without plan_item_id: status=%s source=%s",
                 result.execution_status,
                 source,
             )
             return False
-        result.plan_id = stable_plan_id
+        result.plan_item_id = result.plan_item_id or stable_plan_item_id
 
         with self._results_lock:
-            old_index = self._result_index_by_plan_id.get(stable_plan_id)
+            old_index = self._result_index_by_plan_item_id.get(stable_plan_item_id)
             if old_index is None:
-                self._result_index_by_plan_id[stable_plan_id] = len(self._results)
-                self._result_sources[stable_plan_id] = source
+                self._result_index_by_plan_item_id[stable_plan_item_id] = len(self._results)
+                self._result_sources[stable_plan_item_id] = source
                 self._results.append(result)
                 return True
 
             old_result = self._results[old_index]
-            old_source = self._result_sources.get(stable_plan_id, "unknown")
+            old_source = self._result_sources.get(stable_plan_item_id, "unknown")
             old_priority = self._result_priority(old_result.execution_status)
             new_priority = self._result_priority(result.execution_status)
             replace = new_priority > old_priority
 
             logger.warning(
-                "Duplicate final result plan_id=%s old_status=%s new_status=%s "
+                "Duplicate final result plan_item_id=%s old_status=%s new_status=%s "
                 "old_source=%s new_source=%s action=%s",
-                stable_plan_id,
+                stable_plan_item_id,
                 old_result.execution_status,
                 result.execution_status,
                 old_source,
@@ -884,7 +895,7 @@ class DynamicScheduler:
             )
             if replace:
                 self._results[old_index] = result
-                self._result_sources[stable_plan_id] = source
+                self._result_sources[stable_plan_item_id] = source
                 return True
             return False
 

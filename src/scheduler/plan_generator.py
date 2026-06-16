@@ -8,12 +8,12 @@ import logging
 
 from ..models.device import Device
 from ..models.task import Task
-from ..models.task_plan import TaskPlan
+from ..models.task_plan import TaskPlan, make_plan_item_id
 
 logger = logging.getLogger("bmc_auto_capture.planner")
 
 
-def generate_plans(devices: list[Device], tasks: list[Task]) -> list[TaskPlan]:
+def generate_plans(devices: list[Device], tasks: list[Task], *, plan_id: str = "") -> list[TaskPlan]:
     """Match enabled devices to enabled tasks by group + tags."""
     enabled_devices = [d for d in devices if d.enabled]
     enabled_tasks = [t for t in tasks if t.enabled]
@@ -35,7 +35,19 @@ def generate_plans(devices: list[Device], tasks: list[Task]) -> list[TaskPlan]:
     for device in enabled_devices:
         for task in enabled_tasks:
             if _matches(device, task):
-                plans.append(TaskPlan(device=device, task=task))
+                task_id = task.effective_task_id
+                plan = TaskPlan(
+                    device=device,
+                    task=task,
+                    task_id=task_id,
+                    **({"plan_id": plan_id} if plan_id else {}),
+                )
+                plan.plan_item_id = make_plan_item_id(
+                    plan.plan_id,
+                    plan.device_id,
+                    plan.effective_task_id,
+                )
+                plans.append(plan)
 
     # Sort: by device_group, then device_name, then task.sequence
     plans.sort(key=lambda p: (

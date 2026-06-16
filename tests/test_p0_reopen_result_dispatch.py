@@ -19,12 +19,12 @@ from src.scheduler.worker_pool import (
 )
 
 
-def _plan(plan_id: str = "plan-1") -> TaskPlan:
+def _plan(plan_id: str = "plan-1", device_name: str = "D1") -> TaskPlan:
     return TaskPlan(
         plan_id=plan_id,
         device=Device(
             row_index=1,
-            device_name="D1",
+            device_name=device_name,
             device_group="A3",
             bmc_ip="10.0.0.1",
             bmc_username="admin",
@@ -40,13 +40,17 @@ def _plan(plan_id: str = "plan-1") -> TaskPlan:
             task_type="SSH",
             execution_mode="SSH_CMD",
             command_or_url="true",
+            task_id="task.t1",
         ),
+        task_id="task.t1",
     )
 
 
 def _result(plan: TaskPlan, status: str) -> ExecutionResult:
     return ExecutionResult(
         plan_id=plan.plan_id,
+        task_id=plan.effective_task_id,
+        plan_item_id=plan.effective_plan_item_id,
         device_name=plan.device.device_name,
         task_name=plan.task.task_name,
         execution_status=status,
@@ -80,10 +84,10 @@ def test_result_guard_keeps_one_final_result(
     plan = _plan()
 
     assert scheduler._append_result_once(
-        plan.plan_id, _result(plan, first_status), "first",
+        plan.effective_plan_item_id, _result(plan, first_status), "first",
     )
     scheduler._append_result_once(
-        plan.plan_id, _result(plan, second_status), "second",
+        plan.effective_plan_item_id, _result(plan, second_status), "second",
     )
 
     assert len(scheduler.results) == 1
@@ -93,19 +97,20 @@ def test_result_guard_keeps_one_final_result(
     assert summary["total"] == 1
 
 
-def test_result_guard_batch_closes_by_unique_plan_id():
+def test_result_guard_batch_closes_by_unique_plan_item_id():
     scheduler = _scheduler()
-    plans = [_plan(f"plan-{index}") for index in range(4)]
+    plans = [_plan("plan-batch", device_name=f"D{index}") for index in range(4)]
     for plan in plans:
         scheduler._append_result_once(
-            plan.plan_id, _result(plan, "EXEC_SKIPPED_STOPPED"), "stop",
+            plan.effective_plan_item_id, _result(plan, "EXEC_SKIPPED_STOPPED"), "stop",
         )
         scheduler._append_result_once(
-            plan.plan_id, _result(plan, "EXEC_SUCCESS"), "late_callback",
+            plan.effective_plan_item_id, _result(plan, "EXEC_SUCCESS"), "late_callback",
         )
 
     assert len(scheduler.results) == len(plans)
-    assert len({result.plan_id for result in scheduler.results}) == len(plans)
+    assert len({result.plan_id for result in scheduler.results}) == 1
+    assert len({result.plan_item_id for result in scheduler.results}) == len(plans)
     assert compute_summary(scheduler.results)["total"] == len(plans)
 
 

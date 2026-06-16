@@ -7,8 +7,8 @@
 
 任务配置由两部分组成：
 
-1. Excel `任务列表`：决定任务是否参与编排、任务序号、任务名、设备分组、输出模板。
-2. `tasks.json`：按任务名补充具体执行方式、命令、URL、动作、规则和重试参数。
+1. Excel `任务列表`：决定任务是否参与编排、任务 ID、任务序号、任务名、设备分组、输出模板。
+2. `tasks.json`：按任务 ID 补充具体执行方式、命令、URL、动作、规则和重试参数。
 
 新增任务时必须同时维护这两处。当前简化版 Excel 没有完整命令列，SSH 任务如果只加 Excel 行而没有 `tasks.json` 定义，会被视为缺少命令。
 
@@ -20,8 +20,9 @@
 
 | 列 | 含义 | 示例值 |
 | --- | --- | --- |
+| 任务ID | 稳定任务定义 ID，必须和 `tasks.json.tasks` 的 key 一致 | `task.030` |
 | 任务序号 | 排序和展示用序号 | `21` |
-| 任务名称 | 必须和 `tasks.json` 的 key 完全一致 | `新增任务名称` |
+| 任务名称 | 展示名称，可后续修改，不作为主匹配键 | `新增任务名称` |
 | 任务类型 | `SSH` 或 `BMC` | `SSH` |
 | 设备分组 | 匹配设备分组，支持 `/` 多分组 | `A3` 或 `L1/L2` |
 | 输出目录模板 | 任务输出子目录 | `{任务序号} {任务名称}/{设备分类}` |
@@ -36,15 +37,17 @@
 - `L1/L2` 会拆分为 L1、L2 两组分别编排。
 - 每个生成出的执行项仍然是“一台设备 + 一个任务”。
 
-### 2. 在 `tasks.json` 增加同名定义
+### 2. 在 `tasks.json` 增加同 ID 定义
 
 `tasks.json` 顶层结构固定为：
 
 ```json
 {
-  "_schema": "1.0",
+  "_schema": "2.0",
   "tasks": {
-    "新增任务名称": {
+    "task.030": {
+      "task_id": "task.030",
+      "task_name": "新增任务名称",
       "task_type": "SSH",
       "execution_mode": "SSH_CMD"
     }
@@ -52,11 +55,12 @@
 }
 ```
 
-`tasks.json` 的 key 必须和 Excel `任务名称` 完全一致，包括中文、空格和标点。
+`tasks.json.tasks` 的 key 必须和 Excel `任务ID` 完全一致。`task_name` 只作为展示名称和输出模板变量，不再作为主匹配键；老表没有 `任务ID` 时仍会按任务名兼容匹配并输出 warning。
 
 ### 3. 新增前检查
 
-- 任务名保持唯一、稳定。
+- 任务 ID 保持唯一、稳定。
+- 任务名用于展示，可以修改；不要再依赖任务名做匹配。
 - Excel 任务类型和 `tasks.json.task_type` 一致。
 - SSH 任务必须有命令来源：`command_or_url` 或 `per_group_commands`。
 - BMC 任务必须有目标页面来源：`command_or_url` 或 `actions_json` 第一条 `goto`。
@@ -84,7 +88,9 @@ SSH 当前按用户语义分两类：
 ```json
 {
   "tasks": {
-    "Linux系统信息采集": {
+    "task.linux.system_info": {
+      "task_id": "task.linux.system_info",
+      "task_name": "Linux系统信息采集",
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "ssh_profile": "linux",
@@ -113,7 +119,9 @@ SSH 当前按用户语义分两类：
 ```json
 {
   "tasks": {
-    "VRP接口状态查询": {
+    "task.vrp.interface_brief": {
+      "task_id": "task.vrp.interface_brief",
+      "task_name": "VRP接口状态查询",
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "ssh_profile": "vrp",
@@ -153,7 +161,9 @@ SSH 当前按用户语义分两类：
 ```json
 {
   "tasks": {
-    "光模块信息查询": {
+    "task.vrp.transceiver_info": {
+      "task_id": "task.vrp.transceiver_info",
+      "task_name": "光模块信息查询",
       "task_type": "SSH",
       "execution_mode": "SSH_CMD",
       "command_or_url": "display interface transceiver",
@@ -225,7 +235,9 @@ BMC 支持两种任务：
 ```json
 {
   "tasks": {
-    "BMC资产页面截图": {
+    "task.bmc.asset_page": {
+      "task_id": "task.bmc.asset_page",
+      "task_name": "BMC资产页面截图",
       "task_type": "BMC",
       "execution_mode": "BMC_URL",
       "command_or_url": "/UI/Static/#/navigate/<PAGE>",
@@ -269,7 +281,9 @@ BMC 支持两种任务：
 ```json
 {
   "tasks": {
-    "BMC动作流截图": {
+    "task.bmc.action_flow": {
+      "task_id": "task.bmc.action_flow",
+      "task_name": "BMC动作流截图",
       "task_type": "BMC",
       "execution_mode": "BMC_ACTIONS",
       "command_or_url": "",
@@ -408,4 +422,4 @@ Windows release 包可运行：
 
 ### 5. 任务状态无法可靠回写服务端
 
-当前任务状态回写主要依赖批次、设备分组、设备名、任务名等信息。新增任务时应保持任务名稳定且唯一；如果未来允许同一设备同一分组下出现同名任务，应补充稳定的 `taskSequence` 或 `taskId` 作为增强键。
+当前任务状态回写使用 `planId` 表示一次全量执行批次，`taskId` 表示 Excel 中的稳定任务定义，`planItemId` 表示批次内“一台设备 + 一个任务”的具体执行项。新增任务时必须保持 `taskId` 稳定；任务名可作为展示文本调整。

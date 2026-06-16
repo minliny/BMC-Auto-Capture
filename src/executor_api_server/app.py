@@ -620,6 +620,8 @@ def _register_debug_callback_receiver(app: FastAPI):
         for raw in source_items:
             payload = {
                 "planId": raw.get("planId"),
+                "taskId": raw.get("taskId", ""),
+                "planItemId": raw.get("planItemId", ""),
                 "deviceGroup": raw.get("deviceGroup", ""),
                 "deviceName": raw.get("deviceName", ""),
                 "taskName": raw.get("taskName", ""),

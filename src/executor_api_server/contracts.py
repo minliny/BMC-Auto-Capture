@@ -158,6 +158,8 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
                 "items": [
                     {
                         "planId": "<planId>",
+                        "taskId": "<taskId>",
+                        "planItemId": "<planId>:<deviceName>:<taskId>",
                         "deviceGroup": "<deviceGroup>",
                         "deviceName": "<deviceName>",
                         "taskName": "<taskName>",
@@ -194,6 +196,8 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
             "payloadStructure": "flat object (no items wrapper) — same item fields as batch mode",
             "examplePayload": {
                 "planId": "<planId>",
+                "taskId": "<taskId>",
+                "planItemId": "<planId>:<deviceName>:<taskId>",
                 "deviceGroup": "<deviceGroup>",
                 "deviceName": "<deviceName>",
                 "taskName": "<taskName>",
@@ -223,11 +227,27 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
             "example": "<planId>",
         },
         {
+            "name": "taskId",
+            "type": "string",
+            "required": True,
+            "source": "Excel task row task_id column / tasks.json task_id",
+            "description": "Stable task definition ID. Task names are display-only and may change.",
+            "example": "<taskId>",
+        },
+        {
+            "name": "planItemId",
+            "type": "string",
+            "required": True,
+            "source": "planId + deviceName + taskId",
+            "description": "Unique execution item ID inside a plan batch.",
+            "example": "<planId>:<deviceName>:<taskId>",
+        },
+        {
             "name": "deviceGroup",
             "type": "string",
             "required": True,
             "source": "Excel device row device_group column",
-            "description": "Device group used with planId/deviceName/taskName to locate the task",
+            "description": "Device group used for grouping/display; task identity uses taskId",
             "example": "<deviceGroup>",
         },
         {

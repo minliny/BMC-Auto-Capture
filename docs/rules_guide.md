@@ -2,17 +2,56 @@
 
 规则用于在执行截图后判断 BMC/SSH 页面状态是否满足测试用例要求。**规则不影响截图步骤**，只在截图完成后运行。
 
+## 当前统一检查模型
+
+执行端已经把分散的检查结果统一记录为 `CheckResult`。这不是一套新的规则语法，而是统一输出模型，方便 CSV/API/final verdict 汇总。
+
+统一阶段：
+
+| stage | 含义 |
+|---|---|
+| `CONFIG_CHECK` | 配置和 schema 检查 |
+| `PRECHECK` | 执行前连接、端口、资源检查 |
+| `SESSION_CHECK` | 登录态、会话、页面健康检查 |
+| `EXECUTION_CHECK` | 命令或页面动作是否执行成功 |
+| `READY_CHECK` | 最终截图/取证前是否到达正确状态 |
+| `ARTIFACT_CHECK` | 截图、HTML、TXT、log 等证据是否可信 |
+| `RESULT_CHECK` | 任务结果是否满足业务预期 |
+| `POST_AUDIT` | 事后证据审计诊断，不直接改变最终结论 |
+
+统一结果字段：
+
+```json
+{
+  "stage": "RESULT_CHECK",
+  "check_id": "ssh.result_rules",
+  "status": "PASS|FAIL|WARN|SKIP|ERROR",
+  "severity": "ERROR|WARNING|INFO",
+  "message": "失败或通过说明",
+  "details": {
+    "field": "protocol",
+    "raw_line": "100GE1/0/1 up down ..."
+  }
+}
+```
+
+现有 `rules`、`result_rules`、`capture_ready_conditions`、`evidence_checkpoints` 和 legacy `checkpoints` 会继续兼容，同时迁移为统一 `CheckResult` 输出。
+
 ## 一、规则在 tasks.json 中的位置
 
 ```json
 {
-  "任务名称": {
-    "task_type": "BMC",
-    "execution_mode": "BMC_URL",
-    "command_or_url": "/UI/Static/#/navigate/system/storage",
-    "rules": [
-      // 规则组写在这里
-    ]
+  "tasks": {
+    "task.bmc.storage": {
+      "task_id": "task.bmc.storage",
+      "task_name": "存储页面检查",
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/storage",
+      "rules": [
+        // 规则组写在这里
+      ]
+    }
   }
 }
 ```
@@ -29,7 +68,7 @@
 }
 ```
 
-每个任务是 `rules: [规则组, 规则组, ...]`。
+每个任务的 BMC 页面检查使用 `rules: [规则组, 规则组, ...]`；SSH/TELNET 命令执行结果检查推荐使用 `result_rules: [规则组, 规则组, ...]`。
 
 ## 三、检查项格式
 
@@ -97,46 +136,54 @@
 
 ```json
 {
-  "RAID配置测试": {
-    "task_type": "BMC",
-    "execution_mode": "BMC_URL",
-    "command_or_url": "/UI/Static/#/navigate/system/storage",
-    "rules": [
-      {
-        "name": "RAID页面基础检查",
-        "desc": "验证存储页面正常加载，无异常告警，RAID卡信息可见",
-        "checks": [
-          {"type": "text_exists", "target": "Storage", "expect": "", "desc": "页面标题包含Storage"},
-          {"type": "element_not_exists", "target": ".alert-danger", "expect": "", "desc": "无红色告警"},
-          {"type": "text_not_exists", "target": "异常", "expect": "", "desc": "无异常状态"},
-          {"type": "text_not_exists", "target": "告警", "expect": "", "desc": "无告警信息"}
-        ]
-      }
-    ]
+  "tasks": {
+    "task.bmc.raid_config": {
+      "task_id": "task.bmc.raid_config",
+      "task_name": "RAID配置测试",
+      "task_type": "BMC",
+      "execution_mode": "BMC_URL",
+      "command_or_url": "/UI/Static/#/navigate/system/storage",
+      "rules": [
+        {
+          "name": "RAID页面基础检查",
+          "desc": "验证存储页面正常加载，无异常告警，RAID卡信息可见",
+          "checks": [
+            {"type": "text_exists", "target": "Storage", "expect": "", "desc": "页面标题包含Storage"},
+            {"type": "element_not_exists", "target": ".alert-danger", "expect": "", "desc": "无红色告警"},
+            {"type": "text_not_exists", "target": "异常", "expect": "", "desc": "无异常状态"},
+            {"type": "text_not_exists", "target": "告警", "expect": "", "desc": "无告警信息"}
+          ]
+        }
+      ]
+    }
   }
 }
 ```
 
 ```json
 {
-  "计算节点L1交换网络端口查询测试": {
-    "task_type": "SSH",
-    "execution_mode": "SSH_CMD",
-    "command_or_url": "display interface brief | include up",
-    "rules": [
-      {
-        "name": "端口状态检查",
-        "desc": "L1交换机接口状态字段应正常，不因描述文本中的 down 误判",
-        "checks": [
-          {
-            "type": "interface_status",
-            "fields": ["physical", "protocol"],
-            "forbidden": ["down"],
-            "desc": "真实接口记录的 physical/protocol 状态不得为 down"
-          }
-        ]
-      }
-    ]
+  "tasks": {
+    "task.019": {
+      "task_id": "task.019",
+      "task_name": "计算节点L1交换网络端口查询测试",
+      "task_type": "SSH",
+      "execution_mode": "SSH_CMD",
+      "command_or_url": "display interface brief | include up",
+      "result_rules": [
+        {
+          "name": "端口状态检查",
+          "desc": "L1交换机接口状态字段应正常，不因描述文本中的 down 误判",
+          "checks": [
+            {
+              "type": "interface_status",
+              "fields": ["physical", "protocol"],
+              "forbidden": ["down"],
+              "desc": "真实接口记录的 physical/protocol 状态不得为 down"
+            }
+          ]
+        }
+      ]
+    }
   }
 }
 ```

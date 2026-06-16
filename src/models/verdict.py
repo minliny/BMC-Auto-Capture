@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Sequence
 
+from ..checks.models import CHECK_FAILED_STATUSES, CheckResult, CheckStage
 from .execution_result import ExecutionResult
 
 # ---------------------------------------------------------------------------
@@ -21,6 +22,7 @@ from .execution_result import ExecutionResult
 # FAIL conditions:
 #   - EXEC_FAILED, EXEC_ERROR, EXEC_TIMEOUT
 #   - ARTIFACT_FAILED
+#   - RULE_FAILED / RULE_PARSE_FAILED
 #   - CHECK_FAIL
 #
 # SKIPPED conditions:
@@ -62,7 +64,11 @@ def compute_verdict(result: ExecutionResult) -> str:
     # FAIL conditions
     if status in ("EXEC_FAILED", "EXEC_ERROR", "EXEC_TIMEOUT"):
         return "FAIL"
+    if _has_blocking_check_failure(result):
+        return "FAIL"
     if result.artifact_status == "ARTIFACT_FAILED":
+        return "FAIL"
+    if result.rule_status in ("RULE_FAILED", "RULE_PARSE_FAILED"):
         return "FAIL"
     if result.checkpoint_status == "CHECK_FAIL":
         return "FAIL"
@@ -78,12 +84,44 @@ def compute_verdict(result: ExecutionResult) -> str:
         return "WARN"
     if result.ready_status == "READY_NOT_READY":
         return "WARN"
+    if _has_check_warning(result):
+        return "WARN"
     if result.checkpoint_status == "CHECK_WARN":
         return "WARN"
     if result.artifact_status == "ARTIFACT_PARTIAL":
         return "WARN"
 
     return "PASS" if status == "EXEC_SUCCESS" else "FAIL"
+
+
+def _iter_check_results(result: ExecutionResult):
+    for cr in getattr(result, "check_results", None) or ():
+        if isinstance(cr, CheckResult):
+            yield cr
+        elif isinstance(cr, dict):
+            yield CheckResult.from_dict(cr)
+
+
+def _has_blocking_check_failure(result: ExecutionResult) -> bool:
+    for cr in _iter_check_results(result):
+        if cr.stage in {CheckStage.READY, CheckStage.POST_AUDIT}:
+            continue
+        if cr.status in CHECK_FAILED_STATUSES and cr.severity == "ERROR":
+            return True
+    return False
+
+
+def _has_check_warning(result: ExecutionResult) -> bool:
+    for cr in _iter_check_results(result):
+        if cr.stage == CheckStage.POST_AUDIT:
+            continue
+        if cr.status == "WARN":
+            return True
+        if cr.stage == CheckStage.READY and cr.status in CHECK_FAILED_STATUSES:
+            return True
+        if cr.status in CHECK_FAILED_STATUSES and cr.severity == "WARNING":
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------

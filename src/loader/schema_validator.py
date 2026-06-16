@@ -67,12 +67,29 @@ def validate(devices: list[Device], tasks: list[Task]) -> ValidationReport:
 
     # --- Task validation ---
     task_names: set[str] = set()
+    task_ids: set[str] = set()
     for t in tasks:
+        task_id = getattr(t, "task_id", "") or ""
+        if t.enabled and not task_id:
+            report.messages.append(ValidationMessage(
+                "WARNING", "task", t.row_index, "任务ID",
+                "启用任务缺少任务ID，当前仅按任务名称兼容匹配；后续版本会要求任务ID",
+            ))
+        if task_id:
+            if task_id in task_ids:
+                report.messages.append(ValidationMessage(
+                    "ERROR", "task", t.row_index, "任务ID", f"任务ID重复: {task_id}",
+                ))
+            task_ids.add(task_id)
+
         if not t.task_name:
             report.messages.append(ValidationMessage("ERROR", "task", t.row_index, "任务名称", "任务名称不能为空"))
 
         if t.task_name in task_names:
-            report.messages.append(ValidationMessage("WARNING", "task", t.row_index, "任务名称", f"任务名称重复: {t.task_name}"))
+            report.messages.append(ValidationMessage(
+                "WARNING", "task", t.row_index, "任务名称",
+                f"任务名称重复: {t.task_name}；任务匹配以任务ID为准",
+            ))
         task_names.add(t.task_name)
 
         if t.task_type.upper() not in ("BMC", "SSH", "TELNET"):

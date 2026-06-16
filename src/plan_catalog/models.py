@@ -100,6 +100,7 @@ class ValidationReport:
 class PlannedTask:
     """A single task in both the manifest and catalog."""
     task_id: str
+    plan_item_id: str = ""
     plan_id: str = ""
     task_no: str = ""
     task_name: str = ""
@@ -118,6 +119,7 @@ class PlannedTask:
     def to_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
+            "plan_item_id": self.effective_plan_item_id,
             "plan_id": self.plan_id,
             "task_no": self.task_no,
             "task_name": self.task_name,
@@ -134,6 +136,7 @@ class PlannedTask:
         """Full record for task_catalog.json."""
         return {
             "task_id": self.task_id,
+            "plan_item_id": self.effective_plan_item_id,
             "plan_id": self.plan_id,
             "device_snapshot": dict(self.device_snapshot),
             "task_snapshot": dict(self.task_snapshot),
@@ -141,6 +144,10 @@ class PlannedTask:
             "output": dict(self.output),
             "source_row_ref": self.source_row_ref,
         }
+
+    @property
+    def effective_plan_item_id(self) -> str:
+        return self.plan_item_id or self.task_id
 
 
 class PlanManifest:
@@ -196,6 +203,7 @@ class PlanManifest:
             "tasks": [
                 {
                     "task_id": t.task_id,
+                    "plan_item_id": t.effective_plan_item_id,
                     "task_no": t.task_no,
                     "task_type": t.task_type,
                     "execution_mode": t.execution_mode,
@@ -242,6 +250,35 @@ def make_task_id(
         device_group,
         device_key,
         task_no,
+        task_name,
+        task_type,
+        execution_mode,
+        source_row_ref,
+    )
+
+
+def make_plan_item_id(
+    planner_version: str,
+    excel_sha256: str,
+    validation_json_sha256: str,
+    device_group: str,
+    device_key: str,
+    task_no: str,
+    task_id: str,
+    task_name: str,
+    task_type: str,
+    execution_mode: str,
+    source_row_ref: str = "",
+) -> str:
+    """Generate the deterministic id for one device-task planned item."""
+    return _stable_hash(
+        planner_version,
+        excel_sha256,
+        validation_json_sha256,
+        device_group,
+        device_key,
+        task_no,
+        task_id,
         task_name,
         task_type,
         execution_mode,

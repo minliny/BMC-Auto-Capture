@@ -92,33 +92,33 @@ class BMCEndpointSessionRunner:
     async def _run_async(self) -> list[ExecutionResult]:
         self.session_started_at = time.time()
         results: list[ExecutionResult] = []
-        result_meta_by_plan_id: dict[str, tuple[str, str]] = {}
+        result_meta_by_plan_item_id: dict[str, tuple[str, str]] = {}
 
         def append_result_once(
             plan: TaskPlan, result: ExecutionResult, source: str,
         ) -> bool:
-            plan_id = plan.plan_id or result.plan_id
-            if not plan_id:
+            plan_item_id = result.plan_item_id or plan.effective_plan_item_id
+            if not plan_item_id:
                 logger.error(
-                    "[SessionRunner] result rejected without plan_id source=%s",
+                    "[SessionRunner] result rejected without plan_item_id source=%s",
                     source,
                 )
                 return False
-            result.plan_id = plan_id
-            old_meta = result_meta_by_plan_id.get(plan_id)
+            result.plan_item_id = plan_item_id
+            old_meta = result_meta_by_plan_item_id.get(plan_item_id)
             if old_meta is not None:
                 logger.warning(
                     "[SessionRunner] duplicate final result discarded "
-                    "plan_id=%s old_status=%s new_status=%s "
+                    "plan_item_id=%s old_status=%s new_status=%s "
                     "old_source=%s new_source=%s",
-                    plan_id,
+                    plan_item_id,
                     old_meta[0],
                     result.execution_status,
                     old_meta[1],
                     source,
                 )
                 return False
-            result_meta_by_plan_id[plan_id] = (result.execution_status, source)
+            result_meta_by_plan_item_id[plan_item_id] = (result.execution_status, source)
             results.append(result)
             if self._on_plan_done:
                 self._on_plan_done(plan, result)
@@ -153,6 +153,9 @@ class BMCEndpointSessionRunner:
                     plan.status = "EXEC_FAILED"
                     r = ExecutionResult(
                         plan_id=plan.plan_id,
+                        task_id=plan.task_id,
+                        plan_item_id=plan.effective_plan_item_id,
+                        client_task_id=plan.client_task_id,
                         device_name=plan.device.device_name,
                         device_group=plan.device.device_group,
                         bmc_ip=plan.device.bmc_ip,
@@ -200,6 +203,7 @@ class BMCEndpointSessionRunner:
                     return ExecutionResult(
                         plan_id=plan.plan_id,
                         task_id=plan.task_id,
+                        plan_item_id=plan.effective_plan_item_id,
                         client_task_id=plan.client_task_id,
                         device_name=device.device_name,
                         device_group=device.device_group,
@@ -452,6 +456,7 @@ class BMCEndpointSessionRunner:
                     r = ExecutionResult(
                         plan_id=plan.plan_id,
                         task_id=plan.task_id,
+                        plan_item_id=plan.effective_plan_item_id,
                         client_task_id=plan.client_task_id,
                         device_name=plan.device.device_name,
                         device_group=plan.device.device_group,
@@ -480,6 +485,7 @@ class BMCEndpointSessionRunner:
                     r = ExecutionResult(
                         plan_id=plan.plan_id,
                         task_id=plan.task_id,
+                        plan_item_id=plan.effective_plan_item_id,
                         client_task_id=plan.client_task_id,
                         device_name=plan.device.device_name,
                         device_group=plan.device.device_group,
