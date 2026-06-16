@@ -199,7 +199,7 @@ Interface                   PHY   Protocol Description
 """
     object.__setattr__(task, "_resolved_commands", [("cmd_0", task.command_or_url)])
 
-    rules = getattr(task, "_task_def", {}).get("rules", [])
+    rules = getattr(task, "_task_def", {}).get("result_rules", [])
     failure = SSHExecutor()._evaluate_ssh_rules(
         task,
         combined_output=output,

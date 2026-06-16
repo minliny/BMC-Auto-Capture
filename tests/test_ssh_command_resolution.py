@@ -455,7 +455,7 @@ class TestPlanRunServicePerGroupCommands:
         assert flow.get("target_url") or flow.get("pre_capture_actions")
 
     def test_actual_rules_survive_api_adapter_chain(self):
-        """Actual rule-bearing tasks must not lose rules_json or task_def."""
+        """Actual result-rule-bearing SSH tasks must not lose task_def."""
         from src.loader.excel_reader import load_all
         from src.models.device import Device
         from src.plan_run_service.service import PlanRunService, PlanRunItem
@@ -480,7 +480,7 @@ class TestPlanRunServicePerGroupCommands:
         payload = PlanRunService()._build_job_payload(item)
         rebuilt = RealRunnerAdapter()._task_from_snapshot(payload["task_snapshot"])
         assert len(rebuilt.parsed_rules()) == len(task.parsed_rules())
-        assert getattr(rebuilt, "_task_def", {}).get("rules")
+        assert getattr(rebuilt, "_task_def", {}).get("result_rules")
 
 
 # ===========================================================================

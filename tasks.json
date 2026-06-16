@@ -226,21 +226,7 @@
       "command_or_url": "screen-length 0 temporary\ndisplay interface brief\ndisplay interface 200GHL1/2/48",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [
-        {
-          "rule_name": "check_no_interface_down",
-          "rule_type": "advanced",
-          "enabled": false,
-          "actions": [
-            {
-              "action_type": "assert_text",
-              "value": "up",
-              "_note": "接口状态应包含 up，如果接口 down 则规则 FAIL"
-            }
-          ],
-          "_note": "需在真实设备验证后启用。预期端口清单待业务方确认。"
-        }
-      ],
+      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "capture_ready_conditions": [],
@@ -326,25 +312,7 @@
       "command_or_url": "display interface brief | include up",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [
-        {
-          "name": "端口状态检查",
-          "desc": "L1交换机接口状态字段应正常，不因描述文本中的 down 误判",
-          "checks": [
-            {
-              "type": "interface_status",
-              "fields": [
-                "physical",
-                "protocol"
-              ],
-              "forbidden": [
-                "down"
-              ],
-              "desc": "真实接口记录的 physical/protocol 状态不得为 down"
-            }
-          ]
-        }
-      ],
+      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "task_id": "task.019",
@@ -375,21 +343,7 @@
       "command_or_url": "display interface brief",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [
-        {
-          "rule_name": "check_no_error_down",
-          "rule_type": "advanced",
-          "enabled": false,
-          "actions": [
-            {
-              "action_type": "assert_text",
-              "value": "up",
-              "_note": "接口应处于 up 状态，如存在 down/error-down 则规则 FAIL"
-            }
-          ],
-          "_note": "需在真实设备验证后启用。拔插场景和目标端口未定义前不启用。"
-        }
-      ],
+      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "task_id": "task.020",
