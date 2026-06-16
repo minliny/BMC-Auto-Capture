@@ -198,3 +198,96 @@ def check_result_from_rule_action(
         details={"action_type": action_type, "message": message},
         source=rule_scope,
     )
+
+
+def check_result_from_health_result(
+    health: Any,
+    *,
+    source: str = "bmc.health",
+    stage: str = CheckStage.SESSION,
+) -> CheckResult:
+    health_stage = str(getattr(health, "stage", "") or "health")
+    healthy = bool(getattr(health, "healthy", False))
+    status = CheckStatus.PASS if healthy else CheckStatus.FAIL
+    health_status = str(getattr(health, "status", "") or "")
+    details_text = str(getattr(health, "details", "") or health_status)
+    return CheckResult(
+        stage=stage,
+        check_id=f"{source}.{health_stage}",
+        status=status,
+        severity="ERROR",
+        message=details_text or ("health OK" if healthy else "health failed"),
+        details={
+            "health_stage": health_stage,
+            "health_status": health_status,
+            "matched_keyword": str(getattr(health, "matched_keyword", "") or ""),
+            "url": str(getattr(health, "url", "") or ""),
+            "title": str(getattr(health, "title", "") or ""),
+            "html_size": int(getattr(health, "html_size", 0) or 0),
+            "recoverable": bool(getattr(health, "recoverable", False)),
+            "terminal": bool(getattr(health, "terminal", False)),
+        },
+        source=source,
+        actual=health_status,
+    )
+
+
+def check_result_from_artifact_status(
+    artifact_status: str,
+    reason: str = "",
+    *,
+    source: str = "artifact",
+    evidence_ref: str = "",
+) -> CheckResult:
+    status_map = {
+        "ARTIFACT_SAVED": CheckStatus.PASS,
+        "ARTIFACT_PARTIAL": CheckStatus.WARN,
+        "ARTIFACT_FAILED": CheckStatus.FAIL,
+        "ARTIFACT_PENDING": CheckStatus.SKIP,
+    }
+    normalized_artifact_status = str(artifact_status or "ARTIFACT_PENDING")
+    return CheckResult(
+        stage=CheckStage.ARTIFACT,
+        check_id=f"{source}.{normalized_artifact_status.lower()}",
+        status=status_map.get(normalized_artifact_status, CheckStatus.ERROR),
+        severity="ERROR",
+        message=reason or normalized_artifact_status,
+        details={
+            "artifact_status": normalized_artifact_status,
+            "reason": reason,
+        },
+        source=source,
+        evidence_ref=evidence_ref,
+    )
+
+
+def check_result_from_execution_status(
+    execution_status: str,
+    reason: str = "",
+    *,
+    stage: str = CheckStage.EXECUTION,
+    check_id: str = "execution.status",
+    source: str = "execution",
+) -> CheckResult:
+    normalized_status = str(execution_status or "")
+    if normalized_status == "EXEC_SUCCESS":
+        status = CheckStatus.PASS
+    elif normalized_status in {"EXEC_PARTIAL"}:
+        status = CheckStatus.WARN
+    elif normalized_status.startswith("EXEC_SKIPPED") or normalized_status == "PRECHECK_SKIPPED":
+        status = CheckStatus.SKIP
+    else:
+        status = CheckStatus.FAIL
+    return CheckResult(
+        stage=stage,
+        check_id=check_id,
+        status=status,
+        severity="ERROR",
+        message=reason or normalized_status,
+        details={
+            "execution_status": normalized_status,
+            "reason": reason,
+        },
+        source=source,
+        actual=normalized_status,
+    )

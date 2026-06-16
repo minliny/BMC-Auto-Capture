@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from .checks import CheckStage, check_result_from_execution_status
 from .models.app_config import AppConfig
 from .models.task_plan import TaskPlan, make_plan_item_id
 from .models.execution_result import ExecutionResult
@@ -133,6 +134,7 @@ class App:
                     result = ExecutionResult(
                         plan_id=p.plan_id,
                         task_id=p.task_id,
+                        plan_item_id=p.effective_plan_item_id,
                         client_task_id=p.client_task_id,
                         device_name=p.device.device_name,
                         device_group=p.device.device_group,
@@ -146,6 +148,13 @@ class App:
                         started_at=time.time(),
                         ended_at=time.time(),
                     )
+                    result.add_check_result(check_result_from_execution_status(
+                        result.execution_status,
+                        result.execution_failure_reason,
+                        stage=CheckStage.PRECHECK,
+                        check_id="connectivity.preflight",
+                        source="connectivity.preflight",
+                    ))
                     self._compute_verdict(result)
                     self._results.append(result)
             skipped_count = sum(1 for p in plans if p.status.startswith("EXEC_SKIPPED"))

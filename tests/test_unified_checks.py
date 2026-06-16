@@ -3,7 +3,10 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from src.checks import CheckResult, CheckStage
+from src.checks import CheckResult, CheckStage, check_result_from_execution_status
+from src.executor.bmc_executor import BMCExecutor
+from src.executor.bmc_health_check import HealthResult
+from src.executor.ssh_executor import SSHExecutor
 from src.models.execution_result import ExecutionResult
 from src.models.verdict import compute_verdict
 from src.out.collector import compute_summary, write_final_result_csv
@@ -88,3 +91,71 @@ def test_query_projector_exposes_redacted_check_results():
     assert check["checkId"] == "bmc.rule.advanced.assert_text"
     assert "plain-secret" not in check["message"]
     assert "plain-secret" not in check["details"]["token"]
+
+
+def test_bmc_health_failure_records_session_check_once():
+    result = ExecutionResult("plan-1", "node-1", task_id="task.010")
+    health = HealthResult("before_screenshot")
+    health.healthy = False
+    health.status = "BMC_SESSION_EXPIRED"
+    health.details = "session expired"
+
+    BMCExecutor._record_health_check(result, health)
+    BMCExecutor._mark_health_failure(result, health)
+
+    assert result.execution_status == "EXEC_FAILED"
+    assert compute_verdict(result) == "FAIL"
+    assert len(result.check_results) == 1
+    check = result.check_results[0]
+    assert check.stage == "SESSION_CHECK"
+    assert check.check_id == "bmc.health.before_screenshot"
+    assert check.status == "FAIL"
+
+
+def test_artifact_status_records_unified_artifact_check():
+    result = ExecutionResult("plan-1", "node-1", task_id="task.010")
+    result.artifact_status = "ARTIFACT_PARTIAL"
+    result.artifact_failure_reason = "html: timeout"
+    result.screenshots = ("/tmp/evidence.png",)
+
+    BMCExecutor._record_artifact_check(result)
+
+    assert compute_verdict(result) == "WARN"
+    check = result.check_results[0]
+    assert check.stage == "ARTIFACT_CHECK"
+    assert check.status == "WARN"
+    assert check.evidence_ref == "/tmp/evidence.png"
+
+
+def test_ssh_artifact_failure_records_unified_artifact_check():
+    result = ExecutionResult("plan-1", "node-1", task_id="task.ssh")
+    result.artifact_status = "ARTIFACT_FAILED"
+    result.artifact_failure_reason = "SSH execution failed"
+
+    SSHExecutor._record_artifact_check(result)
+
+    assert compute_verdict(result) == "FAIL"
+    check = result.check_results[0]
+    assert check.stage == "ARTIFACT_CHECK"
+    assert check.check_id == "ssh.artifact.artifact_failed"
+    assert check.status == "FAIL"
+
+
+def test_precheck_skip_check_result_does_not_override_skipped_verdict():
+    result = ExecutionResult(
+        "plan-1",
+        "node-1",
+        task_id="task.ssh",
+        execution_status="EXEC_SKIPPED_PRECHECK_FAILED",
+        execution_failure_reason="SSH预检失败",
+    )
+    result.add_check_result(check_result_from_execution_status(
+        result.execution_status,
+        result.execution_failure_reason,
+        stage=CheckStage.PRECHECK,
+        check_id="connectivity.preflight",
+    ))
+
+    assert compute_verdict(result) == "SKIPPED"
+    assert result.check_results[0].stage == "PRECHECK"
+    assert result.check_results[0].status == "SKIP"

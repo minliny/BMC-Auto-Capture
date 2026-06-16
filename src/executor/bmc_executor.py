@@ -31,8 +31,11 @@ from .bmc_health_check import (
 )
 from ..checks import (
     CheckStage,
+    check_result_from_artifact_status,
     check_result_from_checkpoint,
     check_result_from_condition,
+    check_result_from_execution_status,
+    check_result_from_health_result,
     check_result_from_rule_action,
 )
 from ..models.task_plan import TaskPlan
@@ -249,6 +252,13 @@ class BMCExecutor(AbstractExecutor):
         if not device.bmc_ip:
             result.execution_status = "EXEC_FAILED"
             result.execution_failure_reason = "BMC IP为空"
+            result.add_check_result(check_result_from_execution_status(
+                result.execution_status,
+                result.execution_failure_reason,
+                stage=CheckStage.PRECHECK,
+                check_id="bmc.precheck.ip",
+                source="bmc.precheck",
+            ))
             result.ended_at = time.time()
             result.duration_seconds = result.ended_at - result.started_at
             return result
@@ -281,6 +291,7 @@ class BMCExecutor(AbstractExecutor):
                 hr.status = "HEALTH_CHECK_ERROR"
                 hr.details = str(e)
             _health_results.append(hr)
+            self._record_health_check(result, hr)
             if not hr.healthy:
                 logger.warning(
                     "[%s] 页面健康检查失败 [%s]: %s — %s",
@@ -325,6 +336,13 @@ class BMCExecutor(AbstractExecutor):
             if not login_ok:
                 result.execution_status = "EXEC_FAILED"
                 result.execution_failure_reason = login_reason or "BMC登录失败"
+                result.add_check_result(check_result_from_execution_status(
+                    result.execution_status,
+                    result.execution_failure_reason,
+                    stage=CheckStage.SESSION,
+                    check_id="bmc.login",
+                    source="bmc.login",
+                ))
                 result.ended_at = time.time()
                 result.duration_seconds = result.ended_at - result.started_at
                 return
@@ -333,8 +351,7 @@ class BMCExecutor(AbstractExecutor):
             hr = await _check_health("after_login")
             if not hr.healthy:
                 # Login page returned or session preempted → fail early
-                result.execution_status = "EXEC_FAILED"
-                result.execution_failure_reason = f"BMC_PAGE_HEALTH_FAILED [{hr.status}]: {hr.details}"
+                self._mark_health_failure(result, hr)
                 result.ended_at = time.time()
                 result.duration_seconds = result.ended_at - result.started_at
                 return
@@ -406,6 +423,16 @@ class BMCExecutor(AbstractExecutor):
 
         result.ended_at = time.time()
         result.duration_seconds = result.ended_at - result.started_at
+        if result.execution_status in ("EXEC_TIMEOUT", "EXEC_ERROR"):
+            check_id = "bmc.execution.status"
+            if not self._has_check_result(result, check_id):
+                result.add_check_result(check_result_from_execution_status(
+                    result.execution_status,
+                    result.execution_failure_reason,
+                    stage=CheckStage.EXECUTION,
+                    check_id=check_id,
+                    source="bmc.execution",
+                ))
 
         file_base, _ = self._resolve_file_basename(task, device)
         log_path = ""  # .log files discontinued; metadata in state.json
@@ -984,6 +1011,7 @@ class BMCExecutor(AbstractExecutor):
         html_path = write_html_file(output_dir, f"{file_base}.html", html_content)
         result.html_file = html_path
         result.artifact_status = "ARTIFACT_SAVED"
+        self._record_artifact_check(result)
 
         # Run rules (basic = blocking, advanced = validation only)
         await self._evaluate_rules(page, task, device, output_dir, result)
@@ -1054,10 +1082,41 @@ class BMCExecutor(AbstractExecutor):
 
     @staticmethod
     def _mark_health_failure(result: ExecutionResult, health: HealthResult) -> None:
+        BMCExecutor._record_health_check(result, health)
         result.execution_status = "EXEC_FAILED"
         result.execution_failure_reason = (
             f"BMC_PAGE_HEALTH_FAILED [{health.status}]: {health.details}"
         )
+
+    @staticmethod
+    def _record_health_check(result: ExecutionResult, health: HealthResult) -> None:
+        check_id = f"bmc.health.{getattr(health, 'stage', '') or 'health'}"
+        if BMCExecutor._has_check_result(result, check_id):
+            return
+        result.add_check_result(check_result_from_health_result(health))
+
+    @staticmethod
+    def _record_artifact_check(result: ExecutionResult, source: str = "bmc.artifact") -> None:
+        if BMCExecutor._has_check_result(result, f"{source}.{(result.artifact_status or '').lower()}"):
+            return
+        evidence_ref = ";".join(result.screenshots or ()) or result.html_file
+        result.add_check_result(check_result_from_artifact_status(
+            result.artifact_status,
+            result.artifact_failure_reason,
+            source=source,
+            evidence_ref=evidence_ref,
+        ))
+
+    @staticmethod
+    def _has_check_result(result: ExecutionResult, check_id: str) -> bool:
+        for cr in getattr(result, "check_results", None) or ():
+            if isinstance(cr, dict):
+                existing = cr.get("check_id") or cr.get("checkId") or ""
+            else:
+                existing = getattr(cr, "check_id", "")
+            if existing == check_id:
+                return True
+        return False
 
     async def _execute_one_pre_capture_action(
         self,
@@ -1433,6 +1492,7 @@ class BMCExecutor(AbstractExecutor):
                         hr = await check_bmc_page_health(
                             page, "after_navigate", target_url=target_url,
                         )
+                self._record_health_check(result, hr)
                 if not hr.healthy:
                     self._mark_health_failure(result, hr)
                     logger.error("[%s] 导航后页面健康检查失败: %s", device.device_name, hr.status)
@@ -1541,6 +1601,7 @@ class BMCExecutor(AbstractExecutor):
                     hr = await check_bmc_page_health(
                         page, "before_screenshot", target_url=target_url if raw_target else "",
                     )
+        self._record_health_check(result, hr)
         if not hr.healthy:
             self._mark_health_failure(result, hr)
             logger.error("[%s] 截图前页面健康检查失败: %s", device.device_name, hr.status)
@@ -1747,6 +1808,7 @@ class BMCExecutor(AbstractExecutor):
             result.artifact_status = "ARTIFACT_FAILED"
             if not result.artifact_failure_reason:
                 result.artifact_failure_reason = "page is None at final_capture"
+            self._record_artifact_check(result)
             return
 
         try:
@@ -1754,6 +1816,7 @@ class BMCExecutor(AbstractExecutor):
                 result.artifact_status = "ARTIFACT_FAILED"
                 if not result.artifact_failure_reason:
                     result.artifact_failure_reason = "page closed before final_capture"
+                self._record_artifact_check(result)
                 return
         except Exception:
             pass
@@ -1840,6 +1903,7 @@ class BMCExecutor(AbstractExecutor):
             else:
                 result.artifact_status = "ARTIFACT_FAILED"
                 result.artifact_failure_reason = "; ".join(errors)
+            self._record_artifact_check(result)
             return
 
         # evidence.html — rendered DOM with computed styles inlined (offline-viewable)
@@ -2147,6 +2211,7 @@ class BMCExecutor(AbstractExecutor):
         else:
             result.artifact_status = "ARTIFACT_FAILED"
             result.artifact_failure_reason = "; ".join(errors)
+        self._record_artifact_check(result)
 
     async def _content_aware_screenshot(self, page, ss_path, task, result) -> None:
         """Take a content-aware BMC screenshot: detect scroll container, avoid blank areas.

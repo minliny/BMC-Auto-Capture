@@ -20,7 +20,13 @@ from pathlib import Path
 import paramiko
 
 from .base import AbstractExecutor
-from ..checks import CheckResult, CheckStage, check_result_from_checkpoint
+from ..checks import (
+    CheckResult,
+    CheckStage,
+    check_result_from_artifact_status,
+    check_result_from_checkpoint,
+    check_result_from_execution_status,
+)
 from ..models.task_plan import TaskPlan
 from ..models.task import resolve_task_timeout_seconds
 from ..models.execution_result import ExecutionResult, StepResult
@@ -391,6 +397,13 @@ class SSHExecutor(AbstractExecutor):
         if not host:
             result.execution_status = "EXEC_FAILED"
             result.execution_failure_reason = "带内管理IP为空"
+            result.add_check_result(check_result_from_execution_status(
+                result.execution_status,
+                result.execution_failure_reason,
+                stage=CheckStage.PRECHECK,
+                check_id="ssh.precheck.ip",
+                source="ssh.precheck",
+            ))
             result.ended_at = time.time()
             result.duration_seconds = result.ended_at - result.started_at
             return result
@@ -425,6 +438,13 @@ class SSHExecutor(AbstractExecutor):
             )
             result.ended_at = time.time()
             result.duration_seconds = result.ended_at - result.started_at
+            result.add_check_result(check_result_from_execution_status(
+                result.execution_status,
+                result.execution_failure_reason,
+                stage=CheckStage.EXECUTION,
+                check_id="ssh.command.missing",
+                source="ssh.command",
+            ))
             logger.error("[%s] %s", device.device_name, result.execution_failure_reason)
             return result
 
@@ -615,6 +635,7 @@ class SSHExecutor(AbstractExecutor):
             ss_path = render_text_to_image(png_input, output_dir, f"{file_base}.png")
             result.screenshots = (ss_path,)
             result.artifact_status = "ARTIFACT_SAVED"
+            self._record_artifact_check(result)
             result.step_results.append(StepResult(
                 step_index=len(result.step_results),
                 step_name="ssh_terminal_screenshot",
@@ -667,6 +688,7 @@ class SSHExecutor(AbstractExecutor):
             )
             result.artifact_status = "ARTIFACT_FAILED"
             result.artifact_failure_reason = result.execution_failure_reason or "SSH execution failed"
+            self._record_artifact_check(result)
 
         result.output_dir = output_dir
         result.ended_at = time.time()
@@ -681,6 +703,25 @@ class SSHExecutor(AbstractExecutor):
             result.runtime_context = json.dumps(transcript_meta, ensure_ascii=False)
 
         return result
+
+    @staticmethod
+    def _record_artifact_check(result: ExecutionResult) -> None:
+        source = "ssh.artifact"
+        check_id = f"{source}.{(result.artifact_status or '').lower()}"
+        for cr in getattr(result, "check_results", None) or ():
+            if isinstance(cr, dict):
+                existing = cr.get("check_id") or cr.get("checkId") or ""
+            else:
+                existing = getattr(cr, "check_id", "")
+            if existing == check_id:
+                return
+        evidence_ref = ";".join(result.screenshots or ()) or result.txt_file
+        result.add_check_result(check_result_from_artifact_status(
+            result.artifact_status,
+            result.artifact_failure_reason,
+            source=source,
+            evidence_ref=evidence_ref,
+        ))
 
     # ------------------------------------------------------------------
     # Command execution — router
