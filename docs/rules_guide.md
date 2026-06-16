@@ -70,6 +70,8 @@
 
 每个任务的 BMC 页面检查使用 `rules: [规则组, 规则组, ...]`；SSH/TELNET 命令执行结果检查推荐使用 `result_rules: [规则组, 规则组, ...]`。
 
+`result_rules` 是执行结果校验规则，只读取命令输出和已保存证据，不执行页面点击、填表、截图等动作。旧字段 `ssh_rules` 和 SSH/TELNET 任务上的 `rules` 会继续兼容，但新任务应写 `result_rules`。
+
 ## 三、检查项格式
 
 ```json
@@ -91,6 +93,21 @@
 | `element_not_exists` | 指定元素不存在 | CSS选择器 | 空 |
 | `element_text_is` | 元素文本等于某值 | CSS选择器 | 期望文本 |
 | `element_text_contains` | 元素文本包含某值 | CSS选择器 | 包含文本 |
+
+SSH/TELNET `result_rules` 支持的检查类型：
+
+| type | 含义 | 关键字段 |
+|---|---|---|
+| `contains` / `text_exists` / `required_pattern` / `required_patterns` | 命令输出必须包含文本 | `target` 或 `patterns` |
+| `not_contains` / `text_not_exists` / `forbidden_pattern` / `forbidden_patterns` | 命令输出不得包含文本 | `target` 或 `patterns` |
+| `regex_exists` / `regex_match` | 命令输出必须匹配正则 | `pattern` 或 `target` |
+| `regex_not_exists` / `regex_not_match` | 命令输出不得匹配正则 | `pattern` 或 `target` |
+| `min_output_lines` | 输出行数不少于指定值 | `target` |
+| `command_echo_required` | interactive shell 输出中必须能看到命令回显 | 无 |
+| `prompt_required` | interactive shell 输出中必须能看到设备 prompt | 无 |
+| `interface_status` | 结构化解析 `display interface brief` 真实接口行 | `fields`, `forbidden` |
+
+`interface_status` 不做全文 substring 匹配，只检查真实接口记录中的 `physical` / `protocol` 字段。命令回显、prompt、表头、legend、分隔线、描述字段里的 `down` 不会触发失败；无法解析接口行时返回 `RULE_PARSE_FAILED`。
 
 ## 五、如何找到 CSS 选择器（HTML 元素定位）
 
