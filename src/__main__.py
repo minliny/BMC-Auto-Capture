@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from .cli.args import build_parser, resolve_execution_cli
+from .cli.failed_retry import failed_result_count, prompt_retry_failed_tasks
 from .models.app_config import AppConfig
 from .app import App
 
@@ -127,11 +128,12 @@ def main():
     # Run
     app = App(config)
     results = app.run(str(excel_path), mode=effective_mode)
+    results = prompt_retry_failed_tasks(app, results, mode=effective_mode)
 
     # Exit code
     if not results:
         sys.exit(1)
-    failed = sum(1 for r in results if r.execution_status not in ("EXEC_SUCCESS", "EXEC_SKIPPED_PRECHECK_FAILED"))
+    failed = failed_result_count(results)
     if failed > 0:
         sys.exit(1 if failed > len(results) * 0.5 else 0)
     sys.exit(0)

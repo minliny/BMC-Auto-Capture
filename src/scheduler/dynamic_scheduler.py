@@ -589,7 +589,10 @@ class DynamicScheduler:
                         pool.dispatch(
                             fn=_bmc_group_worker,
                             resource_key=endpoint_key,
-                            on_complete=lambda results, ek=endpoint_key: self._on_bmc_group_done(results, ek),
+                            on_complete=(
+                                lambda results, ek=endpoint_key, plans=group_plans:
+                                self._on_bmc_group_done(results, ek, plans)
+                            ),
                         )
                     except DispatchNotCommittedError:
                         # No worker was submitted: release and requeue are safe.
@@ -729,6 +732,7 @@ class DynamicScheduler:
     def _on_plan_done(self, plan: TaskPlan, result: ExecutionResult, endpoint_key: str):
         """Called from worker thread when a task completes."""
         now_t = time.time()
+        self._fill_result_identity_from_plan(plan, result)
         plan.ended_at = now_t
         plan.completed_at = now_t
         plan.status = "SUCCESS" if result.execution_status == "EXEC_SUCCESS" else result.execution_status
@@ -776,6 +780,7 @@ class DynamicScheduler:
 
     def _on_bmc_plan_in_group(self, plan: TaskPlan, result: ExecutionResult):
         """Per-plan callback during BMC session group — no release, no re-queue."""
+        self._fill_result_identity_from_plan(plan, result)
         plan.ended_at = time.time()
         plan.completed_at = plan.ended_at
         plan.status = "SUCCESS" if result.execution_status == "EXEC_SUCCESS" else result.execution_status
@@ -808,7 +813,12 @@ class DynamicScheduler:
             reason=_reason,
         )
 
-    def _on_bmc_group_done(self, results: list[ExecutionResult], endpoint_key: str):
+    def _on_bmc_group_done(
+        self,
+        results: list[ExecutionResult] | ExecutionResult | None,
+        endpoint_key: str,
+        plans: list[TaskPlan] | None = None,
+    ):
         """Called when a BMC session group completes. Release registry + log group summary.
 
         Per-plan output is already handled by _on_bmc_plan_in_group.
@@ -820,6 +830,10 @@ class DynamicScheduler:
         except Exception:
             pass
 
+        if isinstance(results, ExecutionResult) or results is None:
+            self._recover_bmc_group_worker_failure(results, endpoint_key, plans or [])
+            return
+
         # Log group-level summary (per-plan output already handled by _on_bmc_plan_in_group)
         if results:
             passed = sum(1 for r in results if r.execution_status == "EXEC_SUCCESS")
@@ -828,6 +842,118 @@ class DynamicScheduler:
                 "BMC group done: endpoint=%s plans=%d passed=%d failed=%d",
                 endpoint_key, len(results), passed, failed,
             )
+
+    def _recover_bmc_group_worker_failure(
+        self,
+        worker_result: ExecutionResult | None,
+        endpoint_key: str,
+        plans: list[TaskPlan],
+    ) -> None:
+        """Convert a crashed BMC group worker into one result per unfinished plan."""
+        reason = "BMC group worker failed"
+        if worker_result and worker_result.execution_failure_reason:
+            reason = worker_result.execution_failure_reason
+        now_t = time.time()
+        recovered = 0
+        for plan in plans:
+            with self._results_lock:
+                already_recorded = plan.plan_id in self._result_index_by_plan_id
+            if already_recorded:
+                continue
+            plan.status = "EXEC_ERROR"
+            plan.ended_at = now_t
+            plan.completed_at = now_t
+            plan._resource_lease_held = False
+            plan._execution_id = ""
+            result = self._make_plan_error_result(
+                plan,
+                execution_status="EXEC_ERROR",
+                reason=reason,
+                now_t=now_t,
+                endpoint_key=endpoint_key,
+                endpoint_type="BMC",
+            )
+            accepted = self._append_result_once(
+                plan.plan_id,
+                result,
+                source="bmc_group_worker_exception",
+            )
+            if accepted:
+                recovered += 1
+                if self._event_bus:
+                    self._event_bus.emit("plan_completed", plan=plan, result=result)
+        logger.error(
+            "BMC group worker failed; recovered_results=%d plans=%d",
+            recovered,
+            len(plans),
+        )
+
+    @staticmethod
+    def _fill_result_identity_from_plan(plan: TaskPlan, result: ExecutionResult) -> None:
+        synthetic_worker_result = (
+            result.task_name == "(crashed)"
+            or result.device_name == plan.endpoint_key
+        )
+        if not result.plan_id:
+            result.plan_id = plan.plan_id
+        if not result.task_id:
+            result.task_id = plan.task_id
+        if not result.client_task_id:
+            result.client_task_id = plan.client_task_id
+        if synthetic_worker_result or not result.device_name:
+            result.device_name = plan.device.device_name
+        if not result.device_group:
+            result.device_group = plan.device.device_group
+        if not result.bmc_ip:
+            result.bmc_ip = plan.device.bmc_ip
+        if not result.inband_ip:
+            result.inband_ip = plan.device.inband_ip
+        if synthetic_worker_result or not result.task_name:
+            result.task_name = plan.task.task_name
+        if not result.task_type:
+            result.task_type = plan.task.task_type
+        if not result.execution_mode:
+            result.execution_mode = plan.task.execution_mode
+        if not result.task_sequence:
+            result.task_sequence = plan.task.sequence_str or str(plan.task.sequence)
+        if not result.endpoint_key:
+            result.endpoint_key = plan.endpoint_key
+        if not result.endpoint_type:
+            result.endpoint_type = plan.endpoint_type
+
+    def _make_plan_error_result(
+        self,
+        plan: TaskPlan,
+        *,
+        execution_status: str,
+        reason: str,
+        now_t: float,
+        endpoint_key: str,
+        endpoint_type: str,
+    ) -> ExecutionResult:
+        started_at = plan.executor_started_at or plan.started_at or now_t
+        result = ExecutionResult(
+            plan_id=plan.plan_id,
+            task_id=plan.task_id,
+            client_task_id=plan.client_task_id,
+            device_name=plan.device.device_name,
+            device_group=plan.device.device_group,
+            bmc_ip=plan.device.bmc_ip,
+            inband_ip=plan.device.inband_ip,
+            task_name=plan.task.task_name,
+            task_type=plan.task.task_type,
+            execution_mode=plan.task.execution_mode,
+            task_sequence=plan.task.sequence_str or str(plan.task.sequence),
+            execution_status=execution_status,
+            execution_failure_reason=reason,
+            started_at=started_at,
+            ended_at=now_t,
+            duration_seconds=max(0.001, round(now_t - started_at, 3)),
+            endpoint_key=endpoint_key,
+            endpoint_type=endpoint_type,
+        )
+        result.final_verdict = compute_verdict(result)
+        return result
 
     @staticmethod
     def _result_priority(status: str) -> int:

@@ -491,10 +491,13 @@ def main():
     # Run
     app = PipelineApp(config)
     results = app.run(str(excel_path), mode=effective_mode)
+    prompt_retry_failed_tasks = _import_attr("src.cli.failed_retry", "prompt_retry_failed_tasks")
+    failed_result_count = _import_attr("src.cli.failed_retry", "failed_result_count")
+    results = prompt_retry_failed_tasks(app, results, mode=effective_mode)
 
     if not results:
         sys.exit(1)
-    failed = sum(1 for r in results if r.execution_status not in ("EXEC_SUCCESS", "EXEC_SKIPPED_PRECHECK_FAILED"))
+    failed = failed_result_count(results)
     sys.exit(1 if failed > len(results) * 0.5 else 0)
 
 

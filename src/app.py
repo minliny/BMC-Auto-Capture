@@ -29,6 +29,12 @@ from .executor.bmc_executor import BMCExecutor
 from .executor.browser_manager import BrowserManager
 from .out.result_writer import ResultWriter
 from .run_session import RunSession
+from .cli.failed_retry import (
+    is_failed_result,
+    is_retryable_failed_result,
+    plan_identity_keys,
+    result_identity_keys,
+)
 
 logger = logging.getLogger("bmc_auto_capture.app")
 
@@ -68,6 +74,8 @@ class App:
         self._stopped_at = 0.0
         self._affected_pending_count = 0
         self._result_writer = ResultWriter()
+        self._last_plans: list[TaskPlan] = []
+        self._last_plan_lookup: dict[tuple, TaskPlan | None] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -114,6 +122,7 @@ class App:
         if not plans:
             logger.warning("未生成执行计划 — check device/task matching")
             return []
+        self._remember_last_plans(plans)
 
         self.event_bus.emit("plans_generated", count=len(plans))
 
@@ -235,6 +244,123 @@ class App:
 
         # Last resort
         raise OSError("No writable output directory found")
+
+    # ------------------------------------------------------------------
+    # Failed-task retry support
+    # ------------------------------------------------------------------
+    def failed_retry_candidates(
+        self,
+        results: list[ExecutionResult] | None = None,
+    ) -> list[TaskPlan]:
+        """Return cloned TaskPlan objects for failed items from the last batch."""
+        source_results = list(self._results if results is None else results)
+        candidates: list[TaskPlan] = []
+        seen: set[tuple] = set()
+        for result in source_results:
+            if not is_retryable_failed_result(result):
+                continue
+            plan = self._find_last_plan_for_result(result)
+            if plan is None:
+                continue
+            plan_keys = plan_identity_keys(plan)
+            if not plan_keys:
+                continue
+            stable_key = plan_keys[0]
+            if stable_key in seen:
+                continue
+            seen.add(stable_key)
+            candidates.append(self._clone_plan_for_retry(plan))
+        return candidates
+
+    def retry_failed_tasks(
+        self,
+        results: list[ExecutionResult] | None = None,
+        mode: str = "sequential",
+    ) -> list[ExecutionResult]:
+        """Run only failed tasks from the last completed batch."""
+        source_results = list(self._results if results is None else results)
+        failed_total = sum(1 for result in source_results if is_failed_result(result))
+        retry_plans = self.failed_retry_candidates(results)
+        logger.info(
+            "重试失败任务: original_total=%d failed_total=%d retry_candidate_count=%d",
+            len(source_results),
+            failed_total,
+            len(retry_plans),
+        )
+        if not retry_plans:
+            return []
+        original_last_plans = list(self._last_plans)
+        original_last_plan_lookup = dict(self._last_plan_lookup)
+        try:
+            retry_results = self.run_with_plans(retry_plans, mode=mode)
+        finally:
+            self._last_plans = original_last_plans
+            self._last_plan_lookup = original_last_plan_lookup
+        logger.info("重试失败任务完成: retry_result_count=%d", len(retry_results))
+        return retry_results
+
+    def write_retry_merged_reports(
+        self,
+        merged_results: list[ExecutionResult],
+        output_dir: str | Path | None = None,
+        stop_metadata: dict | None = None,
+    ) -> str:
+        """Write retry-after-merge reports without overwriting the original run."""
+        base = Path(output_dir or self.config.output_root)
+        report_dir = base / "retry_merged"
+        self._result_writer.write(
+            merged_results,
+            str(report_dir),
+            stop_metadata=stop_metadata if stop_metadata is not None else self._stop_metadata(),
+            emit_terminal_summary=False,
+        )
+        return str(report_dir)
+
+    def replace_results_after_retry(self, merged_results: list[ExecutionResult]) -> None:
+        """Keep App state aligned with the post-retry merged result set."""
+        self._results = list(merged_results)
+
+    def current_stop_metadata(self) -> dict:
+        return dict(self._stop_metadata())
+
+    def _remember_last_plans(self, plans: list[TaskPlan]) -> None:
+        self._last_plans = list(plans)
+        lookup: dict[tuple, TaskPlan | None] = {}
+        for plan in self._last_plans:
+            for key in self._plan_lookup_keys(plan):
+                if key in lookup:
+                    lookup[key] = None
+                else:
+                    lookup[key] = plan
+        self._last_plan_lookup = lookup
+
+    def _find_last_plan_for_result(self, result: ExecutionResult) -> TaskPlan | None:
+        for key in result_identity_keys(result):
+            plan = self._last_plan_lookup.get(key)
+            if plan is not None:
+                return plan
+        return None
+
+    @staticmethod
+    def _clone_plan_for_retry(plan: TaskPlan) -> TaskPlan:
+        kwargs = {
+            "device": plan.device,
+            "task": plan.task,
+            "plan_id": plan.plan_id,
+            "task_id": getattr(plan, "task_id", ""),
+            "client_task_id": getattr(plan, "client_task_id", ""),
+        }
+        if hasattr(plan, "plan_item_id"):
+            kwargs["plan_item_id"] = getattr(plan, "plan_item_id", "")
+        return TaskPlan(**kwargs)
+
+    @staticmethod
+    def _plan_lookup_keys(plan: TaskPlan) -> list[tuple]:
+        return plan_identity_keys(plan)
+
+    @staticmethod
+    def _result_lookup_keys(result: ExecutionResult) -> list[tuple]:
+        return result_identity_keys(result)
 
     def stop(self):
         self._record_stop("user_stop", "App.stop")
@@ -534,6 +660,7 @@ class App:
         execution_started_at = session.started_at
         self.config.output_root = session.output_root
         logger.info("输出目录 (in-memory):  %s", self.config.output_root)
+        self._remember_last_plans(plans)
 
         self.event_bus.emit("plans_generated", count=len(plans))
 
