@@ -4,7 +4,7 @@ Pydantic schemas for executor API request/response validation.
 
 from __future__ import annotations
 from typing import Any, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src._version import APP_VERSION
 
@@ -33,22 +33,54 @@ class DeviceSnapshotPayload(BaseModel):
 
 
 class TaskSnapshotPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    plan_id: Union[str, int] = ""
+    plan_item_id: str = ""
     task_id: str = ""
     task_no: str = ""
     task_name: str = ""
+    sequence: int = 0
+    sequence_str: str = ""
     task_type: str = ""
     execution_mode: str = ""
+    match_group: str = ""
     url: str = ""
     command_or_url: str = ""
+    raw_command_or_url: str = ""
+    ssh_cmd: str = ""
+    command: str = ""
     actions_json: str = ""
+    rules_json: str = ""
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    result_rules: list[dict[str, Any]] = Field(default_factory=list)
+    ssh_rules: list[dict[str, Any]] = Field(default_factory=list)
+    task_def: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: int = 60
     retry_count: int = 0
     output_dir_template: str = "{device_name}/{task_name}"
     image_name_template: str = "{device_name}_{task_name}_{step}_{timestamp}"
     full_screenshot: bool = False
     screenshot_mode: str = "auto"
+    ssh_profile: str = ""
+    ssh_type: str = ""
+    evidence_mode: str = ""
+    ssh_evidence_mode: str = ""
+    ssh_transport: str = ""
+    ssh_strategy: str = ""
+    per_group_commands: dict[str, str] = Field(default_factory=dict)
+    per_group_no_split: dict[str, bool] = Field(default_factory=dict)
+    per_group_ssh_profile: dict[str, str] = Field(default_factory=dict)
+    per_group_ssh_type: dict[str, str] = Field(default_factory=dict)
+    per_group_evidence_mode: dict[str, str] = Field(default_factory=dict)
+    per_group_ssh_evidence_mode: dict[str, str] = Field(default_factory=dict)
+    per_group_ssh_transport: dict[str, str] = Field(default_factory=dict)
+    per_group_ssh_strategy: dict[str, str] = Field(default_factory=dict)
+    per_group_timeout: dict[str, int] = Field(default_factory=dict)
     artifact_profile: str = ""
+    bmc_artifact_profile: str = ""
     per_group_timeout_seconds: dict[str, int] = Field(default_factory=dict)
+    no_split: bool = False
 
 
 class JobPayload(BaseModel):

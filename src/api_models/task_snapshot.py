@@ -60,7 +60,11 @@ class TaskSnapshot:
     match_group: str = ""
     command_or_url: str = ""
     actions_json: str = ""
+    rules_json: str = ""
     rules: list[TaskRule] = field(default_factory=list)
+    result_rules: list[dict[str, Any]] = field(default_factory=list)
+    ssh_rules: list[dict[str, Any]] = field(default_factory=list)
+    task_def: dict[str, Any] = field(default_factory=dict)
     output_dir_template: str = "{device_name}/{task_name}"
     image_name_template: str = "{device_name}_{task_name}_{step}_{timestamp}"
     timeout_seconds: int = 60
@@ -82,6 +86,7 @@ class TaskSnapshot:
             "match_group": self.match_group,
             "command_or_url": self.command_or_url,
             "actions_json": self.actions_json,
+            "rules_json": self.rules_json,
             "rules": [r.to_dict() for r in self.rules],
             "output_dir_template": self.output_dir_template,
             "image_name_template": self.image_name_template,
@@ -98,6 +103,12 @@ class TaskSnapshot:
             data["ssh_transport"] = self.ssh_transport
         if self.artifact_profile:
             data["artifact_profile"] = self.artifact_profile
+        if self.result_rules:
+            data["result_rules"] = list(self.result_rules)
+        if self.ssh_rules:
+            data["ssh_rules"] = list(self.ssh_rules)
+        if self.task_def:
+            data["task_def"] = dict(self.task_def)
         if self.per_group_timeout_seconds:
             data["per_group_timeout_seconds"] = dict(self.per_group_timeout_seconds)
         return data
@@ -113,7 +124,11 @@ class TaskSnapshot:
             match_group=d.get("match_group", ""),
             command_or_url=d.get("command_or_url", ""),
             actions_json=d.get("actions_json", ""),
+            rules_json=d.get("rules_json", ""),
             rules=rules,
+            result_rules=list(d.get("result_rules", []) or []),
+            ssh_rules=list(d.get("ssh_rules", []) or []),
+            task_def=dict(d.get("task_def", {}) or {}),
             output_dir_template=d.get("output_dir_template", "{device_name}/{task_name}"),
             image_name_template=d.get("image_name_template", "{device_name}_{task_name}_{step}_{timestamp}"),
             timeout_seconds=int(d.get("timeout_seconds", 60)),

@@ -188,6 +188,34 @@ class TestRealRunnerAdapterConversion:
         assert getattr(task, "_per_group_timeout_seconds", {}).get("L1") == 60
         assert resolve_task_no_split(task, "A3") is True
 
+    def test_task_snapshot_preserves_direct_rule_extensions(self):
+        """Direct task_snapshot rule fields must survive adapter rebuild."""
+        adapter = RealRunnerAdapter()
+        page_rules = [
+            {"name": "page", "checks": [{"type": "text_exists", "target": "ready"}]},
+        ]
+        result_rules = [
+            {"name": "result", "enabled": True, "checks": [{"type": "contains", "target": "OK"}]},
+        ]
+        ssh_rules = [
+            {"name": "legacy ssh", "enabled": True, "checks": [{"type": "min_output_lines", "expect": 1}]},
+        ]
+
+        task = adapter._task_from_snapshot(self._make_task_snapshot(
+            task_type="SSH",
+            execution_mode="SSH_CMD",
+            command_or_url="display version",
+            rules=page_rules,
+            result_rules=result_rules,
+            ssh_rules=ssh_rules,
+        ))
+
+        task_def = getattr(task, "_task_def", {})
+        assert len(task.parsed_rules()) == 1
+        assert task_def["rules"] == page_rules
+        assert task_def["result_rules"] == result_rules
+        assert task_def["ssh_rules"] == ssh_rules
+
     def test_unsupported_task_type_in_run_job(self):
         """7. Unsupported task_type returns FAILED with UNSUPPORTED_TASK_TYPE."""
         adapter = RealRunnerAdapter()

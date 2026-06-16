@@ -338,6 +338,7 @@ class RealRunnerAdapter:
         cmd = snapshot.get("ssh_cmd", "") or snapshot.get("command", "") or snapshot.get(
             "command_or_url", ""
         ) or snapshot.get("url", "")
+        rules_json = self._snapshot_rules_json(snapshot)
 
         task = Task(
             row_index=0,
@@ -349,7 +350,7 @@ class RealRunnerAdapter:
             match_group=snapshot.get("match_group", ""),
             command_or_url=cmd,
             actions_json=snapshot.get("actions_json", ""),
-            rules_json=snapshot.get("rules_json", ""),
+            rules_json=rules_json,
             output_dir_template=snapshot.get(
                 "output_dir_template", "{device_name}/{task_name}"
             ),
@@ -364,6 +365,10 @@ class RealRunnerAdapter:
             task_id=str(snapshot.get("task_id", "") or ""),
         )
         task_def = self._coerce_dict(snapshot.get("task_def"))
+        for key in ("rules", "result_rules", "ssh_rules"):
+            rules = self._coerce_list(snapshot.get(key))
+            if rules:
+                task_def.setdefault(key, rules)
         for key in (
             "ssh_profile",
             "ssh_type",
@@ -400,6 +405,24 @@ class RealRunnerAdapter:
             object.__setattr__(task, "_no_split", True)
         return task
 
+    @classmethod
+    def _snapshot_rules_json(cls, snapshot: dict[str, Any]) -> str:
+        rules_json = snapshot.get("rules_json", "")
+        if isinstance(rules_json, str) and rules_json.strip():
+            return rules_json
+        if rules_json not in ("", None, [], {}):
+            try:
+                return json.dumps(rules_json, ensure_ascii=False)
+            except (TypeError, ValueError):
+                return ""
+        rules = cls._coerce_list(snapshot.get("rules"))
+        if rules:
+            try:
+                return json.dumps(rules, ensure_ascii=False)
+            except (TypeError, ValueError):
+                return ""
+        return ""
+
     @staticmethod
     def _coerce_dict(value: Any) -> dict[str, Any]:
         if isinstance(value, dict):
@@ -411,6 +434,18 @@ class RealRunnerAdapter:
                 return {}
             return parsed if isinstance(parsed, dict) else {}
         return {}
+
+    @staticmethod
+    def _coerce_list(value: Any) -> list[Any]:
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return []
+            return parsed if isinstance(parsed, list) else []
+        return []
 
     # ------------------------------------------------------------------
     # Result mapping
