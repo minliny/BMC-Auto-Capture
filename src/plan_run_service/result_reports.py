@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from ..checks import CheckStage, check_result_from_execution_status
 from ..models.execution_result import ExecutionResult
 from ..out.result_writer import ResultWriter
 from ..utils.sensitive import redact_sensitive_text
@@ -50,7 +51,7 @@ class PlanRunResultReporter:
             ended_at = item.finished_at or run.finished_at or started_at
             device = item._device
             task = item._task
-            return ExecutionResult(
+            result = ExecutionResult(
                 plan_id=str(run.plan_id),
                 device_name=item.device_name,
                 task_id=item.task_id,
@@ -73,6 +74,14 @@ class PlanRunResultReporter:
                 duration_seconds=max(0.0, ended_at - started_at),
                 output_dir=run.output_root,
             )
+            result.add_check_result(check_result_from_execution_status(
+                result.execution_status,
+                result.execution_failure_reason,
+                stage=CheckStage.EXECUTION,
+                check_id="plan_run.report.execution_status",
+                source="plan_run.report",
+            ))
+            return result
 
         result.plan_id = str(run.plan_id)
         result.task_id = result.task_id or item.task_id

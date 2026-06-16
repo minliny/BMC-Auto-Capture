@@ -941,6 +941,9 @@ class TestBatchModeIntegration:
         results, output_dir, kwargs = writer.calls[0]
         assert output_dir == run.output_root
         assert results[0].execution_status == "EXEC_SUCCESS"
+        assert results[0].check_results[0].stage == "EXECUTION_CHECK"
+        assert results[0].check_results[0].check_id == "plan_run.report.execution_status"
+        assert results[0].check_results[0].status == "PASS"
         assert kwargs["execution_started_at"] == run.started_at
         assert kwargs["execution_id"] == run.run_id
         assert kwargs["emit_terminal_summary"] is False
