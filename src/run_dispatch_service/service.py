@@ -27,6 +27,7 @@ from ..server_callback_client import (
     FakeCallbackTransport,
     HttpCallbackTransport,
 )
+from ..utils.sensitive import redact_sensitive_text
 
 logger = logging.getLogger("bmc_auto_capture.run_dispatch")
 
@@ -385,61 +386,102 @@ class RunDispatchService:
 
         lock_uri = pt.lock_uri
 
+        acquired_lock = False
+
         # Acquire lock
         if lock_uri and not self._lock_mgr.acquire(lock_uri, task_id):
             with self._queue_lock:
                 self._pending.append((run_id, task_id))
             return
+        acquired_lock = bool(lock_uri)
 
-        # Mark run RUNNING
-        if run.status == RunStatus.ACCEPTED:
-            run.status = RunStatus.RUNNING
-            run.started_at = time.time()
-
-        # Mark task RUNNING
-        tr.status = TaskRunStatus.RUNNING
-        tr.started_at = time.time()
-
-        # Callback RUNNING
-        self._send_task_callback(run, tr, "RUNNING")
-
-        # Build job payload
-        job_payload = {
-            "job_id": f"{run_id}-{task_id}",
-            "device_snapshot": pt.device_snapshot,
-            "task_snapshot": pt.task_snapshot,
-        }
-
-        # Execute
         try:
-            result = self._runner.run_job(job_payload)
+            # Mark run RUNNING
+            if run.status == RunStatus.ACCEPTED:
+                run.status = RunStatus.RUNNING
+                run.started_at = time.time()
+
+            # Mark task RUNNING
+            tr.status = TaskRunStatus.RUNNING
+            tr.started_at = time.time()
+
+            # Callback RUNNING
+            try:
+                self._send_task_callback(run, tr, "RUNNING")
+            except Exception as e:
+                logger.error(
+                    "RunDispatch start callback crashed for run=%s task=%s: %s",
+                    run_id,
+                    task_id,
+                    redact_sensitive_text(str(e)),
+                )
+
+            # Build job payload
+            job_payload = {
+                "job_id": f"{run_id}-{task_id}",
+                "device_snapshot": pt.device_snapshot,
+                "task_snapshot": pt.task_snapshot,
+            }
+
+            # Execute
+            try:
+                result = self._runner.run_job(job_payload)
+            except Exception as e:
+                result = JobResult(
+                    status="FAILED", duration_ms=0,
+                    error={
+                        "code": "RUNNER_CRASH",
+                        "message": redact_sensitive_text(str(e))[:200],
+                        "retryable": False,
+                        "category": "SYSTEM",
+                    },
+                )
+
+            # Record result
+            tr.status = result.status
+            tr.finished_at = time.time()
+            tr.duration_ms = result.duration_ms or int((tr.finished_at - tr.started_at) * 1000)
+            tr.result = {"summary": f"EXEC_{result.status}"}
+            tr.error = result.error
+            tr.artifacts = result.artifacts
+
+            # Callback finished
+            cb_ok = True
+            callback_error = ""
+            if run.callback_task_status_url:
+                try:
+                    cb_ok = self._send_task_callback(run, tr, result.status)
+                except Exception as e:
+                    cb_ok = False
+                    callback_error = redact_sensitive_text(str(e))
+                    logger.error(
+                        "RunDispatch finish callback crashed for run=%s task=%s: %s",
+                        run_id,
+                        task_id,
+                        callback_error,
+                    )
+
+            if not cb_ok and run.callback_task_status_url:
+                tr.status = TaskRunStatus.CALLBACK_FAILED
+                tr.last_callback_error = callback_error or "Callback non-2xx or network error"
         except Exception as e:
-            result = JobResult(
-                status="FAILED", duration_ms=0,
-                error={"code": "RUNNER_CRASH", "message": str(e)[:200], "retryable": False, "category": "SYSTEM"},
-            )
-
-        # Record result
-        tr.status = result.status
-        tr.finished_at = time.time()
-        tr.duration_ms = result.duration_ms or int((tr.finished_at - tr.started_at) * 1000)
-        tr.result = {"summary": f"EXEC_{result.status}"}
-        tr.error = result.error
-        tr.artifacts = result.artifacts
-
-        # Callback finished
-        cb_ok = self._send_task_callback(run, tr, result.status)
-
-        if not cb_ok and run.callback_task_status_url:
-            tr.status = TaskRunStatus.CALLBACK_FAILED
-            tr.last_callback_error = "Callback non-2xx or network error"
-
-        # Release lock
-        if lock_uri:
-            self._lock_mgr.release(lock_uri, task_id)
-
-        # Update run status
-        self._update_run_status(run)
+            message = redact_sensitive_text(str(e))
+            logger.error("RunDispatch task flow crashed for run=%s task=%s: %s", run_id, task_id, message)
+            tr.status = TaskRunStatus.FAILED
+            tr.finished_at = time.time()
+            tr.duration_ms = int((tr.finished_at - (tr.started_at or tr.finished_at)) * 1000)
+            tr.result = {"summary": "EXEC_FAILED"}
+            tr.error = {
+                "code": "DISPATCH_FLOW_CRASH",
+                "message": message[:200],
+                "retryable": False,
+                "category": "SYSTEM",
+            }
+        finally:
+            if acquired_lock and lock_uri:
+                self._lock_mgr.release(lock_uri, task_id)
+            # Update run status even after callback or flow exceptions.
+            self._update_run_status(run)
 
     def _send_task_callback(self, run: _RunRecord, tr: _TaskRun, status: str) -> bool:
         url_tmpl = run.callback_task_status_url
@@ -474,7 +516,7 @@ class RunDispatchService:
 
         run.finished_at = time.time()
         has_failed = any(t.status in (
-            TaskRunStatus.FAILED, TaskRunStatus.TIMEOUT,
+            TaskRunStatus.FAILED, TaskRunStatus.TIMEOUT, TaskRunStatus.CALLBACK_FAILED,
         ) for t in tasks)
         has_succeeded = any(t.status == TaskRunStatus.SUCCEEDED for t in tasks)
 

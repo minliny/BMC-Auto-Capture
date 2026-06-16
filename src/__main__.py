@@ -132,7 +132,17 @@ def main():
 
     # Exit code
     if not results:
+        no_work = app.current_no_work_status()
+        if no_work.get("reason"):
+            print(f"  {no_work.get('message') or '无可用任务。'}")
+            sys.exit(0)
+        batch_error = app.current_batch_error_status()
+        if batch_error.get("reason"):
+            print(f"  {batch_error.get('message') or '批次执行失败。'}")
         sys.exit(1)
+    batch_error = app.current_batch_error_status()
+    if batch_error.get("reason"):
+        print(f"  {batch_error.get('message') or '批次执行失败。'}")
     failed = failed_result_count(results)
     if failed > 0:
         sys.exit(1 if failed > len(results) * 0.5 else 0)
@@ -140,4 +150,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from .cli.fatal import run_with_terminal_fault_guard
+
+    raise SystemExit(run_with_terminal_fault_guard(main))

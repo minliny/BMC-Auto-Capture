@@ -76,6 +76,10 @@ class App:
         self._result_writer = ResultWriter()
         self._last_plans: list[TaskPlan] = []
         self._last_plan_lookup: dict[tuple, TaskPlan | None] = {}
+        self._last_no_work_reason = ""
+        self._last_no_work_message = ""
+        self._last_batch_error_reason = ""
+        self._last_batch_error_message = ""
 
     # ------------------------------------------------------------------
     # Public API
@@ -97,6 +101,8 @@ class App:
         self._pause_event.set()
         self._stop_reason = "scheduler_stop"
         self._clear_stop_metadata()
+        self._clear_no_work_status()
+        self._clear_batch_error_status()
 
         excel_path = Path(excel_path)
 
@@ -110,17 +116,27 @@ class App:
         devices, tasks = load_all(str(excel_path))
         logger.info("已加载 %d 台设备, %d 个任务", len(devices), len(tasks))
 
+        if self._record_no_work_if_needed(devices, tasks):
+            return []
+
         # 2. Validate
         report = validate(devices, tasks)
         self._print_validation(report)
         if not report.is_valid:
             logger.error("校验失败, 错误数:  %d errors", len(report.errors))
+            self._record_batch_error(
+                "VALIDATION_FAILED",
+                f"Excel 校验失败: errors={len(report.errors)}。请检查设备和任务配置。",
+            )
             return []
 
         # 3. Generate plans
         plans = generate_plans(devices, tasks)
         if not plans:
-            logger.warning("未生成执行计划 — check device/task matching")
+            self._record_batch_error(
+                "NO_EXECUTABLE_PLANS",
+                "未生成可执行计划: 请检查设备分组、任务匹配条件和启用状态。",
+            )
             return []
         self._remember_last_plans(plans)
 
@@ -157,6 +173,14 @@ class App:
                     self._results.append(result)
             skipped_count = sum(1 for p in plans if p.status.startswith("EXEC_SKIPPED"))
             logger.info("预检: %d 个计划已跳过 (%d 个就绪)", skipped_count, len(plans) - skipped_count)
+            if plans and skipped_count == len(plans):
+                self._record_batch_error(
+                    "ALL_PLANS_PRECHECK_FAILED",
+                    (
+                        f"所有需执行任务均因网络预检失败被跳过: total={len(plans)}。"
+                        "请检查设备网络连通性、端口访问或超时配置。"
+                    ),
+                )
 
         # 5. Route guard
         route_guard = None
@@ -323,6 +347,18 @@ class App:
     def current_stop_metadata(self) -> dict:
         return dict(self._stop_metadata())
 
+    def current_no_work_status(self) -> dict:
+        return {
+            "reason": self._last_no_work_reason,
+            "message": self._last_no_work_message,
+        }
+
+    def current_batch_error_status(self) -> dict:
+        return {
+            "reason": self._last_batch_error_reason,
+            "message": self._last_batch_error_message,
+        }
+
     def _remember_last_plans(self, plans: list[TaskPlan]) -> None:
         self._last_plans = list(plans)
         lookup: dict[tuple, TaskPlan | None] = {}
@@ -361,6 +397,48 @@ class App:
     @staticmethod
     def _result_lookup_keys(result: ExecutionResult) -> list[tuple]:
         return result_identity_keys(result)
+
+    def _clear_batch_error_status(self) -> None:
+        self._last_batch_error_reason = ""
+        self._last_batch_error_message = ""
+
+    def _record_batch_error(self, reason: str, message: str) -> None:
+        self._last_batch_error_reason = reason
+        self._last_batch_error_message = message
+        logger.error(message)
+
+    def _clear_no_work_status(self) -> None:
+        self._last_no_work_reason = ""
+        self._last_no_work_message = ""
+
+    def _record_no_work(self, reason: str, message: str) -> None:
+        self._last_no_work_reason = reason
+        self._last_no_work_message = message
+        logger.warning(message)
+
+    def _record_no_work_if_needed(self, devices, tasks) -> bool:
+        enabled_tasks = [task for task in tasks if getattr(task, "enabled", True)]
+        if not tasks:
+            self._record_no_work("NO_TASKS", "无可用任务: Excel 中没有任务配置。")
+            return True
+        if not enabled_tasks:
+            self._record_no_work(
+                "NO_ENABLED_TASKS",
+                f"无可用任务: 已加载 {len(tasks)} 个任务，但启用任务数为 0。",
+            )
+            return True
+
+        enabled_devices = [device for device in devices if getattr(device, "enabled", True)]
+        if not devices:
+            self._record_no_work("NO_DEVICES", "无可用设备: Excel 中没有设备配置。")
+            return True
+        if not enabled_devices:
+            self._record_no_work(
+                "NO_ENABLED_DEVICES",
+                f"无可用设备: 已加载 {len(devices)} 台设备，但启用设备数为 0。",
+            )
+            return True
+        return False
 
     def stop(self):
         self._record_stop("user_stop", "App.stop")
@@ -655,6 +733,8 @@ class App:
         self._pause_event.set()
         self._stop_reason = "scheduler_stop"
         self._clear_stop_metadata()
+        self._clear_no_work_status()
+        self._clear_batch_error_status()
 
         session = RunSession.start(self.config.output_root)
         execution_started_at = session.started_at
@@ -695,6 +775,14 @@ class App:
                     self._results.append(result)
             skipped_count = sum(1 for p in plans if p.status.startswith("EXEC_SKIPPED"))
             logger.info("预检: %d 个计划已跳过 (%d 个就绪)", skipped_count, len(plans) - skipped_count)
+            if plans and skipped_count == len(plans):
+                self._record_batch_error(
+                    "ALL_PLANS_PRECHECK_FAILED",
+                    (
+                        f"所有需执行任务均因网络预检失败被跳过: total={len(plans)}。"
+                        "请检查设备网络连通性、端口访问或超时配置。"
+                    ),
+                )
 
         # Route guard
         route_guard = None

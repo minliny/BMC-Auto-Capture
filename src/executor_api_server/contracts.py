@@ -619,7 +619,7 @@ PLAN_QUERY_CONTRACT: dict[str, Any] = {
     "responseBody": {
         "fields": [
             {"name": "planId", "type": "string | integer"},
-            {"name": "status", "type": "string", "allowedValues": ["ACCEPTED", "RUNNING", "COMPLETED"]},
+            {"name": "status", "type": "string", "allowedValues": ["ACCEPTED", "RUNNING", "COMPLETED", "FAILED"]},
             {"name": "summary", "type": "object", "children": [
                 {"name": "total", "type": "integer"},
                 {"name": "success", "type": "integer"},

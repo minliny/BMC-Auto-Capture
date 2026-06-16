@@ -27,6 +27,7 @@ from ..server_callback_client import (
 from .._version import APP_VERSION
 from ..api_models.lock_uri import derive_lock_uri, LockUriDerivationError
 from ..plan_item_status_callback_client import validate_callback_url
+from ..utils.sensitive import redact_sensitive_text
 
 logger = logging.getLogger("bmc_auto_capture.dispatch")
 
@@ -382,6 +383,8 @@ class DirectDispatchService:
 
         lock_uri = job.lock_uri
 
+        acquired_lock = False
+
         # --- Acquire lock ---
         if lock_uri:
             if not self._lock_mgr.acquire(lock_uri, job_id):
@@ -389,87 +392,120 @@ class DirectDispatchService:
                 with self._queue_lock:
                     self._pending_queue.append(job_id)
                 return False
+            acquired_lock = True
 
-        # --- Mark RUNNING ---
-        self._store.mark_running(job_id)
-
-        # Callback: started
-        if job.callback_status_url:
-            self._callback.callback_job_started(
-                external_task_id=job.external_task_id,
-                job_id=job_id,
-                status_url=job.callback_status_url,
-                auth_token=job.callback_auth_token,
-            )
-
-        # --- Execute ---
         try:
-            result = self._runner.run_job(job.raw_payload.get("job", {}))
-        except Exception as e:
-            logger.exception("Runner crashed for job %s", job_id)
-            result = JobResult(
-                status="FAILED",
-                duration_ms=0,
-                error={"code": "RUNNER_CRASH", "message": str(e), "retryable": False, "category": "SYSTEM"},
-            )
+            # --- Mark RUNNING ---
+            self._store.mark_running(job_id)
 
-        # --- Mark finished ---
-        status = result.status
-        self._store.mark_finished(
-            job_id=job_id,
-            status=status,
-            duration_ms=result.duration_ms,
-            error=result.error,
-            result_summary={
+            # Callback: started.  A callback exception must not leave the job
+            # RUNNING or prevent lock release.
+            if job.callback_status_url:
+                try:
+                    self._callback.callback_job_started(
+                        external_task_id=job.external_task_id,
+                        job_id=job_id,
+                        status_url=job.callback_status_url,
+                        auth_token=job.callback_auth_token,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Job start callback crashed for job %s: %s",
+                        job_id,
+                        redact_sensitive_text(str(e)),
+                    )
+
+            # --- Execute ---
+            try:
+                result = self._runner.run_job(job.raw_payload.get("job", {}))
+            except Exception as e:
+                logger.error(
+                    "Runner crashed for job %s: %s",
+                    job_id,
+                    redact_sensitive_text(str(e)),
+                )
+                result = JobResult(
+                    status="FAILED",
+                    duration_ms=0,
+                    error={
+                        "code": "RUNNER_CRASH",
+                        "message": redact_sensitive_text(str(e))[:200],
+                        "retryable": False,
+                        "category": "SYSTEM",
+                    },
+                )
+
+            # --- Mark finished ---
+            status = result.status
+            summary = {
                 "summary": f"EXEC_{status}",
                 "steps_total": len(result.steps),
                 "steps_success": sum(1 for s in result.steps if s.get("status") == "SUCCEEDED"),
                 "steps_failed": sum(1 for s in result.steps if s.get("status") == "FAILED"),
-            },
-            artifacts=result.artifacts,
-        )
-
-        # --- Callback ---
-        sent = False
-        if job.callback_status_url:
-            if result.status == "SUCCEEDED":
-                sent = self._callback.callback_job_finished(
-                    external_task_id=job.external_task_id,
-                    job_id=job_id,
-                    status_url=job.callback_status_url,
-                    result={
-                        "summary": f"EXEC_{result.status}",
-                        "steps_total": len(result.steps),
-                        "steps_success": sum(1 for s in result.steps if s.get("status") == "SUCCEEDED"),
-                        "steps_failed": sum(1 for s in result.steps if s.get("status") == "FAILED"),
-                    },
-                    duration_ms=result.duration_ms,
-                    artifacts=result.artifacts,
-                    auth_token=job.callback_auth_token,
-                )
-            else:
-                sent = self._callback.callback_job_failed(
-                    external_task_id=job.external_task_id,
-                    job_id=job_id,
-                    status_url=job.callback_status_url,
-                    status=result.status,
-                    duration_ms=result.duration_ms,
-                    error=result.error,
-                    auth_token=job.callback_auth_token,
-                )
-
-        if not sent and job.callback_status_url:
-            self._store.mark_callback_failed(
-                job_id,
-                f"Callback returned non-2xx or exception "
-                f"(transport={'http' if self._use_http else 'fake'})",
+            }
+            self._store.mark_finished(
+                job_id=job_id,
+                status=status,
+                duration_ms=result.duration_ms,
+                error=result.error,
+                result_summary=summary,
+                artifacts=result.artifacts,
             )
 
-        # --- Release lock ---
-        if lock_uri:
-            self._lock_mgr.release(lock_uri, job_id)
+            # --- Callback ---
+            sent = False
+            callback_error = ""
+            if job.callback_status_url:
+                try:
+                    if result.status == "SUCCEEDED":
+                        sent = self._callback.callback_job_finished(
+                            external_task_id=job.external_task_id,
+                            job_id=job_id,
+                            status_url=job.callback_status_url,
+                            result=summary,
+                            duration_ms=result.duration_ms,
+                            artifacts=result.artifacts,
+                            auth_token=job.callback_auth_token,
+                        )
+                    else:
+                        sent = self._callback.callback_job_failed(
+                            external_task_id=job.external_task_id,
+                            job_id=job_id,
+                            status_url=job.callback_status_url,
+                            status=result.status,
+                            duration_ms=result.duration_ms,
+                            error=result.error,
+                            auth_token=job.callback_auth_token,
+                        )
+                except Exception as e:
+                    callback_error = redact_sensitive_text(str(e))
+                    logger.error("Job finish callback crashed for job %s: %s", job_id, callback_error)
 
-        return True
+            if not sent and job.callback_status_url:
+                detail = callback_error or f"Callback returned non-2xx or exception (transport={'http' if self._use_http else 'fake'})"
+                self._store.mark_callback_failed(job_id, detail)
+
+            return True
+        except Exception as e:
+            message = redact_sensitive_text(str(e))
+            logger.error("Dispatch flow crashed for job %s: %s", job_id, message)
+            self._store.mark_finished(
+                job_id=job_id,
+                status=JobStoreStatus.FAILED,
+                duration_ms=0,
+                error={
+                    "code": "DISPATCH_FLOW_CRASH",
+                    "message": message[:200],
+                    "retryable": False,
+                    "category": "SYSTEM",
+                },
+                result_summary={"summary": "EXEC_FAILED", "steps_total": 0, "steps_success": 0, "steps_failed": 1},
+                artifacts=[],
+            )
+            return True
+        finally:
+            if acquired_lock and lock_uri:
+                self._lock_mgr.release(lock_uri, job_id)
 
 
 def _fmt_ts(ts: float) -> str:

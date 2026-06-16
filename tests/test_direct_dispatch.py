@@ -17,7 +17,7 @@ from src.executor_api_server.service import (
     ValidationError,
 )
 from src.server_callback_client import FakeCallbackTransport
-from src.job_runner_adapter import FakeRunner
+from src.resource_lock_manager import ResourceLockManager
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +206,62 @@ class TestExecutionFlow:
 
         job_after = service.store.get_job("job-local-001")
         assert job_after.status == "SUCCEEDED"
+
+    def test_start_callback_exception_does_not_leave_job_running_or_locked(self):
+        class StartCallbackCrash:
+            def callback_job_started(self, **kwargs):
+                raise RuntimeError("start callback exploded")
+
+            def callback_job_finished(self, **kwargs):
+                return True
+
+            def callback_job_failed(self, **kwargs):
+                return True
+
+        lock_mgr = ResourceLockManager()
+        service = DirectDispatchService(
+            executor_id="exec-test-001",
+            lock_manager=lock_mgr,
+            callback_client=StartCallbackCrash(),
+        )
+        req = _make_valid_request()
+        req["job"]["resource_lock"]["lock_uri"] = "bmc://unit-lock"
+
+        service.submit_job(req)
+        service.run_all_pending()
+
+        job = service.store.get_job("job-local-001")
+        assert job.status == "SUCCEEDED"
+        assert not lock_mgr.is_locked("bmc://unit-lock")
+
+    def test_finish_callback_exception_marks_callback_failed_and_releases_lock(self):
+        class FinishCallbackCrash:
+            def callback_job_started(self, **kwargs):
+                return True
+
+            def callback_job_finished(self, **kwargs):
+                raise RuntimeError("finish callback exploded")
+
+            def callback_job_failed(self, **kwargs):
+                raise RuntimeError("finish callback exploded")
+
+        lock_mgr = ResourceLockManager()
+        service = DirectDispatchService(
+            executor_id="exec-test-001",
+            lock_manager=lock_mgr,
+            callback_client=FinishCallbackCrash(),
+        )
+        req = _make_valid_request()
+        req["job"]["resource_lock"]["lock_uri"] = "bmc://unit-lock"
+
+        service.submit_job(req)
+        service.run_all_pending()
+
+        job = service.store.get_job("job-local-001")
+        assert job.status == "CALLBACK_FAILED"
+        assert job.result_summary.get("summary") == "EXEC_SUCCEEDED"
+        assert "finish callback exploded" in job.last_callback_error
+        assert not lock_mgr.is_locked("bmc://unit-lock")
 
 
 # ---------------------------------------------------------------------------

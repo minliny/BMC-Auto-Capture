@@ -79,6 +79,7 @@ class PlanRun:
     updater: str = "downstream-system"
     item_status_url: str = ""
     callback_mode: str = "batch"
+    error_message: str = ""
     started_at: float = 0.0
     finished_at: float = 0.0
     config_snapshot: RunConfigSnapshot | None = None

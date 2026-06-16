@@ -595,6 +595,12 @@ class PlanRunService:
         return self._callback_delivery.resolve_callback_url(run)
 
     def _execute_run(self, run: PlanRun, cb: PlanItemStatusCallbackClient):
+        try:
+            self._execute_run_inner(run, cb)
+        except Exception as exc:
+            self._mark_run_crashed(run, cb, exc)
+
+    def _execute_run_inner(self, run: PlanRun, cb: PlanItemStatusCallbackClient):
         is_real = run.runner_mode == "real"
         runner = None
         if is_real:
@@ -616,11 +622,77 @@ class PlanRunService:
             self._execute_run_item(run, item, cb, is_real=is_real, runner=runner)
             item_index += 1
 
-        run.finished_at = time.time()
-        run.status = "COMPLETED"
+        self._finalize_run_status(run)
         self._write_plan_result_reports(run)
         self._persist_run(run)
         self._deliver_plan_summary(run, cb)
+
+    def _mark_run_crashed(
+        self, run: PlanRun, cb: PlanItemStatusCallbackClient, exc: Exception,
+    ) -> None:
+        reason = redact_sensitive_text(str(exc) or repr(exc))
+        error_message = f"RUN_EXECUTOR_CRASH: {exc.__class__.__name__}: {reason}"
+        now = time.time()
+        logger.error(
+            "PlanRun executor crashed: planId=%s runId=%s error=%s",
+            run.plan_id,
+            run.run_id,
+            redact_sensitive_text(str(exc)),
+        )
+
+        for item in run.items:
+            if item.status in ("SUCCESS", "FAILED"):
+                continue
+            if not item.started_at:
+                item.started_at = now
+            item.status = "FAILED"
+            item.error_message = error_message
+            item.finished_at = now
+            item.add_info_event("ERROR", error_message)
+            try:
+                self._deliver_item_status(run, item, cb)
+            except Exception as callback_exc:
+                logger.warning(
+                    "PlanRun crash item callback failed: planId=%s device=%s task=%s error=%s",
+                    run.plan_id,
+                    item.device_name,
+                    item.task_name,
+                    redact_sensitive_text(str(callback_exc)),
+                )
+
+        run.status = "FAILED"
+        run.error_message = error_message
+        run.finished_at = now
+
+        self._persist_run(run)
+        self._write_plan_result_reports(run)
+        try:
+            self._deliver_plan_summary(run, cb)
+        except Exception as callback_exc:
+            logger.warning(
+                "PlanRun crash summary callback failed: planId=%s error=%s",
+                run.plan_id,
+                redact_sensitive_text(str(callback_exc)),
+            )
+
+    def _finalize_run_status(self, run: PlanRun) -> None:
+        run.finished_at = time.time()
+        if not run.items:
+            run.status = "FAILED"
+            run.error_message = "NO_RUN_ITEMS: no executable plan items"
+            return
+        failed_count = sum(1 for item in run.items if item.status == "FAILED")
+        success_count = sum(1 for item in run.items if item.status == "SUCCESS")
+        if failed_count == len(run.items) and success_count == 0:
+            first_error = next(
+                (item.error_message for item in run.items if item.error_message),
+                "all plan items failed",
+            )
+            run.status = "FAILED"
+            run.error_message = f"ALL_ITEMS_FAILED: {failed_count}/{len(run.items)} failed; first_error={first_error}"
+            return
+        run.status = "COMPLETED"
+        run.error_message = ""
 
     def _execute_run_item(
         self, run: PlanRun, item: PlanRunItem, cb: PlanItemStatusCallbackClient,
@@ -892,7 +964,7 @@ class PlanRunService:
         run = self._get_plan(str(plan_id))
         if run is None:
             return
-        if run.status == "COMPLETED":
+        if run.status in ("COMPLETED", "FAILED"):
             return
         with self._runs_lock:
             thread = self._run_threads.get(str(plan_id))

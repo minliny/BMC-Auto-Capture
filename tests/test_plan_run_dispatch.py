@@ -247,6 +247,29 @@ class TestRunCallbacks:
         for t in tasks:
             assert t["status"] in (TaskRunStatus.CALLBACK_FAILED, TaskRunStatus.SUCCEEDED)
 
+    def test_callback_exception_does_not_leave_run_success_or_running(self, monkeypatch):
+        svc = RunDispatchService(executor_id="exec-test", runner_mode="fake")
+        r = _import_plan(svc)
+        svc.start_run({
+            "command_id": "c1", "run_id": "run-callback-crash",
+            "plan_id": r["plan_id"], "plan_hash": r["plan_hash"],
+            "callback": {"task_status_url": "http://cb/{task_id}"},
+        })
+
+        def crash_callback(*args, **kwargs):
+            raise RuntimeError("callback exploded")
+
+        monkeypatch.setattr(svc, "_send_task_callback", crash_callback)
+
+        svc.run_all_pending()
+
+        run = svc.get_run("run-callback-crash")
+        tasks = svc.get_run_tasks("run-callback-crash")
+        assert run["running"] == 0
+        assert run["queued"] == 0
+        assert run["status"] == RunStatus.FAILED
+        assert all(t["status"] == TaskRunStatus.CALLBACK_FAILED for t in tasks)
+
 
 # ===========================================================================
 # Lock integration (20)

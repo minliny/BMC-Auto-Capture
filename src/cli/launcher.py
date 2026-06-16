@@ -28,8 +28,11 @@ except ImportError:
     HAS_OPENPYXL = False
 
 # 中文适配
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # 日志前缀常量
 LOG_PREFIX_OK = "[成功]"
@@ -632,4 +635,9 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        from .fatal import run_with_terminal_fault_guard
+    except ImportError:  # pragma: no cover - direct script execution fallback
+        from src.cli.fatal import run_with_terminal_fault_guard
+
+    sys.exit(run_with_terminal_fault_guard(main))

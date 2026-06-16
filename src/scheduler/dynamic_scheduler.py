@@ -713,7 +713,7 @@ class DynamicScheduler:
             result.retry_count = plan.retry_attempt
 
             return result
-        except BaseException as e:
+        except Exception as e:
             plan.executor_finished_at = time.time()
             logger.error("_execute_plan crashed for %s/%s: %s",
                          plan.device.device_name, plan.task.task_name, e)

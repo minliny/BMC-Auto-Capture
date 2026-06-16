@@ -22,6 +22,10 @@ class PlanRunStateCodec:
             "outputRoot": run.output_root,
             "updater": run.updater,
             "callbackMode": run.callback_mode,
+            "errorMessage": (
+                redact_sensitive_text(run.error_message or "")
+                if run.error_message else ""
+            ),
             "startedAt": run.started_at,
             "finishedAt": run.finished_at,
             "items": [
@@ -87,6 +91,7 @@ class PlanRunStateCodec:
             updater=str(data.get("updater", "downstream-system")),
             item_status_url="",
             callback_mode=str(data.get("callbackMode", "batch")),
+            error_message=str(data.get("errorMessage", "") or ""),
             started_at=float(data.get("startedAt", 0.0) or 0.0),
             finished_at=float(data.get("finishedAt", 0.0) or 0.0),
         )

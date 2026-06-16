@@ -38,7 +38,11 @@ class PlanRunQueryProjector:
             "outputRoot": run.output_root,
             "startedAt": format_timestamp(run.started_at),
             "finishedAt": format_timestamp(run.finished_at),
-            "errorMessage": None,
+            "errorMessage": (
+                redact_sensitive_text(run.error_message or "")
+                if getattr(run, "error_message", "")
+                else None
+            ),
             "infoEvents": [
                 {
                     "timestamp": format_timestamp(run.started_at),

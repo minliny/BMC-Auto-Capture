@@ -13,7 +13,9 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import re
 import sys
+import traceback
 from pathlib import Path
 
 
@@ -63,6 +65,52 @@ def _prepend_app_dir(app_dir: Path) -> None:
 def _import_attr(module_name: str, attr_name: str):
     module = importlib.import_module(module_name)
     return getattr(module, attr_name)
+
+
+def _fallback_redact_terminal_error(text: str) -> str:
+    patterns = [
+        (r"(?i)(password|passwd|pwd|token|secret|authorization|cookie)\s*[:=]\s*[^,\s]+", r"\1=<REDACTED>"),
+        (r"(?i)(用户名|用户|密码|令牌)\s*[:=：]\s*[^,\s，；;]+", r"\1=<REDACTED>"),
+    ]
+    value = text
+    for pattern, replacement in patterns:
+        value = re.sub(pattern, replacement, value)
+    return value
+
+
+def _fallback_run_with_terminal_fault_guard(entrypoint) -> int:
+    try:
+        value = entrypoint()
+        return value if isinstance(value, int) else 0
+    except SystemExit as exc:
+        if exc.code is None:
+            return 0
+        if isinstance(exc.code, int):
+            return exc.code
+        print(_fallback_redact_terminal_error(str(exc.code)), file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("", file=sys.stderr)
+        print("[INTERRUPTED] 用户中断，执行已停止。", file=sys.stderr)
+        return 130
+    except Exception as exc:
+        print("", file=sys.stderr)
+        print("[FATAL] 执行端发生未处理异常，任务已停止。", file=sys.stderr)
+        print(f"  类型: {exc.__class__.__name__}", file=sys.stderr)
+        print(f"  原因: {_fallback_redact_terminal_error(str(exc) or repr(exc))}", file=sys.stderr)
+        print("  处理: 请保留本窗口输出，并检查本次输出目录中的日志/结果文件。", file=sys.stderr)
+        if os.environ.get("BMC_SHOW_TRACEBACK", "").strip().lower() in {"1", "true", "yes", "on"}:
+            print("", file=sys.stderr)
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+        return 1
+
+
+def _run_main_with_terminal_fault_guard() -> int:
+    try:
+        guard = _import_attr("src.cli.fatal", "run_with_terminal_fault_guard")
+    except Exception:
+        return _fallback_run_with_terminal_fault_guard(main)
+    return guard(main)
 
 
 def _is_playwright_browsers_dir(d: Path) -> bool:
@@ -496,10 +544,32 @@ def main():
     results = prompt_retry_failed_tasks(app, results, mode=effective_mode)
 
     if not results:
+        no_work = (
+            app.current_no_work_status()
+            if hasattr(app, "current_no_work_status")
+            else {}
+        )
+        if no_work.get("reason"):
+            print(f"  {no_work.get('message') or '无可用任务。'}")
+            sys.exit(0)
+        batch_error = (
+            app.current_batch_error_status()
+            if hasattr(app, "current_batch_error_status")
+            else {}
+        )
+        if batch_error.get("reason"):
+            print(f"  {batch_error.get('message') or '批次执行失败。'}")
         sys.exit(1)
+    batch_error = (
+        app.current_batch_error_status()
+        if hasattr(app, "current_batch_error_status")
+        else {}
+    )
+    if batch_error.get("reason"):
+        print(f"  {batch_error.get('message') or '批次执行失败。'}")
     failed = failed_result_count(results)
     sys.exit(1 if failed > len(results) * 0.5 else 0)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_run_main_with_terminal_fault_guard())

@@ -52,7 +52,7 @@ def execute_with_retry(executor, plan: TaskPlan, output_root: str) -> ExecutionR
 
         try:
             result = executor.execute(plan, output_root)
-        except BaseException as e:
+        except Exception as e:
             # Executor threw an exception — wrap as EXEC_ERROR result
             now = time.time()
             result = ExecutionResult(
