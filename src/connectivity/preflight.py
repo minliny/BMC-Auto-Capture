@@ -49,6 +49,17 @@ class PreflightResult:
     bmc_duration: float = 0.0
     ssh_duration: float = 0.0
 
+    def check_results(self):
+        results = []
+        for target in ("bmc", "ssh"):
+            check = _preflight_check_result_for_target(self, target)
+            if check is not None:
+                results.append(check)
+        return results
+
+    def check_results_as_dicts(self) -> list[dict]:
+        return [c.to_dict() for c in self.check_results()]
+
 
 @dataclass
 class PreflightReport:
@@ -61,6 +72,63 @@ class PreflightReport:
     probe_count: int = 0
     impacted_task_count: int = 0
     skipped_task_count: int = 0
+
+    def check_results(self):
+        checks = []
+        for result in self.results:
+            checks.extend(result.check_results())
+        return checks
+
+    def check_results_as_dicts(self) -> list[dict]:
+        return [c.to_dict() for c in self.check_results()]
+
+
+def _preflight_check_result_for_target(result: PreflightResult, target: str):
+    from ..checks import CheckResult, CheckStage, CheckStatus
+
+    status = getattr(result, f"{target}_status", "")
+    error = getattr(result, f"{target}_error", "")
+    endpoint = getattr(result, f"{target}_endpoint", "")
+    latency_ms = getattr(result, f"{target}_latency_ms", 0.0)
+    duration = getattr(result, f"{target}_duration", 0.0)
+    username = getattr(result, f"{target}_username", "")
+
+    if status in (PreflightStatus.OK, PreflightStatus.IP_EMPTY) and not any(
+        (error, endpoint, latency_ms, duration, username)
+    ):
+        return None
+
+    if status in (PreflightStatus.OK, "AUTH_OK"):
+        check_status = CheckStatus.PASS
+        severity = "INFO"
+    elif status in (PreflightStatus.IP_EMPTY, "CREDENTIAL_EMPTY"):
+        check_status = CheckStatus.SKIP
+        severity = "WARNING"
+    else:
+        check_status = CheckStatus.FAIL
+        severity = "ERROR"
+
+    source = "connectivity.preflight"
+    return CheckResult(
+        stage=CheckStage.PRECHECK,
+        check_id=f"{source}.{target}",
+        status=check_status,
+        severity=severity,
+        message=error or status,
+        details={
+            "device_name": result.device_name,
+            "device_group": result.device_group,
+            "target": target.upper(),
+            "status": status,
+            "error": error,
+            "endpoint": endpoint,
+            "latency_ms": latency_ms,
+            "duration_seconds": duration,
+        },
+        source=source,
+        target=endpoint or result.device_name,
+        actual=status,
+    )
 
 
 _INVALID_HOST_VALUES = {"是", "否", "启用", "禁用", "yes", "no", "true", "false", "1", "0"}

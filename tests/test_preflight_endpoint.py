@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.models.device import Device
 from src.connectivity.preflight import (
-    check_all, apply_preflight, PreflightStatus, PreflightReport,
+    check_all, apply_preflight, PreflightStatus, PreflightReport, PreflightResult,
 )
 
 
@@ -97,6 +97,42 @@ class TestPreflightLogging:
         assert "跳过任务" in caplog.text
         assert report.probe_count == 2
         assert report.impacted_task_count == 4
+
+
+class TestPreflightCheckResults:
+    def test_preflight_report_exports_unified_check_results(self):
+        report = PreflightReport(results=[
+            PreflightResult(
+                device_name="dev1",
+                device_group="A3",
+                bmc_status=PreflightStatus.UNREACHABLE,
+                bmc_error="网络不可达",
+                bmc_endpoint="BMC|10.0.0.1|443",
+                ssh_status=PreflightStatus.OK,
+                ssh_endpoint="SSH|10.0.0.2|22",
+                ssh_latency_ms=1.2,
+            ),
+            PreflightResult(
+                device_name="dev2",
+                bmc_status=PreflightStatus.IP_EMPTY,
+                bmc_error="IP为空",
+                bmc_endpoint="BMC|IP_EMPTY|443",
+            ),
+            PreflightResult(
+                device_name="dev3",
+                ssh_status=PreflightStatus.IP_EMPTY,
+            ),
+        ])
+
+        checks = report.check_results()
+
+        assert [c.status for c in checks] == ["FAIL", "PASS", "SKIP"]
+        assert checks[0].stage == "PRECHECK"
+        assert checks[0].check_id == "connectivity.preflight.bmc"
+        assert checks[0].details["device_name"] == "dev1"
+        assert checks[0].details["target"] == "BMC"
+        assert checks[1].details["target"] == "SSH"
+        assert checks[2].actual == PreflightStatus.IP_EMPTY
 
 
 class TestPreflightApply:
