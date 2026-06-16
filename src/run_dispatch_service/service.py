@@ -168,6 +168,7 @@ class RunDispatchService:
                 "reason": "validation_failed",
                 "validation_errors": report.error_count,
                 "errors": [e.to_dict() for e in report.errors],
+                "check_results": report.check_results_as_dicts(),
             }
 
         plan_id = manifest.plan_id
@@ -184,6 +185,8 @@ class RunDispatchService:
             "plan_hash": manifest.plan_hash,
             "task_count": manifest.task_count,
             "validation_errors": report.error_count,
+            "validation_warnings": report.warning_count,
+            "check_results": report.check_results_as_dicts(),
         }
 
     def get_plan(self, plan_id: str) -> dict[str, Any] | None:

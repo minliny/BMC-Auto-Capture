@@ -7,10 +7,18 @@ from src.checks import CheckResult, CheckStage, check_result_from_execution_stat
 from src.executor.bmc_executor import BMCExecutor
 from src.executor.bmc_health_check import HealthResult
 from src.executor.ssh_executor import SSHExecutor
+from src.loader.schema_validator import (
+    ValidationMessage,
+    ValidationReport as LoaderValidationReport,
+)
 from src.models.execution_result import ExecutionResult
 from src.models.verdict import compute_verdict
 from src.out.collector import compute_summary, write_final_result_csv
 from src.out.summary import write_failure_csv
+from src.plan_catalog.models import (
+    ValidationError,
+    ValidationReport as PlanCatalogValidationReport,
+)
 from src.plan_run_service.models import PlanRunItem
 from src.plan_run_service.query_projector import PlanRunQueryProjector
 
@@ -159,3 +167,37 @@ def test_precheck_skip_check_result_does_not_override_skipped_verdict():
     assert compute_verdict(result) == "SKIPPED"
     assert result.check_results[0].stage == "PRECHECK"
     assert result.check_results[0].status == "SKIP"
+
+
+def test_loader_validation_report_exports_config_check_results():
+    report = LoaderValidationReport(messages=[
+        ValidationMessage("ERROR", "task", 7, "任务ID", "任务ID重复: task.001"),
+        ValidationMessage("WARNING", "device", 3, "带外管理IP", "启用设备的BMC IP为空"),
+    ])
+
+    checks = report.check_results()
+
+    assert len(checks) == 2
+    assert checks[0].stage == "CONFIG_CHECK"
+    assert checks[0].check_id == "loader.validation.task"
+    assert checks[0].status == "FAIL"
+    assert checks[0].details["row"] == 7
+    assert checks[0].details["field"] == "任务ID"
+    assert checks[1].status == "WARN"
+
+
+def test_plan_catalog_validation_report_exports_config_check_results_in_to_dict():
+    report = PlanCatalogValidationReport(
+        errors=[ValidationError("MISSING_SHEET", "Required sheet missing", "validation.json", "error")],
+        warnings=[ValidationError("MISSING_OOB_IP", "Device missing oob_ip", "设备信息:row=2", "warning")],
+    )
+
+    data = report.to_dict()
+    checks = data["check_results"]
+
+    assert len(checks) == 2
+    assert checks[0]["stage"] == "CONFIG_CHECK"
+    assert checks[0]["check_id"] == "plan_catalog.validation.MISSING_SHEET"
+    assert checks[0]["status"] == "FAIL"
+    assert checks[0]["details"]["row_ref"] == "validation.json"
+    assert checks[1]["status"] == "WARN"

@@ -16,6 +16,8 @@ from .models import (
     check_result_from_execution_status,
     check_result_from_health_result,
     check_result_from_rule_action,
+    check_result_from_validation_message,
+    check_results_from_validation_report,
 )
 
 __all__ = [
@@ -30,4 +32,6 @@ __all__ = [
     "check_result_from_execution_status",
     "check_result_from_health_result",
     "check_result_from_rule_action",
+    "check_result_from_validation_message",
+    "check_results_from_validation_report",
 ]

@@ -82,6 +82,14 @@ class ValidationReport:
     def warning_count(self) -> int:
         return len(self.warnings)
 
+    def check_results(self):
+        from ..checks import check_results_from_validation_report
+
+        return check_results_from_validation_report(self, source_prefix="plan_catalog.validation")
+
+    def check_results_as_dicts(self) -> list[dict[str, Any]]:
+        return [c.to_dict() for c in self.check_results()]
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "valid": self.is_valid,
@@ -89,6 +97,7 @@ class ValidationReport:
             "warning_count": self.warning_count,
             "errors": [e.to_dict() for e in self.errors],
             "warnings": [w.to_dict() for w in self.warnings],
+            "check_results": self.check_results_as_dicts(),
         }
 
 

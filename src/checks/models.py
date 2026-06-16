@@ -291,3 +291,72 @@ def check_result_from_execution_status(
         source=source,
         actual=normalized_status,
     )
+
+
+def check_result_from_validation_message(
+    message: Any,
+    *,
+    source_prefix: str = "config.validation",
+) -> CheckResult:
+    severity = normalize_severity(
+        getattr(message, "severity", None) or getattr(message, "level", None) or "ERROR"
+    )
+    status_by_severity = {
+        "ERROR": CheckStatus.FAIL,
+        "WARNING": CheckStatus.WARN,
+        "INFO": CheckStatus.PASS,
+    }
+    status = status_by_severity.get(severity, CheckStatus.ERROR)
+    code = str(getattr(message, "code", "") or "")
+    source_name = str(getattr(message, "source", "") or "validation")
+    field_name = str(getattr(message, "field", "") or "")
+    row = getattr(message, "row", None)
+    row_ref = str(getattr(message, "row_ref", "") or "")
+    message_text = str(getattr(message, "message", "") or "")
+    check_key = code or source_name
+
+    details: dict[str, Any] = {
+        "severity": severity,
+        "source": source_name,
+        "message": message_text,
+    }
+    if code:
+        details["code"] = code
+    if field_name:
+        details["field"] = field_name
+    if row is not None:
+        details["row"] = row
+    if row_ref:
+        details["row_ref"] = row_ref
+
+    return CheckResult(
+        stage=CheckStage.CONFIG,
+        check_id=f"{source_prefix}.{check_key}",
+        status=status,
+        severity=severity,
+        message=message_text,
+        details=details,
+        source=source_prefix,
+        target=row_ref or (str(row) if row is not None else ""),
+        actual=field_name or code or source_name,
+    )
+
+
+def check_results_from_validation_report(
+    report: Any,
+    *,
+    source_prefix: str = "config.validation",
+) -> list[CheckResult]:
+    messages = getattr(report, "messages", None)
+    if messages is not None:
+        return [
+            check_result_from_validation_message(m, source_prefix=source_prefix)
+            for m in messages
+        ]
+
+    results: list[CheckResult] = []
+    for item in getattr(report, "errors", []) or []:
+        results.append(check_result_from_validation_message(item, source_prefix=source_prefix))
+    for item in getattr(report, "warnings", []) or []:
+        results.append(check_result_from_validation_message(item, source_prefix=source_prefix))
+    return results

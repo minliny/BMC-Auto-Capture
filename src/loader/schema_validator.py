@@ -40,6 +40,14 @@ class ValidationReport:
     def is_valid(self) -> bool:
         return len(self.errors) == 0
 
+    def check_results(self):
+        from ..checks import check_results_from_validation_report
+
+        return check_results_from_validation_report(self, source_prefix="loader.validation")
+
+    def check_results_as_dicts(self) -> list[dict]:
+        return [c.to_dict() for c in self.check_results()]
+
 
 def validate(devices: list[Device], tasks: list[Task]) -> ValidationReport:
     report = ValidationReport(
