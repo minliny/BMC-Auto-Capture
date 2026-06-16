@@ -72,7 +72,8 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
     print("\n" + "=" * 70)
     print(f"  执行完成: 共 {total} 个计划")
     print(f"  成功: {s['success']}  ({s['success'] / total * 100:.0f}%)")
-    not_pass = (s['failed'] + s['error'] + s['timeout'] + s['partial'] +
+    not_pass = (s['failed'] + s['error'] + s['timeout'] +
+                s.get('rule_failed_execution', 0) + s['partial'] +
                 s['blocked'] + s['unknown'] +
                 s['skipped_preflight'] + s['skipped_port_blocked'] + s['skipped_route'] +
                 s['skipped_stopped'] + s['skipped_session'] + s['skipped_disabled'])
@@ -81,6 +82,7 @@ def print_terminal_summary(results: Sequence[ExecutionResult]) -> None:
         if s['failed']: parts.append(f"失败: {s['failed']}")
         if s['error']: parts.append(f"错误: {s['error']}")
         if s['timeout']: parts.append(f"超时: {s['timeout']}")
+        if s.get('rule_failed_execution', 0): parts.append(f"规则失败: {s['rule_failed_execution']}")
         if s['partial']: parts.append(f"部分完成: {s['partial']}")
         if s['blocked']: parts.append(f"阻塞: {s['blocked']}")
         if s['unknown']: parts.append(f"未知: {s['unknown']}")
@@ -193,6 +195,8 @@ def _categorize_failure(result_or_status, reason: str | None = None) -> str:
         return "路由变更"
     if status == "EXEC_TIMEOUT":
         return "超时"
+    if status == "EXEC_SUCCESS_RULE_FAILED":
+        return "规则失败"
     if status == "EXEC_PARTIAL":
         return "部分完成"
     if status == "EXEC_BLOCKED":

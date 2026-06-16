@@ -274,6 +274,8 @@ def check_result_from_execution_status(
         status = CheckStatus.PASS
     elif normalized_status in {"EXEC_PARTIAL"}:
         status = CheckStatus.WARN
+    elif normalized_status == "EXEC_SUCCESS_RULE_FAILED":
+        status = CheckStatus.FAIL
     elif normalized_status.startswith("EXEC_SKIPPED") or normalized_status == "PRECHECK_SKIPPED":
         status = CheckStatus.SKIP
     else:

@@ -464,6 +464,7 @@ def summarize_results(output_dir: Path) -> None:
         total = len(rows)
         success = sum(1 for r in rows if r.get("执行状态") == "EXEC_SUCCESS")
         failed = sum(1 for r in rows if r.get("执行状态") == "EXEC_FAILED")
+        rule_failed = sum(1 for r in rows if r.get("执行状态") == "EXEC_SUCCESS_RULE_FAILED")
         partial = sum(1 for r in rows if r.get("执行状态") == "EXEC_PARTIAL")
         skipped = sum(1 for r in rows if "SKIPPED" in r.get("执行状态", ""))
 
@@ -479,6 +480,7 @@ result.csv 路径: {result_csv}
 总任务数: {total}
 成功数: {success}
 失败数: {failed}
+规则失败数: {rule_failed}
 部分成功数: {partial}
 跳过数: {skipped}
 PNG 数量: {png_count}

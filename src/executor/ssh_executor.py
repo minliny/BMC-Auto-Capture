@@ -576,7 +576,7 @@ class SSHExecutor(AbstractExecutor):
                     details={"strategy": strategy},
                 ))
                 if result.execution_status == "EXEC_SUCCESS":
-                    result.execution_status = "EXEC_PARTIAL"
+                    result.execution_status = "EXEC_SUCCESS_RULE_FAILED"
                 result.execution_failure_reason = (
                     (result.execution_failure_reason + "; " if result.execution_failure_reason else "")
                     + f"规则检查失败: {rule_failure}"

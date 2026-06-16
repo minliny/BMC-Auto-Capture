@@ -111,7 +111,7 @@ def lock_uri_for_task(self, task_type: str) -> str:
 
 ### P1-2：ExecutionResult 状态值与 Job 状态机不匹配
 
-**现状**：`ExecutionResult.execution_status` 值为 `EXEC_SUCCESS`、`EXEC_FAILED`、`EXEC_PARTIAL`、`EXEC_TIMEOUT`、`EXEC_ERROR`、`EXEC_SKIPPED_*`。
+**现状**：`ExecutionResult.execution_status` 值为 `EXEC_SUCCESS`、`EXEC_FAILED`、`EXEC_SUCCESS_RULE_FAILED`、`EXEC_PARTIAL`、`EXEC_TIMEOUT`、`EXEC_ERROR`、`EXEC_SKIPPED_*`。
 
 **问题**：与 API Job 状态机（SUCCEEDED/FAILED/TIMEOUT/CANCELED/SKIPPED）不一一对应。
 
@@ -121,6 +121,7 @@ def lock_uri_for_task(self, task_type: str) -> str:
 |---|---|
 | EXEC_SUCCESS | SUCCEEDED |
 | EXEC_FAILED | FAILED |
+| EXEC_SUCCESS_RULE_FAILED | FAILED |
 | EXEC_PARTIAL | FAILED |
 | EXEC_TIMEOUT | TIMEOUT |
 | EXEC_ERROR | FAILED |

@@ -204,6 +204,16 @@ def test_precheck_skip_check_result_does_not_override_skipped_verdict():
     assert result.check_results[0].status == "SKIP"
 
 
+def test_rule_failed_execution_status_check_result_is_fail():
+    check = check_result_from_execution_status(
+        "EXEC_SUCCESS_RULE_FAILED",
+        "规则检查失败: interface=100GE1/0/1 field=protocol value='down'",
+    )
+
+    assert check.status == "FAIL"
+    assert check.details["execution_status"] == "EXEC_SUCCESS_RULE_FAILED"
+
+
 def test_loader_validation_report_exports_config_check_results():
     report = LoaderValidationReport(messages=[
         ValidationMessage("ERROR", "task", 7, "任务ID", "任务ID重复: task.001"),

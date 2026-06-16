@@ -150,6 +150,7 @@ def test_bmc_retry_all_fail_and_nonretryable(monkeypatch, tmp_path):
         ("EXEC_FAILED", "FAIL"),
         ("EXEC_ERROR", "FAIL"),
         ("EXEC_TIMEOUT", "FAIL"),
+        ("EXEC_SUCCESS_RULE_FAILED", "FAIL"),
         ("EXEC_PARTIAL", "WARN"),
         ("EXEC_SKIPPED_STOPPED", "SKIPPED"),
         ("EXEC_SKIPPED_ROUTE_CHANGED", "SKIPPED"),
@@ -177,6 +178,23 @@ def test_unknown_summary_and_csv_are_closed(tmp_path):
     assert result.final_verdict == "FAIL"
     assert "FAIL" in text
     assert "SOME_NEW_STATUS" in text
+
+
+def test_rule_failed_execution_summary_is_closed():
+    result = ExecutionResult("p", "d", execution_status="EXEC_SUCCESS_RULE_FAILED")
+    summary = compute_summary([result])
+
+    assert summary["rule_failed_execution"] == 1
+    assert summary["unknown"] == 0
+    status_sum = (
+        summary["success"] + summary["failed"] + summary["error"] + summary["timeout"]
+        + summary["rule_failed_execution"] + summary["partial"] + summary["blocked"]
+        + summary["unknown"] + summary["skipped_preflight"]
+        + summary["skipped_port_blocked"] + summary["skipped_route"]
+        + summary["skipped_stopped"] + summary["skipped_disabled"]
+        + summary["skipped_session"] + summary["precheck_skipped"]
+    )
+    assert status_sum == summary["total"]
 
 
 def test_stderr_allowlist_fail_patterns_and_nonzero():

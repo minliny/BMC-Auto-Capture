@@ -20,7 +20,7 @@ from .execution_result import ExecutionResult
 # Precedence: FAIL > SKIPPED > WARN > PASS
 #
 # FAIL conditions:
-#   - EXEC_FAILED, EXEC_ERROR, EXEC_TIMEOUT
+#   - EXEC_FAILED, EXEC_ERROR, EXEC_TIMEOUT, EXEC_SUCCESS_RULE_FAILED
 #   - ARTIFACT_FAILED
 #   - RULE_FAILED / RULE_PARSE_FAILED
 #   - CHECK_FAIL
@@ -46,6 +46,7 @@ def compute_verdict(result: ExecutionResult) -> str:
         "EXEC_FAILED",
         "EXEC_ERROR",
         "EXEC_TIMEOUT",
+        "EXEC_SUCCESS_RULE_FAILED",
         "EXEC_PARTIAL",
         "EXEC_BLOCKED",
         "PRECHECK_SKIPPED",
@@ -62,7 +63,7 @@ def compute_verdict(result: ExecutionResult) -> str:
     result.raw_execution_status = ""
 
     # FAIL conditions
-    if status in ("EXEC_FAILED", "EXEC_ERROR", "EXEC_TIMEOUT"):
+    if status in ("EXEC_FAILED", "EXEC_ERROR", "EXEC_TIMEOUT", "EXEC_SUCCESS_RULE_FAILED"):
         return "FAIL"
     if _has_blocking_check_failure(result):
         return "FAIL"

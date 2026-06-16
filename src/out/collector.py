@@ -72,6 +72,7 @@ def compute_summary(results: Sequence[ExecutionResult]) -> dict:
     failed = sum(1 for r in results if r.execution_status == "EXEC_FAILED")
     error = sum(1 for r in results if r.execution_status == "EXEC_ERROR")
     timeout = sum(1 for r in results if r.execution_status == "EXEC_TIMEOUT")
+    rule_failed_execution = sum(1 for r in results if r.execution_status == "EXEC_SUCCESS_RULE_FAILED")
     partial = sum(1 for r in results if r.execution_status == "EXEC_PARTIAL")
     skipped_preflight = sum(1 for r in results if r.execution_status == "EXEC_SKIPPED_PRECHECK_FAILED")
     skipped_port = sum(1 for r in results if r.execution_status == "EXEC_SKIPPED_PORT_BLOCKED")
@@ -85,7 +86,8 @@ def compute_summary(results: Sequence[ExecutionResult]) -> dict:
     blocked = sum(1 for r in results if r.execution_status == "EXEC_BLOCKED")
     precheck_skipped = sum(1 for r in results if r.execution_status == "PRECHECK_SKIPPED")
     known_statuses = {
-        "EXEC_SUCCESS", "EXEC_FAILED", "EXEC_ERROR", "EXEC_TIMEOUT", "EXEC_PARTIAL",
+        "EXEC_SUCCESS", "EXEC_FAILED", "EXEC_ERROR", "EXEC_TIMEOUT",
+        "EXEC_SUCCESS_RULE_FAILED", "EXEC_PARTIAL",
         "EXEC_SKIPPED_PRECHECK_FAILED", "EXEC_SKIPPED_PORT_BLOCKED",
         "EXEC_SKIPPED_ROUTE_CHANGED", "EXEC_SKIPPED_STOPPED",
         "EXEC_SKIPPED_DISABLED", "EXEC_SKIPPED_SESSION_FAILED",
@@ -102,6 +104,7 @@ def compute_summary(results: Sequence[ExecutionResult]) -> dict:
         "failed": failed,
         "error": error,
         "timeout": timeout,
+        "rule_failed_execution": rule_failed_execution,
         "partial": partial,
         "skipped_preflight": skipped_preflight,
         "skipped_port_blocked": skipped_port,
