@@ -85,8 +85,12 @@
 
 ### 检查端口状态（SSH 命令输出）
 ```json
-{"type": "text_not_exists", "target": "down", "expect": "", "desc": "无 down 端口"}
-{"type": "text_not_exists", "target": "DOWN", "expect": "", "desc": "无 DOWN 端口"}
+{
+  "type": "interface_status",
+  "fields": ["physical", "protocol"],
+  "forbidden": ["down"],
+  "desc": "真实接口记录的 physical/protocol 状态不得为 down"
+}
 ```
 
 ## 七、完整示例
@@ -122,11 +126,14 @@
     "rules": [
       {
         "name": "端口状态检查",
-        "desc": "L1交换机所有端口应为UP状态，不应存在down端口",
+        "desc": "L1交换机接口状态字段应正常，不因描述文本中的 down 误判",
         "checks": [
-          {"type": "text_not_exists", "target": "down", "expect": "", "desc": "不存在down状态端口"},
-          {"type": "text_not_exists", "target": "DOWN", "expect": "", "desc": "不存在DOWN状态端口"},
-          {"type": "text_not_exists", "target": "administratively down", "expect": "", "desc": "不存在管理down端口"}
+          {
+            "type": "interface_status",
+            "fields": ["physical", "protocol"],
+            "forbidden": ["down"],
+            "desc": "真实接口记录的 physical/protocol 状态不得为 down"
+          }
         ]
       }
     ]

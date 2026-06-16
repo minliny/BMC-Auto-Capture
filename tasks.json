@@ -278,22 +278,13 @@
       "rules": [
         {
           "name": "端口状态检查",
-          "desc": "L1交换机所有UP端口应正常，不应出现down状态",
+          "desc": "L1交换机接口状态字段应正常，不因描述文本中的 down 误判",
           "checks": [
             {
-              "type": "text_exists",
-              "target": "up",
-              "desc": "输出包含UP端口"
-            },
-            {
-              "type": "text_not_exists",
-              "target": "down",
-              "desc": "不存在down端口"
-            },
-            {
-              "type": "text_not_exists",
-              "target": "DOWN",
-              "desc": "不存在DOWN端口"
+              "type": "interface_status",
+              "fields": ["physical", "protocol"],
+              "forbidden": ["down"],
+              "desc": "真实接口记录的 physical/protocol 状态不得为 down"
             }
           ]
         }

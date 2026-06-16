@@ -26,6 +26,13 @@ from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
 from ..out.file_writer import write_text_file, write_log_file
 from ..out.screenshot import render_text_to_image
+from ..rules.interface_status import (
+    coerce_status_fields,
+    coerce_status_values,
+    is_interface_brief_command,
+    parse_interface_brief,
+    status_matches,
+)
 from ..utils.template import resolve_template, check_unreplaced_vars
 from ..utils.path_safety import safe_filename, validate_template_for_path
 
@@ -397,6 +404,10 @@ class SSHExecutor(AbstractExecutor):
 
         cmd_spec = self._parse_command_spec(task, override_command=resolved_cmd, no_split=no_split)
         commands = cmd_spec["commands"]
+        try:
+            object.__setattr__(task, "_resolved_commands", commands)
+        except Exception:
+            pass
         cmd_outputs: dict[str, str] = {}
         variables: dict[str, str] = {}
 
@@ -528,6 +539,8 @@ class SSHExecutor(AbstractExecutor):
             )
             if rule_failure:
                 has_failure = True
+                result.rule_status = "RULE_FAILED"
+                result.rule_failure_reason = rule_failure
                 if result.execution_status == "EXEC_SUCCESS":
                     result.execution_status = "EXEC_PARTIAL"
                 result.execution_failure_reason = (
@@ -535,6 +548,8 @@ class SSHExecutor(AbstractExecutor):
                     + f"规则检查失败: {rule_failure}"
                 )
                 logger.warning("[%s] SSH规则检查失败: %s", device.device_name, rule_failure)
+            elif self._task_has_ssh_rules(task):
+                result.rule_status = "RULE_PASSED"
 
             # Write evidence
             # NEW-001: validate template before resolution, sanitize filename
@@ -1734,6 +1749,51 @@ class SSHExecutor(AbstractExecutor):
                 variables[var_name] = output[start:end].strip()
                 logger.debug("SSH extractor text '%s' → %s", var_name, variables[var_name])
 
+    def _interface_brief_rule_output(
+        self, task, combined_output: str, cmd_outputs: dict[str, str],
+    ) -> str:
+        commands = getattr(task, "_resolved_commands", None) or []
+        selected: list[str] = []
+        for cmd_name, cmd in commands:
+            if is_interface_brief_command(cmd) and cmd_name in cmd_outputs:
+                selected.append(cmd_outputs.get(cmd_name, ""))
+        if selected:
+            return "\n".join(selected)
+        return combined_output
+
+    def _task_has_interface_brief_command(self, task) -> bool:
+        commands = getattr(task, "_resolved_commands", None) or []
+        if any(is_interface_brief_command(cmd) for _name, cmd in commands):
+            return True
+        return is_interface_brief_command(getattr(task, "command_or_url", "") or "")
+
+    def _evaluate_interface_status_rule(
+        self,
+        rule_name: str,
+        desc: str,
+        output: str,
+        fields: list[str],
+        forbidden_values: list[str],
+    ) -> str:
+        records = parse_interface_brief(output)
+        if not records:
+            return f"[{rule_name}] {desc}: RULE_PARSE_FAILED no parseable interface rows"
+
+        failures: list[str] = []
+        for record in records:
+            for field in fields:
+                value = getattr(record, field, "")
+                if any(status_matches(value, forbidden) for forbidden in forbidden_values):
+                    failures.append(
+                        f"[{rule_name}] {desc}: interface={record.interface} "
+                        f"field={field} value={value!r} raw_line={record.raw_line!r}"
+                    )
+        return "; ".join(failures[:5])
+
+    @staticmethod
+    def _is_down_status_target(target: str) -> bool:
+        return status_matches(target, "down")
+
     def _evaluate_ssh_rules(
         self,
         task,
@@ -1782,8 +1842,34 @@ class SSHExecutor(AbstractExecutor):
                 if check_type in ("text_exists", "required_pattern", "text_contains"):
                     if target and target not in combined_output:
                         failures.append(f"[{rule_name}] {desc}: '{target}' not found")
+                elif check_type in ("interface_status", "interface_status_not"):
+                    fields = coerce_status_fields(
+                        check.get("fields", check.get("field", check.get("target_field"))),
+                    )
+                    forbidden_values = coerce_status_values(
+                        check.get("forbidden", check.get("forbidden_values", check.get("target"))),
+                    )
+                    failure = self._evaluate_interface_status_rule(
+                        rule_name,
+                        desc,
+                        self._interface_brief_rule_output(task, combined_output, cmd_outputs),
+                        fields,
+                        forbidden_values,
+                    )
+                    if failure:
+                        failures.append(failure)
                 elif check_type in ("text_not_exists", "forbidden_pattern", "not_contains_any"):
-                    if target and target in combined_output:
+                    if target and self._is_down_status_target(target) and self._task_has_interface_brief_command(task):
+                        failure = self._evaluate_interface_status_rule(
+                            rule_name,
+                            desc,
+                            self._interface_brief_rule_output(task, combined_output, cmd_outputs),
+                            ["physical", "protocol"],
+                            [target],
+                        )
+                        if failure:
+                            failures.append(failure)
+                    elif target and target in combined_output:
                         failures.append(f"[{rule_name}] {desc}: forbidden '{target}' found")
                 elif check_type == "min_output_lines":
                     min_lines = int(target) if target else 1
@@ -1805,6 +1891,14 @@ class SSHExecutor(AbstractExecutor):
                             failures.append(f"[{rule_name}] VRP prompt not detected in output")
 
         return "; ".join(failures[:5]) if failures else ""
+
+    @staticmethod
+    def _task_has_ssh_rules(task) -> bool:
+        tdef = getattr(task, "_task_def", None) or {}
+        rules = tdef.get("ssh_rules") or tdef.get("rules") or []
+        if not isinstance(rules, list):
+            return False
+        return any(isinstance(rule, dict) and rule.get("enabled", True) is not False for rule in rules)
 
     async def _evaluate_ssh_checkpoints(
         self, checkpoints, cmd_outputs, variables, result, txt_path, ss_path,
