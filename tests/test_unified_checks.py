@@ -7,6 +7,7 @@ from src.checks import CheckResult, CheckStage, check_result_from_execution_stat
 from src.executor.bmc_executor import BMCExecutor
 from src.executor.bmc_health_check import HealthResult
 from src.executor.ssh_executor import SSHExecutor
+from src.executor_api_server.schemas import PlanItemsResponse
 from src.loader.schema_validator import (
     ValidationMessage,
     ValidationReport as LoaderValidationReport,
@@ -201,3 +202,35 @@ def test_plan_catalog_validation_report_exports_config_check_results_in_to_dict(
     assert checks[0]["status"] == "FAIL"
     assert checks[0]["details"]["row_ref"] == "validation.json"
     assert checks[1]["status"] == "WARN"
+
+
+def test_plan_items_response_schema_preserves_unified_check_results():
+    response = PlanItemsResponse(
+        planId="plan-1",
+        status="COMPLETED",
+        items=[{
+            "taskId": "task.010",
+            "planItemId": "plan-1:node-1:task.010",
+            "deviceName": "node-1",
+            "taskName": "BMC 首页",
+            "status": "FAILED",
+            "executionStatus": "EXEC_SUCCESS",
+            "finalVerdict": "FAIL",
+            "checkResults": [{
+                "stage": "RESULT_CHECK",
+                "checkId": "ssh.result_rules",
+                "status": "FAIL",
+                "severity": "ERROR",
+                "message": "field=protocol value=down",
+                "details": {"field": "protocol"},
+            }],
+        }],
+    )
+
+    data = response.model_dump() if hasattr(response, "model_dump") else response.dict()
+    item = data["items"][0]
+
+    assert item["taskId"] == "task.010"
+    assert item["planItemId"] == "plan-1:node-1:task.010"
+    assert item["checkResults"][0]["checkId"] == "ssh.result_rules"
+    assert item["checkResults"][0]["details"]["field"] == "protocol"

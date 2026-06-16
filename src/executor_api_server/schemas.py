@@ -156,7 +156,18 @@ class PlanInfoEvent(BaseModel):
     message: str = ""
 
 
+class CheckResultResponse(BaseModel):
+    stage: str = ""
+    checkId: str = ""
+    status: str = ""
+    severity: str = ""
+    message: str = ""
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
 class PlanItemStatusResponse(BaseModel):
+    taskId: str = ""
+    planItemId: str = ""
     deviceGroup: str = ""
     deviceName: str = ""
     taskName: str = ""
@@ -165,6 +176,13 @@ class PlanItemStatusResponse(BaseModel):
     startedAt: Optional[str] = None
     finishedAt: Optional[str] = None
     infoEvents: list[PlanInfoEvent] = Field(default_factory=list)
+    executionStatus: str = ""
+    ruleStatus: str = ""
+    artifactStatus: str = ""
+    readyStatus: str = ""
+    checkpointStatus: str = ""
+    finalVerdict: str = ""
+    checkResults: list[CheckResultResponse] = Field(default_factory=list)
 
 
 class PlanStatusResponse(BaseModel):
