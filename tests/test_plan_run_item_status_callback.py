@@ -1904,6 +1904,21 @@ class TestContractsConsistency:
         assert "startedAt" in field_names, "Callback contract missing startedAt"
         assert "finishedAt" in field_names, "Callback contract missing finishedAt"
 
+    def test_plan_items_contract_includes_query_check_fields(self):
+        """Plan-items query contract exposes identity and unified check result fields."""
+        from src.executor_api_server.contracts import PLAN_ITEMS_CONTRACT
+
+        items_field = next(
+            f for f in PLAN_ITEMS_CONTRACT["responseBody"]["fields"]
+            if f["name"] == "items"
+        )
+        field_names = {f["name"] for f in items_field["itemFields"]}
+
+        assert "taskId" in field_names
+        assert "planItemId" in field_names
+        assert "executionStatus" in field_names
+        assert "checkResults" in field_names
+
     def test_callback_contract_batch_payload_has_top_level_fields(self):
         """Batch callback payload includes planId/items and never top-level runId."""
         from src.executor_api_server.contracts import PLAN_ITEM_STATUS_CALLBACK_CONTRACT
