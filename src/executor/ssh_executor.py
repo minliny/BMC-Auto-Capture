@@ -32,13 +32,6 @@ from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
 from ..out.file_writer import write_text_file, write_log_file
 from ..out.screenshot import render_text_to_image
-from ..rules.interface_status import (
-    coerce_status_fields,
-    coerce_status_values,
-    is_interface_brief_command,
-    parse_interface_brief,
-    status_matches,
-)
 from ..rules.result_rules import (
     ResultRuleContext,
     evaluate_task_result_rules,
@@ -1809,51 +1802,6 @@ class SSHExecutor(AbstractExecutor):
                 end = min(len(output), idx + len(pattern) + 50)
                 variables[var_name] = output[start:end].strip()
                 logger.debug("SSH extractor text '%s' → %s", var_name, variables[var_name])
-
-    def _interface_brief_rule_output(
-        self, task, combined_output: str, cmd_outputs: dict[str, str],
-    ) -> str:
-        commands = getattr(task, "_resolved_commands", None) or []
-        selected: list[str] = []
-        for cmd_name, cmd in commands:
-            if is_interface_brief_command(cmd) and cmd_name in cmd_outputs:
-                selected.append(cmd_outputs.get(cmd_name, ""))
-        if selected:
-            return "\n".join(selected)
-        return combined_output
-
-    def _task_has_interface_brief_command(self, task) -> bool:
-        commands = getattr(task, "_resolved_commands", None) or []
-        if any(is_interface_brief_command(cmd) for _name, cmd in commands):
-            return True
-        return is_interface_brief_command(getattr(task, "command_or_url", "") or "")
-
-    def _evaluate_interface_status_rule(
-        self,
-        rule_name: str,
-        desc: str,
-        output: str,
-        fields: list[str],
-        forbidden_values: list[str],
-    ) -> str:
-        records = parse_interface_brief(output)
-        if not records:
-            return f"[{rule_name}] {desc}: RULE_PARSE_FAILED no parseable interface rows"
-
-        failures: list[str] = []
-        for record in records:
-            for field in fields:
-                value = getattr(record, field, "")
-                if any(status_matches(value, forbidden) for forbidden in forbidden_values):
-                    failures.append(
-                        f"[{rule_name}] {desc}: interface={record.interface} "
-                        f"field={field} value={value!r} raw_line={record.raw_line!r}"
-                    )
-        return "; ".join(failures[:5])
-
-    @staticmethod
-    def _is_down_status_target(target: str) -> bool:
-        return status_matches(target, "down")
 
     def _evaluate_ssh_rule_results(
         self,
