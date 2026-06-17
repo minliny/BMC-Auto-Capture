@@ -211,7 +211,7 @@ jobs:
           REM Root-level launcher files
           copy run.py app-layer\ >nul
           for %%f in (*.bat) do copy "%%f" app-layer\ >nul
-          if exist README_RELEASE.md copy README_RELEASE.md app-layer\ >nul
+          if exist README.md copy README.md app-layer\ >nul
 
           REM Clean up __pycache__ to keep package small
           for /d /r app-layer %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
@@ -336,9 +336,9 @@ jobs:
           REM Clean up __pycache__
           for /d /r bmc-auto-capture %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
 
-          REM README — copy as ASCII-safe filename to avoid codepage issues
-          if exist README_RELEASE.md (
-            copy README_RELEASE.md bmc-auto-capture\README.txt >nul
+          REM README — use README.md as the single operation guide source
+          if exist README.md (
+            copy README.md bmc-auto-capture\README.txt >nul
           )
 
           echo [OK] full release assembled: bmc-auto-capture/

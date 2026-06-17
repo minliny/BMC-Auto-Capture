@@ -1,13 +1,13 @@
 @echo off
 REM ============================================================
-REM BMC Auto-Capture v0.2.4 - Build Script
+REM BMC Auto-Capture - Build Script
 REM Builds a self-contained one-directory distribution.
 REM ============================================================
 setlocal enabledelayedexpansion
 
 echo.
 echo ============================================================
-echo   BMC Auto-Capture v0.2.4 - Build
+echo   BMC Auto-Capture - Build
 echo ============================================================
 echo.
 
@@ -77,7 +77,7 @@ echo @echo off
 echo set PLAYWRIGHT_BROWSERS_PATH=%%~dp0playwright_browsers
 echo set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 echo.
-echo BMC Auto-Capture v0.2.4
+echo BMC Auto-Capture
 echo ========================
 echo.
 echo Usage: bmc-auto-capture.exe --excel ^<path_to_xlsx^> [--config ^<path_to_yaml^>]
@@ -87,26 +87,30 @@ echo.
 echo bmc-auto-capture.exe --app-dir "%%~dp0app" %%*
 ) > "%DIST%\run.bat"
 
-REM README
-(
-echo BMC Auto-Capture v0.2.4
-echo ========================
-echo.
-echo Automated test evidence collection platform for BMC/SSH devices.
-echo.
-echo Quick start:
-echo   1. Double-click run.bat or run in terminal:
-echo      run.bat --excel path\to\task_template.xlsx
-echo.
-echo   2. Optional config:
-echo      run.bat --excel path\to\task_template.xlsx --config path\to\config.yaml
-echo.
-echo   3. For API server mode:
-echo      bmc-auto-capture.exe --app-dir app --server --port 8080
-echo.
-echo Requirements: Windows 10+, no Python installation needed.
-echo.
-) > "%DIST%\README.txt"
+REM README: keep README.md as the single operation guide source.
+if exist "%ROOT%\README.md" (
+    copy "%ROOT%\README.md" "%DIST%\README.txt" >nul
+) else (
+    (
+    echo BMC Auto-Capture
+    echo ================
+    echo.
+    echo Automated test evidence collection platform for BMC/SSH devices.
+    echo.
+    echo Quick start:
+    echo   1. Double-click run.bat or run in terminal:
+    echo      run.bat --excel path\to\task_template.xlsx
+    echo.
+    echo   2. Optional config:
+    echo      run.bat --excel path\to\task_template.xlsx --config path\to\config.yaml
+    echo.
+    echo   3. For API server mode:
+    echo      bmc-auto-capture.exe --app-dir app --server --port 8080
+    echo.
+    echo Requirements: Windows 10+, no Python installation needed.
+    echo.
+    ) > "%DIST%\README.txt"
+)
 
 echo.
 echo ============================================================
@@ -115,7 +119,7 @@ echo   Distribution: %DIST%
 echo ============================================================
 echo.
 echo To package for distribution:
-echo   7z a bmc-auto-capture-v0.2.4.7z "%DIST%"
+echo   7z a bmc-auto-capture-win-x64.7z "%DIST%"
 echo.
 
 endlocal
