@@ -2,7 +2,8 @@
 
 Tests for 5 defects fixed in this batch:
   1. _on_bmc_group_done undefined variables (status_icon/result)
-  2. Version consistency across pyproject.toml / __main__.py / config
+  2. Version consistency across pyproject.toml / __main__.py / config,
+     while README stays version-agnostic
   3. _compute_scale configurable scaling coefficients
   4. Popup dismiss selector independent timeout
   5. Output dir writable atomic detection (TOCTOU)
@@ -134,14 +135,6 @@ class TestVersionConsistency:
         assert m, "version not found in default_config.yaml"
         return m.group(1)
 
-    def _read_version_from_readme(self) -> str:
-        """Extract version from README.md header."""
-        path = self.PROJ / "README.md"
-        text = path.read_text("utf-8")
-        m = re.search(r"^# BMC Auto-Capture\s+(v?[\w.-]+)", text, re.MULTILINE)
-        assert m, "version not found in README.md"
-        return m.group(1)
-
     def test_pyproject_has_version(self):
         v = self._read_version_from_pyproject()
         assert v, "pyproject.toml version is empty"
@@ -161,12 +154,24 @@ class TestVersionConsistency:
             f"Version mismatch: pyproject.toml={py_v}, config={cfg_v}"
         )
 
-    def test_readme_matches_pyproject(self):
-        py_v = self._read_version_from_pyproject()
-        readme_v = self._read_version_from_readme()
-        assert py_v == readme_v.lstrip("v"), (
-            f"Version mismatch: pyproject.toml={py_v}, README.md={readme_v}"
+    def test_readme_does_not_pin_release_version(self):
+        """Project README should stay stable and not advertise a specific release."""
+        path = self.PROJ / "README.md"
+        text = path.read_text("utf-8")
+        assert re.search(r"^# BMC Auto-Capture\s*$", text, re.MULTILINE), (
+            "README.md title must not include a release version"
         )
+        forbidden_patterns = [
+            r"(?<![\d.])v?\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?(?![\d.])",
+            r"bmc-auto-capture-v",
+            r"vX\.X\.X",
+            r"\$\{tag\}",
+            r"<版本>",
+        ]
+        for pattern in forbidden_patterns:
+            assert not re.search(pattern, text), (
+                f"README.md should not pin release versions: {pattern}"
+            )
 
 
 # ======================================================================
