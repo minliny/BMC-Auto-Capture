@@ -1,13 +1,13 @@
 @echo off
 REM ============================================================
-REM BMC Auto-Capture v0.2.4 - Build Script
+REM BMC Auto-Capture v0.2.5 - Build Script
 REM Builds a self-contained one-directory distribution.
 REM ============================================================
 setlocal enabledelayedexpansion
 
 echo.
 echo ============================================================
-echo   BMC Auto-Capture v0.2.4 - Build
+echo   BMC Auto-Capture v0.2.5 - Build
 echo ============================================================
 echo.
 
@@ -77,7 +77,7 @@ echo @echo off
 echo set PLAYWRIGHT_BROWSERS_PATH=%%~dp0playwright_browsers
 echo set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 echo.
-echo BMC Auto-Capture v0.2.4
+echo BMC Auto-Capture v0.2.5
 echo ========================
 echo.
 echo Usage: bmc-auto-capture.exe --excel ^<path_to_xlsx^> [--config ^<path_to_yaml^>]
@@ -89,7 +89,7 @@ echo bmc-auto-capture.exe --app-dir "%%~dp0app" %%*
 
 REM README
 (
-echo BMC Auto-Capture v0.2.4
+echo BMC Auto-Capture v0.2.5
 echo ========================
 echo.
 echo Automated test evidence collection platform for BMC/SSH devices.
@@ -115,7 +115,7 @@ echo   Distribution: %DIST%
 echo ============================================================
 echo.
 echo To package for distribution:
-echo   7z a bmc-auto-capture-v0.2.4.7z "%DIST%"
+echo   7z a bmc-auto-capture-v0.2.5.7z "%DIST%"
 echo.
 
 endlocal

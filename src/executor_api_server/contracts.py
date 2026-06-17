@@ -19,7 +19,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 CONTRACT_INDEX: dict[str, Any] = {
-    "version": "0.2.4",
+    "version": "0.2.5",
     "description": "Executor API contract index — read-only, no side effects",
     "contracts": [
         {

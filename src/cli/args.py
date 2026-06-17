@@ -11,7 +11,7 @@ import argparse
 import sys
 
 
-_DESCRIPTION = "BMC Auto-Capture v0.2.4 — BMC/SSH 自动化测试证据采集平台"
+_DESCRIPTION = "BMC Auto-Capture v0.2.5 — BMC/SSH 自动化测试证据采集平台"
 
 _EPILOG = """
 Examples:

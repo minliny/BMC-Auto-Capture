@@ -1,4 +1,4 @@
-# BMC Auto-Capture v0.2.4 — 使用说明
+# BMC Auto-Capture v0.2.5 — 使用说明
 
 ## 一、简介
 
@@ -252,7 +252,7 @@ Get-ChildItem "<解压目录>" -Recurse -File | Unblock-File
 A: 先用菜单 `[3]` 网络连通性预检，确认 BMC IP 可达。再用 `[4]` 账户密码检测确认凭证正确。
 
 **Q: 截图出现"账号已在别处登录"**
-A: 升级到 v0.2.4+。新版 BMC session 复用 + 5-Gate 健康检查会自动检测并 FAIL，不再出现假阳性。
+A: 升级到 v0.2.5+。新版 BMC session 复用 + 5-Gate 健康检查会自动检测并 FAIL，不再出现假阳性。
 
 **Q: SSH 任务报 "Error reading SSH protocol banner"**
 A: 设备 SSH 端口（22）不通或 IP 不可达。先用 `[3]` 预检确认。

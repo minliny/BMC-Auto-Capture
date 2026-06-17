@@ -532,14 +532,14 @@ class TestOpenAPIRoutes:
         assert has_items, "items route missing from openapi"
 
     def test_version_consistency(self, client):
-        """openapi.json info.version should match 0.2.4."""
+        """openapi.json info.version should match 0.2.5."""
         resp = client.get("/openapi.json")
         assert resp.status_code == 200
         info = resp.json().get("info", {})
-        assert info["version"] == "0.2.4", f"OpenAPI version mismatch: {info['version']}"
+        assert info["version"] == "0.2.5", f"OpenAPI version mismatch: {info['version']}"
 
     def test_status_version_consistency(self, client):
-        """GET /executor/v1/status must report version 0.2.4."""
+        """GET /executor/v1/status must report version 0.2.5."""
         # Need to have a server running for this
         from src.executor_api_server.service import DirectDispatchService
         svc2 = DirectDispatchService(executor_id="test-version")
@@ -549,7 +549,7 @@ class TestOpenAPIRoutes:
 
         resp = c.get("/executor/v1/status")
         data = resp.json()
-        assert data["version"] == "0.2.4", f"Status version mismatch: {data['version']}"
+        assert data["version"] == "0.2.5", f"Status version mismatch: {data['version']}"
 
     def test_routes_use_underscore_params(self, client):
         """Route paths should use {plan_id} not {planId} or {runId}."""
@@ -766,23 +766,23 @@ class TestVersionConsistency:
     """/status and OpenAPI must not show conflicting versions."""
 
     def test_explicit_version(self):
-        """The status endpoint version is 0.2.4."""
+        """The status endpoint version is 0.2.5."""
         from src.executor_api_server.service import DirectDispatchService
         svc = DirectDispatchService(executor_id="test-ver")
         svc.start_background_worker()
         app = create_app(svc)
         c = TestClient(app)
         resp = c.get("/executor/v1/status")
-        assert resp.json()["version"] == "0.2.4"
+        assert resp.json()["version"] == "0.2.5"
 
     def test_explicit_openapi_version(self):
-        """OpenAPI version is 0.2.4."""
+        """OpenAPI version is 0.2.5."""
         svc = DirectDispatchService(executor_id="test-ver2")
         svc.start_background_worker()
         app = create_app(svc)
         c = TestClient(app)
         resp = c.get("/openapi.json")
-        assert resp.json()["info"]["version"] == "0.2.4"
+        assert resp.json()["info"]["version"] == "0.2.5"
 
 
 # ===========================================================================

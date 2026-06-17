@@ -287,7 +287,7 @@ class TestSerialization:
         )
         e = Executor(
             executor_id="exec-01", hostname="PC1", ip="10.0.1.100",
-            version="0.2.4", status=ExecutorStatus.ONLINE, capabilities=caps,
+            version="0.2.5", status=ExecutorStatus.ONLINE, capabilities=caps,
         )
         d = e.to_dict()
         e2 = Executor.from_dict(d)

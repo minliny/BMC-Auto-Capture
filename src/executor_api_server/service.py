@@ -320,7 +320,7 @@ class DirectDispatchService:
         return {
             "executor_id": self.executor_id,
             "status": "ONLINE",
-            "version": "0.2.4",
+            "version": "0.2.5",
             "job_counts": counts,
             "total_jobs": len(self._store),
             "active_locks": len(lock_snap),

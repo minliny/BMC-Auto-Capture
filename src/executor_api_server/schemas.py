@@ -92,7 +92,7 @@ class JobStatusResponse(BaseModel):
 class ExecutorStatusResponse(BaseModel):
     executor_id: str
     status: str = "ONLINE"
-    version: str = "0.2.4"
+    version: str = "0.2.5"
     job_counts: dict[str, int] = Field(default_factory=dict)
     total_jobs: int = 0
     uptime_seconds: float = 0.0
