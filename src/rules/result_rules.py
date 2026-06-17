@@ -222,6 +222,29 @@ def _evaluate_check(
             return _failure(rule_name, check_type, f"[{rule_name}] {desc}: regex '{pattern}' not matched")
         return None
 
+    if check_type == "regex_all_of":
+        patterns = _coerce_values(check.get("patterns", target))
+        missing = [pattern for pattern in patterns if re.search(pattern, context.combined_output) is None]
+        if missing:
+            return _failure(
+                rule_name,
+                check_type,
+                f"[{rule_name}] {desc}: regex patterns not matched: {missing}",
+            )
+        return None
+
+    if check_type == "regex_any_of":
+        patterns = _coerce_values(check.get("patterns", target))
+        if not patterns:
+            return None
+        if not any(re.search(pattern, context.combined_output) for pattern in patterns):
+            return _failure(
+                rule_name,
+                check_type,
+                f"[{rule_name}] {desc}: none of regex patterns matched: {patterns}",
+            )
+        return None
+
     if check_type in ("regex_not_exists", "regex_not_match"):
         pattern = str(target or "")
         if pattern and re.search(pattern, context.combined_output) is not None:
@@ -245,9 +268,12 @@ def _evaluate_check(
             return _failure(rule_name, check_type, message, status=status, details=details)
         return None
 
-    if check_type == "min_output_lines":
+    if check_type in ("min_output_lines", "min_body_lines"):
         min_lines = int(target) if target else 1
-        actual_lines = len(context.combined_output.split("\n"))
+        if check_type == "min_body_lines":
+            actual_lines = len(_body_lines(context))
+        else:
+            actual_lines = len(context.combined_output.split("\n"))
         if actual_lines < min_lines:
             return _failure(
                 rule_name,
@@ -336,6 +362,23 @@ def _coerce_values(raw: Any) -> list[str]:
     if isinstance(raw, list | tuple | set):
         return [str(value) for value in raw if str(value)]
     return [str(raw)]
+
+
+def _body_lines(context: ResultRuleContext) -> list[str]:
+    commands = {cmd.strip() for _name, cmd in context.resolved_commands if cmd.strip()}
+    lines: list[str] = []
+    for raw_line in context.combined_output.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line in commands:
+            continue
+        if VRP_PROMPT_RE.search(line):
+            continue
+        if line.lower().startswith(("login:", "password:")):
+            continue
+        lines.append(line)
+    return lines
 
 
 def _failure(

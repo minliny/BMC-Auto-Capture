@@ -20,6 +20,26 @@
         {
           "type": "selector_visible",
           "selector": "#LogicalDrive0"
+        },
+        {
+          "type": "text_nonempty",
+          "selector": "#LogicalDrive0"
+        },
+        {
+          "type": "text_contains_any",
+          "values": [
+            "Logical Drive 0",
+            "RAID",
+            "Status",
+            "状态"
+          ]
+        },
+        {
+          "type": "region_stable",
+          "selector": "body",
+          "stable_for_ms": 1000,
+          "sample_interval_ms": 250,
+          "timeout_ms": 3000
         }
       ],
       "evidence_checkpoints": [
@@ -157,6 +177,32 @@
       ],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
+      "capture_ready_conditions": [
+        {
+          "type": "url_contains",
+          "target": "/navigate/home"
+        },
+        {
+          "type": "text_contains_any",
+          "values": [
+            "首页",
+            "Home",
+            "系统",
+            "System",
+            "设备",
+            "Device",
+            "告警",
+            "Alarm"
+          ]
+        },
+        {
+          "type": "region_stable",
+          "selector": "body",
+          "stable_for_ms": 1000,
+          "sample_interval_ms": 250,
+          "timeout_ms": 3000
+        }
+      ],
       "task_id": "task.010",
       "task_name": "A3 BMC首页截图"
     },
@@ -475,6 +521,17 @@
         {
           "type": "text_contains",
           "target": "系统事件"
+        },
+        {
+          "type": "selector_visible",
+          "selector": "span:has-text('系统事件')"
+        },
+        {
+          "type": "region_stable",
+          "selector": "body",
+          "stable_for_ms": 1000,
+          "sample_interval_ms": 250,
+          "timeout_ms": 3000
         }
       ],
       "evidence_checkpoints": [
@@ -507,6 +564,41 @@
       "_note": "未在真实设备验证，默认禁用。与电源冗余测试使用相同脚本。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
+      "capture_ready_conditions": [
+        {
+          "type": "url_contains",
+          "target": "/navigate/maintance/alarm"
+        },
+        {
+          "type": "text_contains",
+          "target": "系统事件"
+        },
+        {
+          "type": "selector_visible",
+          "selector": "span:has-text('系统事件')"
+        },
+        {
+          "type": "region_stable",
+          "selector": "body",
+          "stable_for_ms": 1000,
+          "sample_interval_ms": 250,
+          "timeout_ms": 3000
+        }
+      ],
+      "evidence_checkpoints": [
+        {
+          "name": "alarm_page_content",
+          "type": "text_contains_any",
+          "values": [
+            "事件",
+            "时间",
+            "级别",
+            "描述",
+            "系统事件"
+          ],
+          "severity": "WARNING"
+        }
+      ],
       "task_id": "task.028",
       "task_name": "硬盘冗余测试-系统日志"
     },
@@ -523,6 +615,49 @@
       "_note": "未在真实设备验证，默认禁用。只读查看，不涉及 RAID 配置变更。UI 控件可能因 BMC 版本不同而异。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
+      "capture_ready_conditions": [
+        {
+          "type": "url_contains",
+          "target": "/navigate/system/storage"
+        },
+        {
+          "type": "selector_visible",
+          "selector": "#LogicalDrive0"
+        },
+        {
+          "type": "text_nonempty",
+          "selector": "#LogicalDrive0"
+        },
+        {
+          "type": "text_contains_any",
+          "values": [
+            "Logical Drive 0",
+            "RAID",
+            "Status",
+            "状态"
+          ]
+        },
+        {
+          "type": "region_stable",
+          "selector": "body",
+          "stable_for_ms": 1000,
+          "sample_interval_ms": 250,
+          "timeout_ms": 3000
+        }
+      ],
+      "evidence_checkpoints": [
+        {
+          "name": "logical_drive_info",
+          "type": "text_contains_any",
+          "values": [
+            "Logical Drive 0",
+            "RAID",
+            "Status",
+            "状态"
+          ],
+          "severity": "WARNING"
+        }
+      ],
       "task_id": "task.029",
       "task_name": "硬盘冗余测试"
     }

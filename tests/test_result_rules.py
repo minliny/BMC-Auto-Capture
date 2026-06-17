@@ -154,3 +154,41 @@ def test_result_rules_unsupported_enabled_check_is_parse_failed():
 
     assert evaluation.rule_status == "RULE_PARSE_FAILED"
     assert "unsupported check type" in evaluation.failure_summary()
+
+
+def test_result_rules_support_regex_all_of_and_min_body_lines():
+    rules = [{
+        "rule_id": "vrp_interface_brief_shape",
+        "checks": [
+            {"type": "regex_all_of", "patterns": ["PHY", "Protocol"]},
+            {"type": "min_body_lines", "target": "2"},
+        ],
+    }]
+    output = """
+display interface brief
+Interface                   PHY   Protocol Description
+100GE1/0/1                  up    up       uplink
+<HUAWEI>
+"""
+    ctx = ResultRuleContext(
+        combined_output=output,
+        strategy="interactive_shell",
+        resolved_commands=[("cmd_0", "display interface brief")],
+    )
+
+    evaluation = evaluate_result_rules(rules, ctx)
+
+    assert evaluation.rule_status == "RULE_PASSED"
+    assert evaluation.evaluated_checks == 2
+
+
+def test_result_rules_regex_all_of_reports_missing_patterns():
+    rules = [{
+        "rule_id": "missing_shape",
+        "checks": [{"type": "regex_all_of", "patterns": ["PHY", "Protocol"]}],
+    }]
+
+    evaluation = evaluate_result_rules(rules, ResultRuleContext(combined_output="no table here"))
+
+    assert evaluation.rule_status == "RULE_FAILED"
+    assert "regex patterns not matched" in evaluation.failure_summary()

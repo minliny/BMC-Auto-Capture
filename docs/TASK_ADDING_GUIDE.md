@@ -273,6 +273,21 @@ BMC 支持两种任务：
 - 如果写完整 URL，host 必须和当前设备 BMC 地址一致，否则会被拦截。
 - `capture_ready_conditions` 在最终截图前检查页面是否到位。
 - `evidence_checkpoints` 在截图/HTML 保存后检查证据内容。
+- 如果 BMC 任务没有显式配置 `capture_ready_conditions`，执行端会默认检查页面存活、未回到登录页，并从 `command_or_url` 或第一条 `goto` 派生目标路由 `url_contains`。
+
+`capture_ready_conditions` 常用类型：
+
+| type | 用途 | 关键字段 |
+| --- | --- | --- |
+| `url_contains` / `url_not_contains` | 校验当前 URL/hash | `target` |
+| `selector_visible` / `selector_hidden` | 校验元素可见或不可见 | `selector` |
+| `selector_count_ge` / `count_ge` | 校验列表/表格行数达到门槛 | `selector`, `min_count` |
+| `text_contains` / `text_contains_any` | 校验页面正文包含关键文本 | `target` 或 `values` |
+| `text_nonempty` | 校验一个或多个字段不是空文本 | `selector` 或 `selectors` |
+| `text_not_in` | 校验字段不为占位符或 loading 文本 | `selector`/`selectors`, `values` |
+| `region_stable` | 校验目标区域文本在稳定窗口内不再变化 | `selector`, `stable_for_ms`, `sample_interval_ms` |
+
+关键 BMC 页面建议至少组合 `url_contains`、业务容器 `selector_visible`、关键字段 `text_nonempty`、占位符排除 `text_not_in`。动态表格页面再加 `count_ge` 和 `region_stable`。
 
 ### 2. 页面动作后截图：BMC_ACTIONS
 
@@ -339,6 +354,8 @@ BMC 支持两种任务：
 | `artifact_profile` | 可选 | `full` 完整证据；`fast` 仅 PNG/HTML |
 
 `artifact_profile` 默认不填，即使用全局 `full`。只有现场批量执行确认不需要 MHTML/state JSON 时，才建议显式设为 `fast`。
+
+BMC 和 SSH/TELNET 执行器会为每次取证额外写一个 `<证据文件名>.metadata.json`。该文件记录截图、HTML、TXT、MHTML、state JSON 等产物的相对路径、文件大小和 SHA-256，用于离线复核证据是否完整、是否被替换。`metadata.json` 是本地诊断证据，不改变 Excel 字段，也不代表自动上传文件。
 
 ## 四、验证方式
 

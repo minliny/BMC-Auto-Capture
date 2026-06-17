@@ -30,6 +30,7 @@ from ..models.task_plan import TaskPlan
 from ..models.task import resolve_task_timeout_seconds
 from ..models.execution_result import ExecutionResult, StepResult
 from ..models.checkpoint import CheckpointSpec
+from ..out.artifact_manifest import write_artifact_manifest
 from ..out.file_writer import write_text_file, write_log_file
 from ..out.screenshot import render_text_to_image
 from ..rules.result_rules import (
@@ -630,6 +631,33 @@ class SSHExecutor(AbstractExecutor):
                 screenshot=ss_path,
                 details=f"Terminal output {len(full_transcript)} chars",
             ))
+            try:
+                manifest_path = self._write_ssh_artifact_manifest(
+                    output_dir=output_dir,
+                    file_base=file_base,
+                    result=result,
+                    artifacts={
+                        "transcript_txt": txt_path,
+                        "terminal_screenshot": ss_path,
+                    },
+                    transcript_meta=transcript_meta,
+                )
+                transcript_meta["artifact_manifest_path"] = manifest_path
+                transcript_meta["artifact_manifest_relative_path"] = os.path.relpath(manifest_path, output_dir)
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name="artifact_manifest",
+                    status="SUCCESS",
+                    details=manifest_path,
+                ))
+            except Exception as e:
+                logger.warning("[%s] SSH artifact manifest failed: %s", device.device_name, e)
+                result.step_results.append(StepResult(
+                    step_index=len(result.step_results),
+                    step_name="artifact_manifest",
+                    status="WARN",
+                    details=str(e),
+                ))
 
             # Evaluate checkpoints
             if cmd_spec.get("checkpoints"):
@@ -709,6 +737,44 @@ class SSHExecutor(AbstractExecutor):
             source=source,
             evidence_ref=evidence_ref,
         ))
+
+    @staticmethod
+    def _write_ssh_artifact_manifest(
+        *,
+        output_dir: str,
+        file_base: str,
+        result: ExecutionResult,
+        artifacts: dict[str, str],
+        transcript_meta: dict | None,
+    ) -> str:
+        metadata = {
+            "protocol": "SSH",
+            "plan_id": result.plan_id,
+            "task_id": result.task_id,
+            "plan_item_id": result.plan_item_id,
+            "device_name": result.device_name,
+            "device_group": result.device_group,
+            "inband_ip": result.inband_ip,
+            "task_name": result.task_name,
+            "task_type": result.task_type,
+            "execution_mode": result.execution_mode,
+            "execution_status": result.execution_status,
+            "execution_failure_reason": result.execution_failure_reason,
+            "rule_status": result.rule_status,
+            "rule_failure_reason": result.rule_failure_reason,
+            "artifact_status": result.artifact_status,
+            "artifact_failure_reason": result.artifact_failure_reason,
+            "checkpoint_status": result.checkpoint_status,
+            "transcript": transcript_meta or {},
+            "check_results": result.check_results_as_dicts(),
+        }
+        return write_artifact_manifest(
+            output_dir,
+            f"{file_base}.metadata.json",
+            artifacts=artifacts,
+            metadata=metadata,
+            root_dir=output_dir,
+        )
 
     # ------------------------------------------------------------------
     # Command execution — router

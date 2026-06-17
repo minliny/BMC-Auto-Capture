@@ -14,6 +14,7 @@ Handles:
 from __future__ import annotations
 import asyncio
 import io
+import json
 import logging
 import os
 import shutil
@@ -47,6 +48,7 @@ from ..rules.condition_evaluator import (
     parse_ready_specs, parse_checkpoint_specs,
     ArtifactContext, ConditionResult, ConditionEvaluationResult,
 )
+from ..out.artifact_manifest import merge_runtime_context, write_artifact_manifest
 from ..out.file_writer import write_html_file, write_log_file
 from ..utils.html_redaction import capture_redacted_html
 from ..utils.path_safety import safe_join_under_root, is_safe_path_component
@@ -1771,7 +1773,7 @@ class BMCExecutor(AbstractExecutor):
     async def _evaluate_capture_ready_conditions(self, page, task, device) -> ConditionEvaluationResult:
         """Evaluate capture_ready_conditions from tasks.json (or defaults) against live page.
 
-        BMC defaults: page_alive + not_login_page.
+        BMC defaults: page_alive + not_login_page + derived target route.
         SSH/TELNET: skip (no Playwright page).
         """
         raw = None
@@ -1779,6 +1781,8 @@ class BMCExecutor(AbstractExecutor):
             raw = task._task_def.get("capture_ready_conditions")
 
         specs = parse_ready_specs(raw)
+        if not specs:
+            specs = self._default_capture_ready_specs(task)
         protocol = getattr(task, "task_type", "BMC") or "BMC"
         eval_result = await evaluate_ready_conditions(page, specs, protocol=protocol)
 
@@ -1789,6 +1793,115 @@ class BMCExecutor(AbstractExecutor):
             pass
 
         return eval_result
+
+    def _default_capture_ready_specs(self, task) -> list:
+        protocol = str(getattr(task, "task_type", "BMC") or "BMC").upper()
+        if protocol in ("SSH", "TELNET"):
+            return []
+
+        raw_specs = [
+            {"type": "page_alive"},
+            {"type": "not_login_page"},
+        ]
+        target = self._capture_ready_url_target(task)
+        if target:
+            raw_specs.append({"type": "url_contains", "target": target})
+        return parse_ready_specs(raw_specs)
+
+    @staticmethod
+    def _capture_ready_url_target(task) -> str:
+        target_url = ""
+        try:
+            if hasattr(task, "to_capture_flow"):
+                flow = task.to_capture_flow()
+                if isinstance(flow, dict):
+                    target_url = str(flow.get("target_url") or "")
+        except Exception:
+            target_url = ""
+
+        if not target_url:
+            target_url = str(getattr(task, "command_or_url", "") or "")
+
+        target_url = target_url.strip()
+        if not target_url:
+            return ""
+
+        if "#" in target_url:
+            fragment = target_url.split("#", 1)[1]
+            if fragment:
+                return fragment if fragment.startswith("/") else f"/{fragment}"
+
+        return target_url
+
+    def _write_bmc_artifact_manifest(
+        self,
+        *,
+        html_dir: str,
+        file_base: str,
+        output_dir: str,
+        task,
+        result: ExecutionResult,
+        artifacts: dict[str, str],
+        artifact_profile: str,
+        extra_metadata: dict | None = None,
+    ) -> str:
+        metadata = {
+            "protocol": "BMC",
+            "artifact_profile": artifact_profile,
+            "plan_id": result.plan_id,
+            "task_id": result.task_id,
+            "plan_item_id": result.plan_item_id,
+            "device_name": result.device_name,
+            "device_group": result.device_group,
+            "bmc_ip": result.bmc_ip,
+            "task_name": result.task_name or getattr(task, "task_name", ""),
+            "task_type": result.task_type or getattr(task, "task_type", ""),
+            "execution_mode": result.execution_mode or getattr(task, "execution_mode", ""),
+            "execution_status": result.execution_status,
+            "execution_failure_reason": result.execution_failure_reason,
+            "artifact_status": result.artifact_status,
+            "artifact_failure_reason": result.artifact_failure_reason,
+            "ready_status": result.ready_status,
+            "ready_failure_reason": result.ready_failure_reason,
+            "checkpoint_status": result.checkpoint_status,
+            "check_results": result.check_results_as_dicts(),
+        }
+        if extra_metadata:
+            metadata.update(extra_metadata)
+
+        try:
+            manifest_path = write_artifact_manifest(
+                html_dir,
+                f"{file_base}.metadata.json",
+                artifacts=artifacts,
+                metadata=metadata,
+                root_dir=output_dir,
+            )
+            rel_path = os.path.relpath(manifest_path, output_dir)
+            result.runtime_context = merge_runtime_context(
+                result.runtime_context,
+                {
+                    "artifact_manifest_path": manifest_path,
+                    "artifact_manifest_relative_path": rel_path,
+                    "artifact_profile": artifact_profile,
+                },
+            )
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="artifact_manifest",
+                status="SUCCESS",
+                details=manifest_path,
+            ))
+            return manifest_path
+        except Exception as e:
+            logger.warning("BMC artifact manifest failed: %s", e)
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="artifact_manifest",
+                status="WARN",
+                details=str(e),
+            ))
+            return ""
 
     async def _execute_final_capture(
         self,
@@ -1880,21 +1993,6 @@ class BMCExecutor(AbstractExecutor):
                 "BMC artifact profile fast: skipped evidence.html/state_json/MHTML for %s",
                 file_base,
             )
-            result.step_results.append(StepResult(
-                step_index=len(result.step_results),
-                step_name="bmc_artifact_profile",
-                status="SUCCESS",
-                details="fast: saved final PNG/HTML only; skipped evidence.html, state JSON, MHTML",
-            ))
-            result.step_results.append(StepResult(
-                step_index=len(result.step_results),
-                step_name="evidence_summary",
-                status=evidence_step_status,
-                details=(
-                    f"profile=fast png={ss_path} html={getattr(result, 'html_file', '')} "
-                    "state_json=skipped mhtml=skipped state_mirror=skipped"
-                ),
-            ))
             if not errors:
                 result.artifact_status = "ARTIFACT_SAVED"
             elif ss_path or result.html_file:
@@ -1904,6 +2002,40 @@ class BMCExecutor(AbstractExecutor):
                 result.artifact_status = "ARTIFACT_FAILED"
                 result.artifact_failure_reason = "; ".join(errors)
             self._record_artifact_check(result)
+
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="bmc_artifact_profile",
+                status="SUCCESS",
+                details="fast: saved final PNG/HTML only; skipped evidence.html, state JSON, MHTML",
+            ))
+            manifest_path = self._write_bmc_artifact_manifest(
+                html_dir=html_dir,
+                file_base=file_base,
+                output_dir=output_dir,
+                task=task,
+                result=result,
+                artifacts={
+                    "screenshot": ss_path,
+                    "html": getattr(result, "html_file", ""),
+                },
+                artifact_profile=artifact_profile,
+                extra_metadata={
+                    "state_json_status": "skipped",
+                    "mhtml_status": "skipped",
+                    "state_mirror_status": "skipped",
+                },
+            )
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name="evidence_summary",
+                status=evidence_step_status,
+                details=(
+                    f"profile=fast png={ss_path} html={getattr(result, 'html_file', '')} "
+                    "state_json=skipped mhtml=skipped state_mirror=skipped "
+                    f"manifest={manifest_path or 'not captured'}"
+                ),
+            ))
             return
 
         # evidence.html — rendered DOM with computed styles inlined (offline-viewable)
@@ -2162,6 +2294,7 @@ class BMCExecutor(AbstractExecutor):
                 "screenshot_path": ss_path,
                 "html_path": os.path.join("html", f"{file_base}.html"),
                 "mhtml_path": os.path.join("html", f"{file_base}.mhtml") if mhtml_ok else "",
+                "artifact_manifest_path": os.path.join("html", f"{file_base}.metadata.json"),
                 "state_capture_status": "success",
                 "mhtml_capture_status": "ok" if mhtml_ok else "failed",
                 "addressbar_source": "final_svg",
@@ -2171,36 +2304,13 @@ class BMCExecutor(AbstractExecutor):
                 "resolved_file_basename": file_base,
                 "fallback_used": False,
             }
-            import json as _json2
             from ..utils.sensitive import redact_state_payload
             state_data = redact_state_payload(state_data)
             with open(state_json_path, "w", encoding="utf-8") as f:
-                _json2.dump(state_data, f, ensure_ascii=False, indent=2)
+                json.dump(state_data, f, ensure_ascii=False, indent=2)
             logger.info("State JSON saved: %s (%.1f KB)", state_json_path, os.path.getsize(state_json_path) / 1024)
         except Exception as e:
             logger.warning("State capture failed: %s", e)
-
-        # Log evidence summary
-        logger.info(
-            "证据清单: png=%s html=%s evidence_html=%s state_json=%s mhtml=%s "
-            "state_mirror=%s",
-            ss_path,
-            getattr(result, "html_file", ""),
-            evidence_path or "(not captured)",
-            state_json_path or "(not captured)",
-            mhtml_path if mhtml_ok else "(not captured)",
-            "applied" if state_mirror_ok else "failed",
-        )
-        result.step_results.append(StepResult(
-            step_index=len(result.step_results),
-            step_name="evidence_summary",
-            status=evidence_step_status,
-            details=(
-                f"png={ss_path} html={getattr(result, 'html_file', '')} "
-                f"state_json={state_json_path} mhtml={'ok' if mhtml_ok else 'failed'} "
-                f"state_mirror={'ok' if state_mirror_ok else 'failed'}"
-            ),
-        ))
 
         # Set artifact_status
         if not errors:
@@ -2212,6 +2322,51 @@ class BMCExecutor(AbstractExecutor):
             result.artifact_status = "ARTIFACT_FAILED"
             result.artifact_failure_reason = "; ".join(errors)
         self._record_artifact_check(result)
+
+        manifest_path = self._write_bmc_artifact_manifest(
+            html_dir=html_dir,
+            file_base=file_base,
+            output_dir=output_dir,
+            task=task,
+            result=result,
+            artifacts={
+                "screenshot": ss_path,
+                "html": getattr(result, "html_file", ""),
+                "evidence_html": evidence_path,
+                "mhtml": mhtml_path if mhtml_ok else "",
+                "state_json": state_json_path,
+            },
+            artifact_profile=artifact_profile,
+            extra_metadata={
+                "state_json_status": "success" if state_json_path else "failed",
+                "mhtml_status": "ok" if mhtml_ok else "failed",
+                "state_mirror_status": "ok" if state_mirror_ok else "failed",
+            },
+        )
+
+        # Log evidence summary
+        logger.info(
+            "证据清单: png=%s html=%s evidence_html=%s state_json=%s mhtml=%s "
+            "state_mirror=%s manifest=%s",
+            ss_path,
+            getattr(result, "html_file", ""),
+            evidence_path or "(not captured)",
+            state_json_path or "(not captured)",
+            mhtml_path if mhtml_ok else "(not captured)",
+            "applied" if state_mirror_ok else "failed",
+            manifest_path or "(not captured)",
+        )
+        result.step_results.append(StepResult(
+            step_index=len(result.step_results),
+            step_name="evidence_summary",
+            status=evidence_step_status,
+            details=(
+                f"png={ss_path} html={getattr(result, 'html_file', '')} "
+                f"state_json={state_json_path} mhtml={'ok' if mhtml_ok else 'failed'} "
+                f"state_mirror={'ok' if state_mirror_ok else 'failed'} "
+                f"manifest={manifest_path or 'not captured'}"
+            ),
+        ))
 
     async def _content_aware_screenshot(self, page, ss_path, task, result) -> None:
         """Take a content-aware BMC screenshot: detect scroll container, avoid blank areas.

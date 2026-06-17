@@ -12,9 +12,11 @@ These are two different evaluators with different contexts, not one merged engin
 """
 
 from __future__ import annotations
+import asyncio
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,6 +50,10 @@ class ReadyConditionSpec:
     condition_type: str       # url_contains | selector_visible | text_contains | ...
     target: str = ""          # URL fragment / CSS selector / text / ...
     values: tuple = ()        # list of candidate values (text_contains_any)
+    selectors: tuple = ()     # list of selectors for multi-field checks
+    min_count: int = 1        # selector_count/count_ge threshold
+    stable_for_ms: int = 0
+    sample_interval_ms: int = 250
     timeout_ms: int = 5000
 
     @classmethod
@@ -55,10 +61,24 @@ class ReadyConditionSpec:
         vals = d.get("values", [])
         if isinstance(vals, list):
             vals = tuple(vals)
+        selectors = d.get("selectors", [])
+        if isinstance(selectors, str):
+            selectors = (selectors,)
+        elif isinstance(selectors, list):
+            selectors = tuple(selectors)
+        else:
+            selectors = ()
         return cls(
             condition_type=str(d.get("type", "")),
             target=str(d.get("target", d.get("selector", ""))),
             values=vals,
+            selectors=selectors,
+            min_count=_coerce_int(
+                d.get("min_count", d.get("count", d.get("threshold", 1))),
+                1,
+            ),
+            stable_for_ms=_coerce_int(d.get("stable_for_ms"), 0),
+            sample_interval_ms=_coerce_int(d.get("sample_interval_ms"), 250),
             timeout_ms=int(d.get("timeout_ms", d.get("timeout", 5000))),
         )
 
@@ -271,6 +291,21 @@ async def _eval_one_ready(page, spec: ReadyConditionSpec) -> ConditionResult:
                 "enabled" if enabled else "disabled"
             )
 
+        elif ct in ("selector_hidden", "selector_not_visible"):
+            visible = await _selector_is_visible(page, target)
+            return ConditionResult(
+                ct, "PASS" if not visible else "FAIL", target,
+                "hidden/not found" if not visible else "visible",
+            )
+
+        elif ct in ("selector_count_ge", "count_ge"):
+            actual = await _selector_count(page, target)
+            ok = actual >= spec.min_count
+            return ConditionResult(
+                ct, "PASS" if ok else "FAIL", target,
+                str(actual), f"count {actual} < {spec.min_count}" if not ok else "",
+            )
+
         elif ct == "text_contains":
             text = await page.inner_text("body")
             ok = target in text
@@ -278,6 +313,26 @@ async def _eval_one_ready(page, spec: ReadyConditionSpec) -> ConditionResult:
             return ConditionResult(
                 ct, "PASS" if ok else "FAIL", target,
                 snippet, "" if ok else f"'{target}' not found in page text"
+            )
+
+        elif ct == "text_nonempty":
+            selectors = _ready_selectors(spec)
+            if not selectors:
+                text = (await page.inner_text("body")).strip()
+                return ConditionResult(
+                    ct, "PASS" if text else "FAIL", "body",
+                    _shorten(text), "body text is empty" if not text else "",
+                )
+            empty: list[str] = []
+            actual: list[str] = []
+            for selector in selectors:
+                text = (await _selector_text(page, selector)).strip()
+                actual.append(f"{selector}={_shorten(text)!r}")
+                if not text:
+                    empty.append(selector)
+            return ConditionResult(
+                ct, "PASS" if not empty else "FAIL", ",".join(selectors),
+                "; ".join(actual), f"empty selectors: {empty}" if empty else "",
             )
 
         elif ct == "text_contains_any":
@@ -292,6 +347,36 @@ async def _eval_one_ready(page, spec: ReadyConditionSpec) -> ConditionResult:
                 ct, "FAIL", target, _snippet(text, candidates[0], 40),
                 f"none of {candidates} found"
             )
+
+        elif ct == "text_not_in":
+            candidates = _resolve_candidates(spec)
+            if not candidates:
+                return ConditionResult(ct, "SKIP", target, "", "no forbidden values configured")
+            selectors = _ready_selectors(spec)
+            texts = []
+            if selectors:
+                for selector in selectors:
+                    texts.append((selector, await _selector_text(page, selector)))
+            else:
+                texts.append(("body", await page.inner_text("body")))
+            hits: list[str] = []
+            for source, raw_text in texts:
+                text = (raw_text or "").strip()
+                for cand in candidates:
+                    if cand == "" and text == "":
+                        hits.append(f"{source}=empty")
+                    elif cand and (text == cand or cand in text):
+                        hits.append(f"{source} contains {cand!r}")
+            return ConditionResult(
+                ct, "PASS" if not hits else "FAIL",
+                ",".join(selectors) if selectors else "body",
+                "; ".join(f"{s}={_shorten(t.strip())!r}" for s, t in texts),
+                f"forbidden values found: {hits}" if hits else "",
+            )
+
+        elif ct == "region_stable":
+            stable = await _region_stable(page, spec)
+            return stable
 
         else:
             return ConditionResult(ct, "SKIP", target, "", f"unknown type: {ct}")
@@ -457,6 +542,103 @@ def _resolve_candidates(spec) -> list[str]:
     if target:
         return [s.strip() for s in target.split("||") if s.strip()]
     return []
+
+
+def _ready_selectors(spec: ReadyConditionSpec) -> tuple[str, ...]:
+    if spec.selectors:
+        return tuple(str(s) for s in spec.selectors if str(s))
+    if spec.target:
+        return (spec.target,)
+    return ()
+
+
+async def _selector_is_visible(page, selector: str) -> bool:
+    if not selector:
+        return False
+    el = await page.query_selector(selector)
+    return bool(el and await el.is_visible())
+
+
+async def _selector_count(page, selector: str) -> int:
+    if not selector:
+        return 0
+    try:
+        matches = await page.query_selector_all(selector)
+        return len(matches or [])
+    except AttributeError:
+        el = await page.query_selector(selector)
+        return 1 if el else 0
+
+
+async def _selector_text(page, selector: str) -> str:
+    if not selector:
+        return ""
+    el = await page.query_selector(selector)
+    if not el:
+        return ""
+    try:
+        return await el.inner_text()
+    except Exception:
+        try:
+            return await el.text_content() or ""
+        except Exception:
+            return ""
+
+
+async def _region_stable(page, spec: ReadyConditionSpec) -> ConditionResult:
+    selector = spec.target or "body"
+    stable_for = max(0, spec.stable_for_ms) / 1000
+    interval = max(50, spec.sample_interval_ms) / 1000
+    deadline = time.time() + max(interval, spec.timeout_ms / 1000)
+    started = time.time()
+    last = await _region_signature(page, selector)
+    stable_since = time.time()
+    samples = [last]
+
+    while time.time() < deadline:
+        await asyncio.sleep(interval)
+        current = await _region_signature(page, selector)
+        samples.append(current)
+        if current == last:
+            if time.time() - stable_since >= stable_for:
+                return ConditionResult(
+                    "region_stable",
+                    "PASS",
+                    selector,
+                    f"{len(samples)} samples",
+                    f"stable_for_ms={spec.stable_for_ms}",
+                )
+        else:
+            last = current
+            stable_since = time.time()
+
+    return ConditionResult(
+        "region_stable",
+        "FAIL",
+        selector,
+        f"{len(samples)} samples",
+        f"not stable after {time.time() - started:.2f}s",
+    )
+
+
+async def _region_signature(page, selector: str) -> str:
+    if selector and selector != "body":
+        text = await _selector_text(page, selector)
+    else:
+        text = await page.inner_text("body")
+    normalized = re.sub(r"\s+", " ", text or "").strip()
+    return normalized
+
+
+def _shorten(text: str, limit: int = 80) -> str:
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _coerce_int(raw: Any, default: int) -> int:
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 def _resolve_artifact_path(target: str, artifacts: ArtifactContext) -> str:

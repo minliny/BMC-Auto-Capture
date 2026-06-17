@@ -37,6 +37,8 @@
 
 现有 `rules`、`result_rules`、`capture_ready_conditions`、`evidence_checkpoints` 和 legacy `checkpoints` 会继续兼容，同时迁移为统一 `CheckResult` 输出。
 
+每个成功进入取证阶段的 BMC/SSH 任务还会生成 `<证据文件名>.metadata.json`，记录本次产物清单、相对路径、文件大小和 SHA-256。该清单只用于离线复核截图/HTML/TXT/state JSON 是否完整、是否被替换；它不代替 `capture_ready_conditions` 的页面就绪判断，也不代替 `result_rules` 的业务结果判断。
+
 ## 一、规则在 tasks.json 中的位置
 
 ```json
@@ -101,8 +103,11 @@ SSH/TELNET `result_rules` 支持的检查类型：
 | `contains` / `text_exists` / `required_pattern` / `required_patterns` | 命令输出必须包含文本 | `target` 或 `patterns` |
 | `not_contains` / `text_not_exists` / `forbidden_pattern` / `forbidden_patterns` | 命令输出不得包含文本 | `target` 或 `patterns` |
 | `regex_exists` / `regex_match` | 命令输出必须匹配正则 | `pattern` 或 `target` |
+| `regex_all_of` | 命令输出必须匹配全部正则 | `patterns` |
+| `regex_any_of` | 命令输出至少匹配一个正则 | `patterns` |
 | `regex_not_exists` / `regex_not_match` | 命令输出不得匹配正则 | `pattern` 或 `target` |
 | `min_output_lines` | 输出行数不少于指定值 | `target` |
+| `min_body_lines` | 去掉命令回显、空行、prompt 后正文行数不少于指定值 | `target` |
 | `command_echo_required` | interactive shell 输出中必须能看到命令回显 | 无 |
 | `prompt_required` | interactive shell 输出中必须能看到设备 prompt | 无 |
 | `interface_status` | 结构化解析 `display interface brief` 真实接口行 | `fields`, `forbidden` |
