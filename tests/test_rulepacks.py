@@ -462,6 +462,18 @@ def test_rulepack_api_validate_import_get_put():
     assert updated.json()["accepted"] is True
 
 
+def test_rulepack_contracts_describe_workspace_binding():
+    app = create_app(ExecutorRuntimeStatusService(executor_id="rulepack-test"))
+    client = TestClient(app)
+
+    response = client.get("/executor/v1/contracts/rulepack-import")
+
+    assert response.status_code == 200
+    behavior = " ".join(response.json()["validationBehavior"])
+    assert "tasks.json" in behavior
+    assert "fingerprints" in behavior
+
+
 def test_rulepack_api_import_rejects_task_type_mismatch(tmp_path):
     _write_tasks_json(tmp_path, {
         "task_id": "task.019",

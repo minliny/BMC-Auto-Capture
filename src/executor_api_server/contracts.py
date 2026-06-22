@@ -829,6 +829,11 @@ RULEPACK_VALIDATE_CONTRACT: dict[str, Any] = {
     "method": "POST",
     "direction": "inbound",
     "path": "/executor/v1/config/rule-packs:validate",
+    "validationBehavior": [
+        "Validates rulepack.v1 schema and runtime capability support.",
+        "When workspace tasks.json is present, verifies task_id, task_type, execution_mode, and declared fingerprints.",
+        "When workspace tasks.json is absent, returns a warning and validates without task binding.",
+    ],
     "requestBody": {"shape": RULEPACK_SHAPE},
     "responseBody": {
         "fields": [
@@ -846,6 +851,7 @@ RULEPACK_IMPORT_CONTRACT: dict[str, Any] = {
     "method": "POST",
     "direction": "inbound",
     "path": "/executor/v1/config/rule-packs:import",
+    "validationBehavior": RULEPACK_VALIDATE_CONTRACT["validationBehavior"],
     "requestBody": {
         "description": "Either a RulePack, {rulePack}, {rulePacks:[...]}, or a list of RulePacks.",
     },
@@ -878,6 +884,9 @@ RULEPACK_UPDATE_CONTRACT: dict[str, Any] = {
     "method": "PUT",
     "direction": "inbound",
     "path": "/executor/v1/config/rule-packs/{task_id}",
+    "validationBehavior": RULEPACK_VALIDATE_CONTRACT["validationBehavior"] + [
+        "Rejects the request when the path task_id and body task_id differ.",
+    ],
     "pathParams": [
         {"name": "task_id", "type": "string", "required": True},
     ],
