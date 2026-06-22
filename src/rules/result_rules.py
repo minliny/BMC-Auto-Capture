@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import re
 from typing import Any
 
@@ -66,10 +66,25 @@ class ResultRuleEvaluation:
             return "RULE_DISABLED"
         if any(f.status == CheckStatus.ERROR for f in self.failures):
             return "RULE_PARSE_FAILED"
-        return "RULE_FAILED" if self.failures else "RULE_PASSED"
+        if any(f.status == CheckStatus.FAIL for f in self.failures):
+            return "RULE_FAILED"
+        if any(f.status == CheckStatus.WARN for f in self.failures):
+            return "RULE_WARN"
+        return "RULE_PASSED"
 
-    def failure_summary(self, limit: int = 5) -> str:
-        return "; ".join(f.message for f in self.failures[:limit])
+    @property
+    def has_blocking_failures(self) -> bool:
+        return self.rule_status in {"RULE_FAILED", "RULE_PARSE_FAILED"}
+
+    @property
+    def has_warnings(self) -> bool:
+        return self.rule_status == "RULE_WARN"
+
+    def failure_summary(self, limit: int = 5, *, include_warnings: bool = True) -> str:
+        failures = self.failures if include_warnings else [
+            f for f in self.failures if f.status in {CheckStatus.FAIL, CheckStatus.ERROR}
+        ]
+        return "; ".join(f.message for f in failures[:limit])
 
     def to_check_result(
         self,
@@ -85,6 +100,8 @@ class ResultRuleEvaluation:
             status = CheckStatus.FAIL
         elif self.rule_status == "RULE_PASSED":
             status = CheckStatus.PASS
+        elif self.rule_status == "RULE_WARN":
+            status = CheckStatus.WARN
         else:
             status = CheckStatus.SKIP
 
@@ -100,7 +117,7 @@ class ResultRuleEvaluation:
             stage=CheckStage.RESULT,
             check_id=check_id,
             status=status,
-            severity="ERROR",
+            severity="WARNING" if status == CheckStatus.WARN else "ERROR",
             message=self.failure_summary() or (
                 "Result rules passed" if self.rule_status == "RULE_PASSED" else self.rule_status
             ),
@@ -170,6 +187,7 @@ def evaluate_result_rules(
             evaluation.evaluated_checks += 1
             failure = _evaluate_check(rule_name, check, context)
             if failure is not None:
+                failure = _attach_rule_metadata(failure, rule)
                 evaluation.failures.append(failure)
     evaluation.has_rules = evaluation.evaluated_checks > 0 or any(
         rule.get("enabled", True) is not False for rule in rules
@@ -400,3 +418,21 @@ def _failure(
 
 def _parse_failure(rule_name: str, check_type: str, message: str) -> ResultRuleFailure:
     return _failure(rule_name, check_type, message, status=CheckStatus.ERROR)
+
+
+def _attach_rule_metadata(failure: ResultRuleFailure, rule: dict[str, Any]) -> ResultRuleFailure:
+    priority = str(rule.get("priority", "") or "").upper()
+    effect = str(rule.get("effect_on_final", "") or "").lower()
+    details = dict(failure.details)
+    if priority:
+        details["priority"] = priority
+    if effect:
+        details["effect_on_final"] = effect
+    if rule.get("rule_class"):
+        details["rule_class"] = str(rule.get("rule_class"))
+    if rule.get("result_layer"):
+        details["result_layer"] = str(rule.get("result_layer"))
+    status = failure.status
+    if failure.status == CheckStatus.FAIL and (priority == "P2" or effect in {"partial", "warning"}):
+        status = CheckStatus.WARN
+    return replace(failure, status=status, details=details)

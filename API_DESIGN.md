@@ -22,6 +22,12 @@ current contract.
 | `GET` | `/executor/v1/plans/{plan_id}` | Query plan summary. |
 | `GET` | `/executor/v1/plans/{plan_id}/items` | Query plan item details. |
 | `POST` | `/executor/v1/plans/{plan_id}/callbacks:retry` | Retry pending callbacks for a plan. |
+| `GET` | `/executor/v1/config/rule-capabilities` | Query supported RulePack classes and check types. |
+| `POST` | `/executor/v1/config/rule-packs:validate` | Validate RulePack JSON. |
+| `POST` | `/executor/v1/config/rule-packs:import` | Import RulePack JSON. |
+| `GET` | `/executor/v1/config/rule-packs` | List stored RulePacks. |
+| `GET` | `/executor/v1/config/rule-packs/{task_id}` | Query one task RulePack. |
+| `PUT` | `/executor/v1/config/rule-packs/{task_id}` | Replace one task RulePack. |
 
 ## Utility Endpoints
 
@@ -53,6 +59,15 @@ plan request. Callback payloads use public plan item fields only:
 - `finishedAt`
 
 Callback retries use `/executor/v1/plans/{plan_id}/callbacks:retry`.
+
+## RulePacks
+
+Task audit rules use `rulepack.v1`. The framework defines four rule classes:
+`stage_gate`, `action_completion`, `content_integrity`, and
+`evidence_validation`. Concrete selectors, text markers, and regex patterns
+are generated from real BMC/SSH evidence by the authoring skills and imported
+through the RulePack config API. Runtime compatibility is handled by the
+RulePack adapter, which maps RulePacks into the current executor fields.
 
 ## Removed HTTP Designs
 

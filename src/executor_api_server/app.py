@@ -21,6 +21,7 @@ from .schemas import (
     ExcelPathRequest, ExcelConfigAcceptResponse, LatestConfigResponse,
     PlanRunAcceptResponse, PlanStatusResponse, PlanItemsResponse,
     CallbackRetryRequest, CallbackRetryResponse,
+    RulePackValidationResponse, RulePackImportResponse,
 )
 from .status_service import ExecutorRuntimeStatusService
 from .contracts import get_contract_index, get_contract
@@ -86,6 +87,11 @@ def create_app(
     # Contract / schema query (read-only, no side effects)
     # ==================================================================
     _register_contract_routes(app)
+
+    # ==================================================================
+    # RulePack config API
+    # ==================================================================
+    _register_rule_pack_routes(app)
 
     # ==================================================================
     # Debug callback receiver (方案 B — built-in, no external Python needed)
@@ -198,6 +204,143 @@ def _register_contract_routes(app: FastAPI):
                                 detail={"code": "CONTRACT_NOT_FOUND",
                                         "message": f"Contract not found: {contract_id}"})
         return contract
+
+
+# ==================================================================
+# RulePack config routes
+# ==================================================================
+
+def _rule_pack_from_body(body):
+    if isinstance(body, dict) and isinstance(body.get("rulePack"), dict):
+        return body["rulePack"]
+    return body
+
+
+def _rule_packs_from_body(body):
+    if isinstance(body, dict) and isinstance(body.get("rulePacks"), list):
+        return body["rulePacks"]
+    if isinstance(body, dict) and isinstance(body.get("rulePack"), dict):
+        return [body["rulePack"]]
+    if isinstance(body, list):
+        return body
+    return [body]
+
+
+def _register_rule_pack_routes(app: FastAPI):
+    """Register RulePack capability, validation, import, and update routes."""
+    from ..rulepacks import RulePackStore, get_rule_capabilities, validate_rule_pack
+
+    @app.get("/executor/v1/config/rule-capabilities")
+    async def get_rule_capabilities_route():
+        return get_rule_capabilities()
+
+    @app.post("/executor/v1/config/rule-packs:validate", response_model=RulePackValidationResponse)
+    async def validate_rule_pack_route(request: Request):
+        body = await request.json()
+        report = validate_rule_pack(_rule_pack_from_body(body))
+        return report.to_dict(include_normalized=True)
+
+    @app.post("/executor/v1/config/rule-packs:import", response_model=RulePackImportResponse)
+    async def import_rule_packs_route(request: Request):
+        body = await request.json()
+        store = RulePackStore()
+        items = []
+        errors = []
+        for raw_pack in _rule_packs_from_body(body):
+            report = validate_rule_pack(raw_pack)
+            if not report.valid:
+                errors.append(report.to_dict(include_normalized=True))
+                continue
+            try:
+                saved = store.put(report.normalized)
+                items.append({
+                    "taskId": saved["taskId"],
+                    "protocol": saved["protocol"],
+                    "path": saved["path"],
+                })
+            except Exception as exc:
+                errors.append({
+                    "valid": False,
+                    "errors": [{"code": "RULEPACK_IMPORT_FAILED", "message": str(exc)}],
+                    "warnings": [],
+                })
+        accepted = not errors
+        status_code = 200 if accepted else 400
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "accepted": accepted,
+                "imported": len(items),
+                "failed": len(errors),
+                "items": items,
+                "errors": errors,
+            },
+        )
+
+    @app.get("/executor/v1/config/rule-packs")
+    async def list_rule_packs_route():
+        return {"items": RulePackStore().list()}
+
+    @app.get("/executor/v1/config/rule-packs/{task_id}")
+    async def get_rule_pack_route(task_id: str):
+        pack = RulePackStore().get(task_id)
+        if pack is None:
+            raise HTTPException(status_code=404, detail={
+                "code": "RULEPACK_NOT_FOUND",
+                "message": f"RulePack not found: {task_id}",
+            })
+        return pack
+
+    @app.put("/executor/v1/config/rule-packs/{task_id}", response_model=RulePackImportResponse)
+    async def put_rule_pack_route(task_id: str, request: Request):
+        body = await request.json()
+        pack = _rule_pack_from_body(body)
+        if not isinstance(pack, dict):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "accepted": False,
+                    "imported": 0,
+                    "failed": 1,
+                    "items": [],
+                    "errors": [{"code": "RULEPACK_NOT_OBJECT", "message": "RulePack must be an object"}],
+                },
+            )
+        if str(pack.get("task_id") or "") != task_id:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "accepted": False,
+                    "imported": 0,
+                    "failed": 1,
+                    "items": [],
+                    "errors": [{"code": "RULEPACK_TASK_ID_MISMATCH", "message": "path task_id and body task_id differ"}],
+                },
+            )
+        report = validate_rule_pack(pack)
+        if not report.valid:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "accepted": False,
+                    "imported": 0,
+                    "failed": 1,
+                    "items": [],
+                    "errors": [report.to_dict(include_normalized=True)],
+                },
+            )
+        saved = RulePackStore().put(report.normalized)
+        return {
+            "accepted": True,
+            "imported": 1,
+            "failed": 0,
+            "items": [{
+                "taskId": saved["taskId"],
+                "protocol": saved["protocol"],
+                "path": saved["path"],
+            }],
+            "errors": [],
+        }
 
 
 def _get_config_store() -> object:

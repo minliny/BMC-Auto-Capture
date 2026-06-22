@@ -124,6 +124,148 @@
         }
       }
     },
+    "/executor/v1/config/rule-capabilities": {
+      "get": {
+        "summary": "Get Rule Capabilities Route",
+        "operationId": "get_rule_capabilities_route_executor_v1_config_rule_capabilities_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/config/rule-packs:validate": {
+      "post": {
+        "summary": "Validate Rule Pack Route",
+        "operationId": "validate_rule_pack_route_executor_v1_config_rule_packs_validate_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulePackValidationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/config/rule-packs:import": {
+      "post": {
+        "summary": "Import Rule Packs Route",
+        "operationId": "import_rule_packs_route_executor_v1_config_rule_packs_import_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulePackImportResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/config/rule-packs": {
+      "get": {
+        "summary": "List Rule Packs Route",
+        "operationId": "list_rule_packs_route_executor_v1_config_rule_packs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/executor/v1/config/rule-packs/{task_id}": {
+      "get": {
+        "summary": "Get Rule Pack Route",
+        "operationId": "get_rule_pack_route_executor_v1_config_rule_packs__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Put Rule Pack Route",
+        "operationId": "put_rule_pack_route_executor_v1_config_rule_packs__task_id__put",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulePackImportResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/executor/v1/status": {
       "get": {
         "summary": "Get Status",
@@ -1228,6 +1370,79 @@
         },
         "type": "object",
         "title": "PlanSummary"
+      },
+      "RulePackImportResponse": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          },
+          "imported": {
+            "type": "integer",
+            "title": "Imported",
+            "default": 0
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          },
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "errors": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "title": "RulePackImportResponse"
+      },
+      "RulePackValidationResponse": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "errors": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Errors"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "rulePack": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Rulepack"
+          }
+        },
+        "type": "object",
+        "required": [
+          "valid"
+        ],
+        "title": "RulePackValidationResponse"
       },
       "ValidationError": {
         "properties": {

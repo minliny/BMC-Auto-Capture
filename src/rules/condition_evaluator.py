@@ -35,6 +35,12 @@ class ConditionResult:
     target: str = ""          # the expected value / selector / pattern
     actual: str = ""          # snippet of what was found
     details: str = ""
+    rule_id: str = ""
+    rule_class: str = ""
+    priority: str = ""
+    result_layer: str = ""
+    effect_on_final: str = ""
+    severity: str = ""
 
     @property
     def is_pass(self) -> bool:
@@ -55,6 +61,12 @@ class ReadyConditionSpec:
     stable_for_ms: int = 0
     sample_interval_ms: int = 250
     timeout_ms: int = 5000
+    rule_id: str = ""
+    rule_class: str = ""
+    priority: str = ""
+    result_layer: str = ""
+    effect_on_final: str = ""
+    severity: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> "ReadyConditionSpec":
@@ -80,6 +92,12 @@ class ReadyConditionSpec:
             stable_for_ms=_coerce_int(d.get("stable_for_ms"), 0),
             sample_interval_ms=_coerce_int(d.get("sample_interval_ms"), 250),
             timeout_ms=int(d.get("timeout_ms", d.get("timeout", 5000))),
+            rule_id=str(d.get("rule_id", "")),
+            rule_class=str(d.get("rule_class", "")),
+            priority=str(d.get("priority", "")),
+            result_layer=str(d.get("result_layer", "")),
+            effect_on_final=str(d.get("effect_on_final", "")),
+            severity=str(d.get("severity", "")),
         )
 
 
@@ -94,6 +112,11 @@ class CheckpointConditionSpec:
     target: str = ""          # expected text / regex pattern / artifact key
     values: tuple = ()        # list of candidate values (text_contains_any, not_contains_any)
     severity: str = "ERROR"   # ERROR | WARNING | INFO
+    rule_id: str = ""
+    rule_class: str = ""
+    priority: str = ""
+    result_layer: str = ""
+    effect_on_final: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> "CheckpointConditionSpec":
@@ -106,6 +129,11 @@ class CheckpointConditionSpec:
             target=str(d.get("target", "")),
             values=vals,
             severity=str(d.get("severity", "ERROR")),
+            rule_id=str(d.get("rule_id", "")),
+            rule_class=str(d.get("rule_class", "")),
+            priority=str(d.get("priority", "")),
+            result_layer=str(d.get("result_layer", "")),
+            effect_on_final=str(d.get("effect_on_final", "")),
         )
 
 
@@ -217,6 +245,7 @@ async def evaluate_ready_conditions(
     eval_result = ConditionEvaluationResult(stage="ready")
     for spec in specs:
         cr = await _eval_one_ready(page, spec)
+        _attach_spec_metadata(cr, spec)
         eval_result.results.append(cr)
     return eval_result
 
@@ -413,6 +442,7 @@ def evaluate_evidence_checkpoints(
     eval_result = ConditionEvaluationResult(stage="checkpoint")
     for spec in specs:
         cr = _eval_one_checkpoint(spec, artifacts, html_text, txt_content, page_text)
+        _attach_spec_metadata(cr, spec)
         eval_result.results.append(cr)
     return eval_result
 
@@ -542,6 +572,18 @@ def _resolve_candidates(spec) -> list[str]:
     if target:
         return [s.strip() for s in target.split("||") if s.strip()]
     return []
+
+
+def _attach_spec_metadata(result: ConditionResult, spec) -> ConditionResult:
+    result.rule_id = str(getattr(spec, "rule_id", "") or "")
+    result.rule_class = str(getattr(spec, "rule_class", "") or "")
+    result.priority = str(getattr(spec, "priority", "") or "")
+    result.result_layer = str(getattr(spec, "result_layer", "") or "")
+    result.effect_on_final = str(getattr(spec, "effect_on_final", "") or "")
+    result.severity = str(getattr(spec, "severity", "") or "")
+    if result.status == "FAIL" and result.severity.upper() == "WARNING":
+        result.status = "WARN"
+    return result
 
 
 def _ready_selectors(spec: ReadyConditionSpec) -> tuple[str, ...]:

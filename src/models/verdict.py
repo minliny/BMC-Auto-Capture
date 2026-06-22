@@ -105,7 +105,9 @@ def _iter_check_results(result: ExecutionResult):
 
 def _has_blocking_check_failure(result: ExecutionResult) -> bool:
     for cr in _iter_check_results(result):
-        if cr.stage in {CheckStage.READY, CheckStage.POST_AUDIT}:
+        if cr.stage == CheckStage.POST_AUDIT:
+            continue
+        if cr.stage == CheckStage.READY and not _check_blocks_final(cr):
             continue
         if cr.status in CHECK_FAILED_STATUSES and cr.severity == "ERROR":
             return True
@@ -123,6 +125,13 @@ def _has_check_warning(result: ExecutionResult) -> bool:
         if cr.status in CHECK_FAILED_STATUSES and cr.severity == "WARNING":
             return True
     return False
+
+
+def _check_blocks_final(check: CheckResult) -> bool:
+    details = check.details or {}
+    priority = str(details.get("priority", "") or "").upper()
+    effect = str(details.get("effect_on_final", "") or "").lower()
+    return priority == "P0" or effect == "fail"
 
 
 # ---------------------------------------------------------------------------

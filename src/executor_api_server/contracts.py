@@ -96,6 +96,46 @@ CONTRACT_INDEX: dict[str, Any] = {
             "path": "/executor/v1/plans/{plan_id}/callbacks:retry",
             "detailPath": "/executor/v1/contracts/callback-retry",
         },
+        {
+            "id": "rulepack-capabilities",
+            "name": "RulePack Capability Registry",
+            "method": "GET",
+            "direction": "inbound",
+            "path": "/executor/v1/config/rule-capabilities",
+            "detailPath": "/executor/v1/contracts/rulepack-capabilities",
+        },
+        {
+            "id": "rulepack-validate",
+            "name": "Validate RulePack",
+            "method": "POST",
+            "direction": "inbound",
+            "path": "/executor/v1/config/rule-packs:validate",
+            "detailPath": "/executor/v1/contracts/rulepack-validate",
+        },
+        {
+            "id": "rulepack-import",
+            "name": "Import RulePacks",
+            "method": "POST",
+            "direction": "inbound",
+            "path": "/executor/v1/config/rule-packs:import",
+            "detailPath": "/executor/v1/contracts/rulepack-import",
+        },
+        {
+            "id": "rulepack-query",
+            "name": "RulePack Query",
+            "method": "GET",
+            "direction": "inbound",
+            "path": "/executor/v1/config/rule-packs/{task_id}",
+            "detailPath": "/executor/v1/contracts/rulepack-query",
+        },
+        {
+            "id": "rulepack-update",
+            "name": "Replace RulePack",
+            "method": "PUT",
+            "direction": "inbound",
+            "path": "/executor/v1/config/rule-packs/{task_id}",
+            "detailPath": "/executor/v1/contracts/rulepack-update",
+        },
     ],
 }
 
@@ -736,6 +776,117 @@ CALLBACK_RETRY_CONTRACT: dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
+# RulePack contracts
+# ---------------------------------------------------------------------------
+
+RULEPACK_SHAPE: dict[str, Any] = {
+    "schema_version": "rulepack.v1",
+    "rule_pack_id": "rulepack.task.xxx.v1",
+    "task_id": "task.xxx",
+    "protocol": "BMC | SSH | TELNET",
+    "execution_mode": "BMC_URL | BMC_ACTIONS | SSH_CMD | TELNET_CMD",
+    "audit_metadata": {
+        "created_by": "authoring skill name",
+        "created_from_artifacts": ["artifact path"],
+        "artifact_hashes": {"artifact path": "sha256:..."},
+        "review_status": "generated | reviewed | approved",
+    },
+    "applies_to": {
+        "task_ids": ["task.xxx"],
+        "task_type": "BMC | SSH | TELNET",
+        "execution_modes": ["BMC_URL"],
+        "command_fingerprint": "optional sha256:...",
+        "route_fingerprint": "optional sha256:...",
+        "actions_fingerprint": "optional sha256:...",
+    },
+    "final_policy": {
+        "p0_failed": "FAIL",
+        "p1_failed": "WARN",
+        "p2_failed": "WARN",
+    },
+    "rule_classes": {
+        "stage_gate": [],
+        "action_completion": [],
+        "content_integrity": [],
+        "evidence_validation": [],
+    },
+}
+
+RULEPACK_CAPABILITIES_CONTRACT: dict[str, Any] = {
+    "id": "rulepack-capabilities",
+    "name": "RulePack Capability Registry",
+    "method": "GET",
+    "direction": "inbound",
+    "path": "/executor/v1/config/rule-capabilities",
+    "responseBody": {
+        "description": "Supported rule classes, priorities, effects, protocols, and check types.",
+    },
+}
+
+RULEPACK_VALIDATE_CONTRACT: dict[str, Any] = {
+    "id": "rulepack-validate",
+    "name": "Validate RulePack",
+    "method": "POST",
+    "direction": "inbound",
+    "path": "/executor/v1/config/rule-packs:validate",
+    "requestBody": {"shape": RULEPACK_SHAPE},
+    "responseBody": {
+        "fields": [
+            {"name": "valid", "type": "boolean"},
+            {"name": "errors", "type": "array"},
+            {"name": "warnings", "type": "array"},
+            {"name": "rulePack", "type": "object", "description": "Normalized RulePack"},
+        ],
+    },
+}
+
+RULEPACK_IMPORT_CONTRACT: dict[str, Any] = {
+    "id": "rulepack-import",
+    "name": "Import RulePacks",
+    "method": "POST",
+    "direction": "inbound",
+    "path": "/executor/v1/config/rule-packs:import",
+    "requestBody": {
+        "description": "Either a RulePack, {rulePack}, {rulePacks:[...]}, or a list of RulePacks.",
+    },
+    "responseBody": {
+        "fields": [
+            {"name": "accepted", "type": "boolean"},
+            {"name": "imported", "type": "integer"},
+            {"name": "failed", "type": "integer"},
+            {"name": "items", "type": "array"},
+            {"name": "errors", "type": "array"},
+        ],
+    },
+}
+
+RULEPACK_QUERY_CONTRACT: dict[str, Any] = {
+    "id": "rulepack-query",
+    "name": "RulePack Query",
+    "method": "GET",
+    "direction": "inbound",
+    "path": "/executor/v1/config/rule-packs/{task_id}",
+    "pathParams": [
+        {"name": "task_id", "type": "string", "required": True},
+    ],
+    "responseBody": {"shape": RULEPACK_SHAPE},
+}
+
+RULEPACK_UPDATE_CONTRACT: dict[str, Any] = {
+    "id": "rulepack-update",
+    "name": "Replace RulePack",
+    "method": "PUT",
+    "direction": "inbound",
+    "path": "/executor/v1/config/rule-packs/{task_id}",
+    "pathParams": [
+        {"name": "task_id", "type": "string", "required": True},
+    ],
+    "requestBody": {"shape": RULEPACK_SHAPE},
+    "responseBody": RULEPACK_IMPORT_CONTRACT["responseBody"],
+}
+
+
+# ---------------------------------------------------------------------------
 # Contract lookup
 # ---------------------------------------------------------------------------
 
@@ -749,6 +900,11 @@ _CONTRACTS: dict[str, dict[str, Any]] = {
     "plan-query": PLAN_QUERY_CONTRACT,
     "plan-items": PLAN_ITEMS_CONTRACT,
     "callback-retry": CALLBACK_RETRY_CONTRACT,
+    "rulepack-capabilities": RULEPACK_CAPABILITIES_CONTRACT,
+    "rulepack-validate": RULEPACK_VALIDATE_CONTRACT,
+    "rulepack-import": RULEPACK_IMPORT_CONTRACT,
+    "rulepack-query": RULEPACK_QUERY_CONTRACT,
+    "rulepack-update": RULEPACK_UPDATE_CONTRACT,
 }
 
 

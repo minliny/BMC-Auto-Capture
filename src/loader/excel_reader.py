@@ -464,6 +464,15 @@ def _load_task_defs(tasks_json_path: str | Path | None = None) -> dict[str, dict
         logger.warning("tasks.json 'tasks' must be an object, got %s", type(tasks_def).__name__)
         return {}
 
+    try:
+        from ..rulepacks import merge_rule_packs_into_task_defs
+        tasks_def = merge_rule_packs_into_task_defs(
+            tasks_def,
+            workspace_root=str(found_path.parent),
+        )
+    except Exception as e:
+        logger.warning("RulePack merge skipped: %s", e)
+
     indexed: dict[str, dict] = {}
     for key, raw_def in tasks_def.items():
         if not isinstance(raw_def, dict):

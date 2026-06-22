@@ -140,6 +140,21 @@ class CallbackRetryResponse(BaseModel):
     message: str = ""
 
 
+class RulePackValidationResponse(BaseModel):
+    valid: bool
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    rulePack: dict[str, Any] = Field(default_factory=dict)
+
+
+class RulePackImportResponse(BaseModel):
+    accepted: bool
+    imported: int = 0
+    failed: int = 0
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class PlanRunCallbackConfig(BaseModel):
     """Callback configuration for plan run status reporting."""
     itemStatusUrl: str = Field(

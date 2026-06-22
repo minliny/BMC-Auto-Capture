@@ -138,18 +138,35 @@ def check_result_from_condition(
     actual = str(getattr(condition, "actual", "") or "")
     details = str(getattr(condition, "details", "") or "")
     message = details or actual or target
+    condition_severity = str(getattr(condition, "severity", "") or severity)
+    rule_id = str(getattr(condition, "rule_id", "") or "")
+    rule_class = str(getattr(condition, "rule_class", "") or "")
+    priority = str(getattr(condition, "priority", "") or "")
+    result_layer = str(getattr(condition, "result_layer", "") or "")
+    effect_on_final = str(getattr(condition, "effect_on_final", "") or "")
+    detail_payload = {
+        "condition_type": condition_type,
+        "target": target,
+        "actual": actual,
+        "details": details,
+    }
+    if rule_id:
+        detail_payload["rule_id"] = rule_id
+    if rule_class:
+        detail_payload["rule_class"] = rule_class
+    if priority:
+        detail_payload["priority"] = priority
+    if result_layer:
+        detail_payload["result_layer"] = result_layer
+    if effect_on_final:
+        detail_payload["effect_on_final"] = effect_on_final
     return CheckResult(
         stage=stage,
-        check_id=f"{check_id_prefix}.{condition_type}",
+        check_id=f"{check_id_prefix}.{rule_id or condition_type}",
         status=status,
-        severity=severity,
+        severity=condition_severity,
         message=message,
-        details={
-            "condition_type": condition_type,
-            "target": target,
-            "actual": actual,
-            "details": details,
-        },
+        details=detail_payload,
         source=source,
         target=target,
         actual=actual,

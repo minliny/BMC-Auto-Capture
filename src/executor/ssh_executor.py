@@ -558,8 +558,8 @@ class SSHExecutor(AbstractExecutor):
                 task, combined_output="".join(all_output), cmd_outputs=cmd_outputs,
                 strategy=strategy,
             )
-            rule_failure = rule_eval.failure_summary()
-            if rule_failure:
+            rule_failure = rule_eval.failure_summary(include_warnings=False)
+            if rule_eval.has_blocking_failures:
                 has_failure = True
                 result.rule_status = rule_eval.rule_status
                 result.rule_failure_reason = rule_failure
@@ -576,6 +576,17 @@ class SSHExecutor(AbstractExecutor):
                     + f"规则检查失败: {rule_failure}"
                 )
                 logger.warning("[%s] SSH规则检查失败: %s", device.device_name, rule_failure)
+            elif rule_eval.has_warnings:
+                rule_warning = rule_eval.failure_summary()
+                result.rule_status = rule_eval.rule_status
+                result.rule_failure_reason = rule_warning
+                result.add_check_result(rule_eval.to_check_result(
+                    check_id="ssh.result_rules",
+                    source="result_rules",
+                    target=getattr(task, "command_or_url", "") or "",
+                    details={"strategy": strategy},
+                ))
+                logger.warning("[%s] SSH规则检查告警: %s", device.device_name, rule_warning)
             elif rule_eval.has_rules:
                 result.rule_status = "RULE_PASSED"
                 result.add_check_result(rule_eval.to_check_result(
