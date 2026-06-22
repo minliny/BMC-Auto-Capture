@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest
 from fastapi.testclient import TestClient
 from src.executor_api_server.app import create_app, _debug_callback_store, _debug_callback_lock
-from src.executor_api_server.service import DirectDispatchService
+from src.executor_api_server.status_service import ExecutorRuntimeStatusService
 from src.plan_run_service import PlanRunService
 from src.plan_run_service.service import _excel_store, _store_lock
 from src.plan_item_status_callback_client import FakeCallbackTransport
@@ -44,8 +44,7 @@ def prs():
 
 @pytest.fixture
 def svc():
-    s = DirectDispatchService(executor_id="test-issue-005")
-    s.start_background_worker()
+    s = ExecutorRuntimeStatusService(executor_id="test-issue-005")
     return s
 
 

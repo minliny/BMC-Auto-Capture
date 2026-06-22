@@ -62,7 +62,6 @@ if not exist "%DIST%\app" mkdir "%DIST%\app"
 xcopy /E /I /Y "%ROOT%\src" "%DIST%\app\src" >nul
 xcopy /E /I /Y "%ROOT%\config" "%DIST%\app\config" >nul
 xcopy /E /I /Y "%ROOT%\examples" "%DIST%\app\examples" >nul
-if exist "%ROOT%\api" xcopy /E /I /Y "%ROOT%\api" "%DIST%\app\api" >nul
 if exist "%ROOT%\assets" xcopy /E /I /Y "%ROOT%\assets" "%DIST%\app\assets" >nul
 copy "%ROOT%\tasks.json" "%DIST%\app\" >nul
 

@@ -205,7 +205,7 @@ def main():
     initial_app_dir = _resolve_app_dir_from_argv(sys.argv[1:])
     _prepend_app_dir(initial_app_dir)
 
-    # --- Server mode: Executor API (replaces legacy Network Boot API) ---
+    # --- Server mode: Executor API ---
     if "--server" in sys.argv:
         server_main = _import_attr("src.cli.server", "server_main")
         return server_main(sys.argv[1:], app_dir=initial_app_dir)

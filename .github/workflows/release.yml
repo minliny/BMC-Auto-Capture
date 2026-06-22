@@ -205,7 +205,6 @@ jobs:
           xcopy /E /I /Y src app-layer\app\src >nul
           xcopy /E /I /Y config app-layer\app\config >nul
           xcopy /E /I /Y examples app-layer\app\examples >nul
-          xcopy /E /I /Y api app-layer\app\api >nul
           xcopy /E /I /Y assets app-layer\app\assets >nul
           copy tasks.json app-layer\app\ >nul
           if exist .agents\skills xcopy /E /I /Y .agents\skills app-layer\skills >nul
@@ -319,7 +318,6 @@ jobs:
           xcopy /E /I /Y src bmc-auto-capture\app\src >nul
           xcopy /E /I /Y config bmc-auto-capture\app\config >nul
           xcopy /E /I /Y examples bmc-auto-capture\app\examples >nul
-          xcopy /E /I /Y api bmc-auto-capture\app\api >nul
           xcopy /E /I /Y assets bmc-auto-capture\app\assets >nul
           copy tasks.json bmc-auto-capture\app\ >nul
           if exist .agents\skills xcopy /E /I /Y .agents\skills bmc-auto-capture\skills >nul
@@ -566,14 +564,14 @@ jobs:
             }
           }
 
-      - name: Smoke test — legacy Network Boot is NOT the default
+      - name: Smoke test — default server starts Executor API
         shell: pwsh
         run: |
           $Exe = "bmc-auto-capture\runtime\bmc-engine.exe"
           $Port = 18001
           $BaseUrl = "http://127.0.0.1:${Port}"
-          $Out = "exe_legacy_stdout.log"
-          $Err = "exe_legacy_stderr.log"
+          $Out = "exe_server_stdout.log"
+          $Err = "exe_server_stderr.log"
 
           try {
             $P = Start-Process `
@@ -608,7 +606,7 @@ jobs:
               Write-Host "Paths: $($paths -join ', ')"
               exit 1
             }
-            Write-Host "[OK] Default server mode correctly starts Executor API (not legacy Network Boot)"
+            Write-Host "[OK] Default server mode starts Executor API"
           }
           finally {
             if ($P -and -not $P.HasExited) {

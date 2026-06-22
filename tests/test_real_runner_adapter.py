@@ -2,7 +2,6 @@
 Tests for P1-DIRECT-DISPATCH-CALLBACK-003:
   - secret_resolver
   - RealRunnerAdapter (device/task conversion, routing)
-  - DirectDispatchService runner_mode
   - Startup script args
 
 No real BMC/SSH — uses monkeypatch/fake executor for path verification.
@@ -26,14 +25,10 @@ from src.secret_resolver import (
     SECRET_RESOLVE_FAILED,
 )
 from src.job_runner_adapter import (
-    FakeRunner,
     RealRunnerAdapter,
     JobResult,
     UnsupportedTaskTypeError,
 )
-from src.executor_api_server.service import DirectDispatchService
-from src.server_callback_client import FakeCallbackTransport
-from src.resource_lock_manager import ResourceLockManager
 
 
 # ===========================================================================
@@ -471,158 +466,6 @@ class TestRealRunnerAdapterExecute:
         })
         assert secrets["oob_password"] == "plain:bmc-pass"
         assert secrets["inband_password"] == ""
-
-
-# ===========================================================================
-# DirectDispatchService runner_mode tests
-# ===========================================================================
-
-def _make_req(**overrides) -> dict:
-    req = {
-        "command_id": "cmd-t001",
-        "command_type": "ASSIGN_JOB",
-        "external_task_id": "server-task-1",
-        "callback": {"status_url": "http://127.0.0.1/cb", "auth_token": "tok"},
-        "job": {
-            "job_id": "job-t001", "run_id": "run-t001", "attempt": 1,
-            "resource_lock": {"lock_uri": "bmc://10.0.0.1"},
-            "device_snapshot": {
-                "device_id": "d1", "device_name": "D1", "device_group": "A3",
-                "oob_ip": "10.0.0.1", "inband_ip": "10.0.1.1",
-                "oob_username": "admin", "oob_password_ref": "plain:pw1",
-                "inband_username": "root", "inband_password_ref": "plain:pw2",
-            },
-            "task_snapshot": {
-                "task_id": "t1", "task_name": "Test",
-                "task_type": "BMC", "execution_mode": "BMC_URL",
-                "url": "https://10.0.0.1/", "timeout_seconds": 60,
-            },
-        },
-    }
-    for k, v in overrides.items():
-        if isinstance(v, dict) and k in req:
-            req[k].update(v)
-        else:
-            req[k] = v
-    return req
-
-
-class TestServiceRunnerMode:
-    """Tests 15-21: DirectDispatchService runner_mode."""
-
-    def test_default_runner_is_fake(self):
-        """15. Default runner_mode is fake."""
-        svc = DirectDispatchService()
-        assert isinstance(svc._runner, FakeRunner)
-
-    def test_runner_mode_real_uses_real_adapter(self, monkeypatch):
-        """16. runner_mode=real uses RealRunnerAdapter."""
-        # Patch BMCExecutor.execute to avoid real browser
-        def _fake_bmc(self_ignored, plan, output_root):
-            return _FakeExecResult(status="EXEC_SUCCESS")
-        monkeypatch.setattr(
-            "src.executor.bmc_executor.BMCExecutor.execute", _fake_bmc
-        )
-
-        svc = DirectDispatchService(runner_mode="real", allow_real_runner=True)
-        from src.job_runner_adapter import RealRunnerAdapter
-        assert isinstance(svc._runner, RealRunnerAdapter)
-
-    def test_real_runner_success_callback_payload(self, monkeypatch):
-        """17. Real runner success → callback payload SUCCEEDED."""
-        def _fake_bmc(self_ignored, plan, output_root):
-            return _FakeExecResult(status="EXEC_SUCCESS")
-        monkeypatch.setattr(
-            "src.executor.bmc_executor.BMCExecutor.execute", _fake_bmc
-        )
-
-        svc = DirectDispatchService(runner_mode="real", allow_real_runner=True)
-        svc.submit_job(_make_req())
-        svc.run_all_pending()
-
-        calls = svc.transport.calls
-        finish = [c for c in calls if c["payload"].get("status") == "SUCCEEDED"]
-        assert len(finish) == 1
-        assert finish[0]["payload"]["external_task_id"] == "server-task-1"
-
-    def test_real_runner_failure_callback_failed(self, monkeypatch):
-        """18. Real runner failure → callback FAILED."""
-        def _fake_bmc(self_ignored, plan, output_root):
-            return _FakeExecResult(status="EXEC_FAILED", reason="BMC down")
-        monkeypatch.setattr(
-            "src.executor.bmc_executor.BMCExecutor.execute", _fake_bmc
-        )
-
-        svc = DirectDispatchService(runner_mode="real", allow_real_runner=True)
-        svc.submit_job(_make_req())
-        svc.run_all_pending()
-
-        calls = svc.transport.calls
-        fail_calls = [c for c in calls if c["payload"].get("status") == "FAILED"]
-        assert len(fail_calls) == 1
-
-    def test_real_runner_exception_lock_released(self, monkeypatch):
-        """19. Runner crash → FAILED, lock released."""
-        def _crash(self_ignored, plan, output_root):
-            raise RuntimeError("boom")
-        monkeypatch.setattr(
-            "src.executor.bmc_executor.BMCExecutor.execute", _crash
-        )
-
-        lock_mgr = ResourceLockManager()
-        svc = DirectDispatchService(
-            runner_mode="real", lock_manager=lock_mgr,
-            allow_real_runner=True,
-        )
-        svc.submit_job(_make_req())
-        svc.run_all_pending()
-
-        assert not lock_mgr.is_locked("bmc://10.0.0.1")
-        job = svc.store.get_job("job-t001")
-        assert job.status == "FAILED"
-
-    def test_callback_failed_lock_still_released(self, monkeypatch):
-        """20. CALLBACK_FAILED → lock still released."""
-        def _fake_bmc(self_ignored, plan, output_root):
-            return _FakeExecResult(status="EXEC_SUCCESS")
-        monkeypatch.setattr(
-            "src.executor.bmc_executor.BMCExecutor.execute", _fake_bmc
-        )
-
-        transport = FakeCallbackTransport()
-        transport.set_failure()
-        lock_mgr = ResourceLockManager()
-        svc = DirectDispatchService(
-            runner_mode="real", lock_manager=lock_mgr,
-            callback_transport=transport,
-            allow_real_runner=True,
-        )
-        svc.submit_job(_make_req())
-        svc.run_all_pending()
-
-        assert not lock_mgr.is_locked("bmc://10.0.0.1")
-
-    def test_callback_payload_no_password(self, monkeypatch):
-        """21. Callback payload does not leak password."""
-        def _fake_bmc(self_ignored, plan, output_root):
-            return _FakeExecResult(status="EXEC_SUCCESS")
-        monkeypatch.setattr(
-            "src.executor.bmc_executor.BMCExecutor.execute", _fake_bmc
-        )
-
-        svc = DirectDispatchService(runner_mode="real", allow_real_runner=True)
-        svc.submit_job(_make_req())
-        svc.run_all_pending()
-
-        for call in svc.transport.calls:
-            payload_str = str(call["payload"])
-            assert "plain:pw1" not in payload_str
-            assert "plain:pw2" not in payload_str
-
-    def test_fake_runner_still_default(self):
-        """Explicit runner_mode=fake uses FakeRunner."""
-        svc = DirectDispatchService(runner_mode="fake")
-        assert isinstance(svc._runner, FakeRunner)
 
 
 # ===========================================================================

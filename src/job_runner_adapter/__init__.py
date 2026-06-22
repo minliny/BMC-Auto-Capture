@@ -1,9 +1,9 @@
 """
-Job runner adapter — unified interface for executing API Jobs.
+Runner adapter — unified interface for executing plan-run items.
 
 Two modes:
   A. FakeRunner — dry-run for tests, simulates success/failure/timeout.
-  B. RealRunnerAdapter — converts API models to existing TaskPlan/Device
+  B. RealRunnerAdapter — converts plan-run payloads to existing TaskPlan/Device
      and delegates to BMCExecutor/SSHExecutor.
 """
 
@@ -33,7 +33,7 @@ class JobResult:
 
 
 class JobRunner(Protocol):
-    """Protocol for any job runner implementation."""
+    """Protocol for any plan-run item runner implementation."""
     def run_job(self, job_payload: dict[str, Any]) -> JobResult: ...
 
 
@@ -91,7 +91,7 @@ class UnsupportedTaskTypeError(ValueError):
 
 
 class RealRunnerAdapter:
-    """Converts API Job payloads to existing TaskPlan/Device and executes via
+    """Converts plan-run payloads to existing TaskPlan/Device and executes via
     BMCExecutor / SSHExecutor.
 
     Requires:

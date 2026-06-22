@@ -18,9 +18,8 @@ EXCEL_FILE = str(Path(__file__).resolve().parent / "fixtures" / "validation.json
 
 @pytest.fixture
 def svc():
-    from src.executor_api_server.service import DirectDispatchService
-    s = DirectDispatchService(executor_id="test-ext-plan")
-    s.start_background_worker()
+    from src.executor_api_server.status_service import ExecutorRuntimeStatusService
+    s = ExecutorRuntimeStatusService(executor_id="test-ext-plan")
     return s
 
 
@@ -388,12 +387,8 @@ class TestExternalPlanCallback:
         assert all_success, f"Expected all items SUCCESS, got: {[i['status'] for i in data['items']]}"
 
 
-# ===========================================================================
-# Regression: old API still works
-# ===========================================================================
-
-class TestRegression:
-    """Old APIs still work alongside new external API."""
+class TestLocalPlanRun:
+    """Local plan run endpoint works with the active config."""
 
     def test_old_plan_run_still_works(self, client):
         _set_excel(client)
@@ -406,30 +401,3 @@ class TestRegression:
         assert data["accepted"] is True
         assert data["planId"] == 1
         assert "runId" not in data
-
-    def test_direct_dispatch_still_works(self, client):
-        payload = {
-            "command_id": "cmd-ext-test-1",
-            "command_type": "ASSIGN_JOB",
-            "external_task_id": "task-ext-test-1",
-            "callback": {"status_url": "http://localhost/cb", "auth_token": ""},
-            "job": {
-                "job_id": "job-ext-test-1",
-                "resource_lock": {"lock_uri": "bmc://10.0.0.1"},
-                "device_snapshot": {
-                    "device_id": "dev-001", "device_name": "Test",
-                    "device_group": "A3", "oob_ip": "10.0.0.1",
-                    "oob_username": "admin", "oob_password_ref": "env:BMC_PASS",
-                    "inband_ip": "", "inband_username": "", "inband_password_ref": "",
-                },
-                "task_snapshot": {
-                    "task_id": "t1", "task_name": "Test",
-                    "task_type": "BMC_URL", "execution_mode": "BMC_URL",
-                    "url": "https://10.0.0.1/", "timeout_seconds": 60,
-                },
-            },
-        }
-        resp = client.post("/executor/v1/jobs", json=payload)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["accepted"] is True

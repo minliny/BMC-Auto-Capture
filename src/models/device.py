@@ -29,7 +29,7 @@ class Device:
     def ssh_port(self) -> int:
         return 22
 
-    # --- lock_uri compat (API v0.1) ---
+    # --- Lock URI helpers ---
 
     @property
     def ssh_type(self) -> str:

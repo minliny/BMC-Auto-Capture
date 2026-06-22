@@ -118,6 +118,6 @@ curl -X POST http://127.0.0.1:8080/executor/v1/plans/1/callbacks:retry \
   -d '{"callbackUrl":"http://127.0.0.1:8080/debug/plan-item-statuses","mode":"batch"}'
 ```
 
-Run/item query state is persisted under executor state storage and restored for querying after process restart. Interrupted in-flight runs are restored as interrupted query records; execution is not resumed automatically.
+Plan/item query state is persisted under executor state storage and restored for querying after process restart. Interrupted in-flight plans are restored as interrupted query records; execution is not resumed automatically.
 
-`GET /executor/v1/runs/{runId}` and `GET /executor/v1/runs/{runId}/items` are internal/debug compatibility routes only. 调度端主链路按 `planId` 查询和归档。
+调度端主链路按 `planId` 查询和归档；runId 查询别名不属于当前 Executor API HTTP 面。

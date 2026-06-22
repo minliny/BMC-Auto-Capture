@@ -133,8 +133,11 @@ curl -X POST http://127.0.0.1:8080/executor/v1/plans/1/callbacks:retry \
   -d '{"callbackUrl":"http://callback.example/items","mode":"batch"}'
 ```
 
-## Legacy RunDispatchService
+## Plan Query
 
-`/executor/v1/plans:import` and `/executor/v1/runs` belong to the older isolated `RunDispatchService` path. They are only available when that legacy service is explicitly registered and are not the default `run.py --server` integration path.
+服务端主链路统一使用 `planId` 查询：
 
-`GET /executor/v1/runs/{run_id}` and `GET /executor/v1/runs/{run_id}/items` are internal/debug compatibility routes for existing local diagnostics only. 服务端主链路应使用 `planId` 查询。
+```bash
+curl http://127.0.0.1:8080/executor/v1/plans/1
+curl http://127.0.0.1:8080/executor/v1/plans/1/items
+```

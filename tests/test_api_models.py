@@ -23,7 +23,6 @@ from src.api_models.artifact import Artifact, ArtifactType, ArtifactStatus
 from src.api_models.error_info import ErrorInfo
 from src.api_models.resource_lock import ResourceLock, LockType
 from src.models.device import Device
-from src.executor_api_server.schemas import JobDispatchRequest
 
 
 # ---------------------------------------------------------------------------
@@ -366,40 +365,6 @@ class TestSerialization:
         assert ts2.ssh_transport == "terminal_session"
         assert ts2.artifact_profile == "fast"
         assert ts2.per_group_timeout_seconds == {"A3": 900, "L1": 60}
-
-    def test_job_dispatch_request_preserves_task_snapshot_rule_extensions(self):
-        result_rules = [
-            {"name": "result", "enabled": True, "checks": [{"type": "contains", "target": "OK"}]},
-        ]
-        req = JobDispatchRequest(
-            command_id="cmd-001",
-            external_task_id="ext-001",
-            callback={"status_url": "http://127.0.0.1:8000/callback"},
-            job={
-                "job_id": "job-001",
-                "task_snapshot": {
-                    "task_id": "task-ssh",
-                    "task_type": "SSH",
-                    "execution_mode": "SSH_CMD",
-                    "ssh_cmd": "display version",
-                    "rules_json": '[{"name":"page","checks":[{"type":"text_exists","target":"OK"}]}]',
-                    "rules": [{"name": "legacy", "checks": [{"type": "contains", "target": "OK"}]}],
-                    "result_rules": result_rules,
-                    "ssh_rules": [{"name": "legacy ssh"}],
-                    "task_def": {"stderr_fail_patterns": ["fatal"]},
-                    "ssh_profile": "vrp",
-                    "per_group_commands": {"L1": "display device"},
-                    "future_rule_scope": {"field": "protocol"},
-                },
-            },
-        )
-
-        snapshot = req.model_dump()["job"]["task_snapshot"]
-        assert snapshot["result_rules"] == result_rules
-        assert snapshot["task_def"]["stderr_fail_patterns"] == ["fatal"]
-        assert snapshot["ssh_profile"] == "vrp"
-        assert snapshot["per_group_commands"] == {"L1": "display device"}
-        assert snapshot["future_rule_scope"] == {"field": "protocol"}
 
     def test_job_roundtrip(self):
         job = Job(

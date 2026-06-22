@@ -119,11 +119,11 @@ class TaskPlan:
             return self.executor_finished_at - self.executor_started_at
         return 0.0
 
-    # --- API v0.1 compat ---
+    # --- Scheduling aliases ---
 
     @property
     def attempt(self) -> int:
-        """Alias for retry_attempt — API v0.1 Job model field name."""
+        """Alias for retry_attempt used by scheduler-facing payloads."""
         return self.retry_attempt
 
     @attempt.setter

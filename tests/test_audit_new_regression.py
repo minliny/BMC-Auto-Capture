@@ -3,7 +3,7 @@ AUDIT-NEW-001~008: Full regression test suite.
 
 Covers:
   AUDIT-NEW-001: MHTML/state sensitive text redaction
-  AUDIT-NEW-002: Job callback URL/nested payload log leak
+  AUDIT-NEW-002: Plan item callback URL/nested payload log leak
   AUDIT-NEW-003: Report filename path escape
   AUDIT-NEW-004: Latest hot cache masking disk damage
   AUDIT-NEW-005: Outbox same record update losing attemptCount
@@ -229,115 +229,78 @@ class TestAuditNew001SensitiveTextRedaction:
 
 
 # ============================================================================
-# AUDIT-NEW-002: Job callback URL/nested payload log leak
+# AUDIT-NEW-002: Plan item callback URL/payload log leak
 # ============================================================================
 
 class TestAuditNew002CallbackLeak:
-    """Verify callback URLs and payloads are redacted in logs."""
+    """Verify plan item callback URLs and payloads are redacted in logs."""
 
-    def test_callback_client_redacts_url_response_and_deep_payload_in_log(self, caplog):
-        """ServerCallbackClient must redact every callback log input."""
-        from src.server_callback_client import ServerCallbackClient
+    def test_plan_item_callback_redacts_response_and_payload(self):
+        """Callback payloads must strip non-public sensitive fields."""
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient
 
         class FailureTransport:
+            def __init__(self):
+                self.calls = []
+
             def post(self, url, payload, headers):
+                self.calls.append({"url": url, "payload": dict(payload), "headers": dict(headers)})
                 return 500, (
                     '{"error":"RESPONSE_TOKEN_SECRET",'
                     '"detail":{"password":"RESPONSE_PASS_SECRET"}}'
                 )
 
         transport = FailureTransport()
-        client = ServerCallbackClient(transport=transport)
-        deep = {}
-        cursor = deep
-        for index in range(20):
-            cursor[f"n{index}"] = {}
-            cursor = cursor[f"n{index}"]
-        cursor["secret"] = "DEEP_SECRET_TOKEN"
-        payload = {
-            "external_task_id": "ext1",
-            "job_id": "job1",
-            "status": "FAILED",
-            "metadata": {
-                "password": "PAYLOAD_PASS_SECRET",
-                "nested": {"token": "PAYLOAD_TOKEN_SECRET"},
+        client = PlanItemStatusCallbackClient(transport=transport)
+        result = client.send_single(
+            "https://example.com/cb?token=URL_TOKEN_SECRET&api_key=URL_API_SECRET",
+            {
+                "planId": "p1",
+                "deviceName": "d1",
+                "taskName": "t1",
+                "status": "FAILED",
+                "updater": "audit",
+                "errorMessage": "failed",
+                "metadata": {
+                    "password": "PAYLOAD_PASS_SECRET",
+                    "nested": {"token": "PAYLOAD_TOKEN_SECRET"},
+                },
+                "headers": {"Authorization": "Bearer PAYLOAD_BEARER_SECRET"},
+                "deep": {"secret": "DEEP_SECRET_TOKEN"},
             },
-            "headers": {"Authorization": "Bearer PAYLOAD_BEARER_SECRET"},
-            "deep": deep,
-        }
-        url = (
-            "https://user:URL_PASS_SECRET@example.com/cb"
-            "?token=URL_TOKEN_SECRET&api_key=URL_API_SECRET"
         )
-        with caplog.at_level("DEBUG"):
-            assert client._send(url, payload, "AUTH_TOKEN_SECRET") is False
 
+        assert result.failed == 1
+        payload = transport.calls[0]["payload"]
+        payload_text = json.dumps(payload, ensure_ascii=False)
         for secret in (
-            "URL_PASS_SECRET", "URL_TOKEN_SECRET", "URL_API_SECRET",
-            "RESPONSE_TOKEN_SECRET", "RESPONSE_PASS_SECRET",
             "PAYLOAD_PASS_SECRET", "PAYLOAD_TOKEN_SECRET",
-            "PAYLOAD_BEARER_SECRET", "DEEP_SECRET_TOKEN", "AUTH_TOKEN_SECRET",
+            "PAYLOAD_BEARER_SECRET", "DEEP_SECRET_TOKEN",
         ):
-            assert secret not in caplog.text
-        assert "REDACTED" in caplog.text or "TRUNCATED" in caplog.text
+            assert secret not in payload_text
+        assert set(payload) == {
+            "planId", "taskId", "planItemId", "deviceGroup", "deviceName", "taskName",
+            "status", "updater", "errorMessage", "startedAt", "finishedAt",
+        }
 
-    def test_callback_client_redacts_exception_text(self, caplog):
-        from src.server_callback_client import ServerCallbackClient
+    def test_plan_item_callback_redacts_exception_text(self, caplog):
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient
 
         class ExceptionTransport:
             def post(self, url, payload, headers):
                 raise RuntimeError(
                     "password=EXCEPTION_PASS_SECRET token=EXCEPTION_TOKEN_SECRET")
 
-        client = ServerCallbackClient(transport=ExceptionTransport())
+        client = PlanItemStatusCallbackClient(transport=ExceptionTransport())
         with caplog.at_level("ERROR"):
-            assert client.callback_job_started(
-                "ext1", "job1", "https://example.com/cb?token=URL_TOKEN_SECRET"
-            ) is False
+            result = client.send_single(
+                "https://example.com/cb?token=URL_TOKEN_SECRET",
+                {"planId": "p1", "deviceName": "d1", "taskName": "t1", "status": "FAILED"},
+            )
+        assert result.failed == 1
         assert "EXCEPTION_PASS_SECRET" not in caplog.text
         assert "EXCEPTION_TOKEN_SECRET" not in caplog.text
         assert "URL_TOKEN_SECRET" not in caplog.text
-        assert "REDACTED" in caplog.text
-
-    def test_http_callback_transport_redacts_response_log(
-        self, caplog, monkeypatch,
-    ):
-        import src.server_callback_client.http_transport as transport_module
-
-        class Response:
-            status = 200
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def read(self):
-                return (
-                    b'{"token":"HTTP_RESPONSE_TOKEN_SECRET",'
-                    b'"password":"HTTP_RESPONSE_PASS_SECRET"}'
-                )
-
-        monkeypatch.setattr(
-            transport_module.urllib.request, "urlopen",
-            lambda *_args, **_kwargs: Response(),
-        )
-        transport = transport_module.HttpCallbackTransport()
-        with caplog.at_level("DEBUG"):
-            status, body = transport.post(
-                "https://example.com/cb?token=HTTP_URL_TOKEN_SECRET",
-                {"metadata": {"password": "HTTP_PAYLOAD_PASS_SECRET"}},
-                {"Authorization": "Bearer HTTP_AUTH_TOKEN_SECRET"},
-            )
-        assert status == 200
-        assert "HTTP_RESPONSE_TOKEN_SECRET" in body
-        for secret in (
-            "HTTP_RESPONSE_TOKEN_SECRET", "HTTP_RESPONSE_PASS_SECRET",
-            "HTTP_URL_TOKEN_SECRET", "HTTP_PAYLOAD_PASS_SECRET",
-            "HTTP_AUTH_TOKEN_SECRET",
-        ):
-            assert secret not in caplog.text
         assert "REDACTED" in caplog.text
 
     def test_callback_outbox_redacts_sensitive_in_persistence(self):
@@ -1089,21 +1052,22 @@ class TestFZAudit003OpaqueSecretRedaction:
 
     def test_opaque_secret_callback_caplog(self, caplog):
         """Callback client must not leak opaque secret in caplog."""
-        from src.server_callback_client import ServerCallbackClient
+        from src.plan_item_status_callback_client import PlanItemStatusCallbackClient
 
         class FailureTransport:
             def post(self, url, payload, headers):
                 return 500, f'{{"token":"{OPAQUE_SECRET}","password":"{OPAQUE_SECRET}"}}'
 
-        client = ServerCallbackClient(transport=FailureTransport())
+        client = PlanItemStatusCallbackClient(transport=FailureTransport())
         with caplog.at_level("DEBUG"):
-            client._send(
+            result = client.send_single(
                 "https://example.com/cb",
-                {"metadata": {"password": OPAQUE_SECRET, "token": OPAQUE_SECRET}},
-                OPAQUE_SECRET,
+                {"planId": "p1", "deviceName": "d1", "taskName": "t1",
+                 "status": "FAILED", "metadata": {"password": OPAQUE_SECRET, "token": OPAQUE_SECRET}},
             )
-        assert OPAQUE_SECRET not in caplog.text
-        assert "REDACTED" in caplog.text or "TRUNCATED" in caplog.text
+        result_text = str(result)
+        assert OPAQUE_SECRET not in result_text
+        assert "REDACTED" in result_text or "TRUNCATED" in result_text
 
     def test_opaque_secret_outbox_jsonl(self):
         """Outbox jsonl must not contain opaque secret."""

@@ -674,20 +674,35 @@ def test_browser_reset_thread_closes_current_thread_browser():
     assert tid not in bm._tls
 
 
-def test_hidden_run_routes_are_not_duplicated_when_legacy_and_plan_services_enabled():
+def test_executor_app_registers_current_http_surface_only():
     from src.executor_api_server.app import create_app
-    from src.executor_api_server.service import DirectDispatchService
+    from src.executor_api_server.status_service import ExecutorRuntimeStatusService
     from src.plan_run_service import PlanRunService
-    from src.run_dispatch_service import RunDispatchService
 
     app = create_app(
-        DirectDispatchService(executor_id="test-routes"),
-        run_service=RunDispatchService(executor_id="legacy-routes"),
+        ExecutorRuntimeStatusService(executor_id="test-routes"),
         plan_run_service=PlanRunService(),
     )
-    paths = [getattr(route, "path", "") for route in app.routes]
+    paths = {getattr(route, "path", "") for route in app.routes}
 
-    assert paths.count("/executor/v1/runs/{run_id}") == 1
+    expected = {
+        "/health",
+        "/version",
+        "/network/ping",
+        "/routes",
+        "/executor/v1/status",
+        "/executor/v1/contracts",
+        "/executor/v1/contracts/{contract_id}",
+        "/executor/v1/config/excel:path",
+        "/executor/v1/config/excel",
+        "/executor/v1/config/latest",
+        "/executor/v1/plans/{plan_id}:run",
+        "/executor/v1/plans/{plan_id}",
+        "/executor/v1/plans/{plan_id}/items",
+        "/executor/v1/plans/{plan_id}/callbacks:retry",
+        "/executor/v1/plans",
+    }
+    assert expected <= paths
 
 
 def test_runtime_entrypoint_uses_dynamic_app_imports():

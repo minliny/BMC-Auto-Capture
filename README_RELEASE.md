@@ -23,14 +23,14 @@ bmc-auto-capture/
 │   ├── bmc-engine.exe        ← 执行引擎（PyInstaller 编译）
 │   ├── _internal/            ← Python 运行时 + 依赖库
 │   ├── playwright_browsers/  ← Chromium 浏览器
-│   └── build_info.json       ← runtime 构建及兼容版本信息
+│   └── build_info.json       ← runtime 构建及版本信息
 ├── app/
 │   ├── src/                  ← 业务源码
 │   ├── config/               ← YAML 配置
 │   │   └── default_config.yaml
 │   ├── examples/             ← Excel 模板
 │   │   └── task_template.xlsx
-│   ├── api/                  ← API Server
+│   ├── assets/               ← 静态资源
 │   └── tasks.json            ← 任务定义
 └── output/                   ← 执行结果（自动生成）
 ```
@@ -71,14 +71,11 @@ Executor API 是默认的 server 模式，启动新版 API（基于 FastAPI + uv
 **不需要系统安装 Python**。不需要额外启动 mock callback server，内置 debug callback receiver。
 
 ```cmd
-REM 默认启动 Executor API（不是旧 Network Boot API）
+REM 启动 Executor API
 runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --runner fake
 
 REM 推荐用于测试：开启内置 debug callback receiver，无需额外 Python 进程
 runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --runner fake --enable-debug-callback-receiver
-
-REM 如需旧 Network Boot API（仅 health/ping/version），加 --legacy-network-boot
-runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --legacy-network-boot
 ```
 
 提供端点（默认 Executor API 模式）：
@@ -94,23 +91,25 @@ runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --legacy-network-boo
 4. GET  /executor/v1/plans/{planId}/items?excelHash=...  → 查询任务明细
 ```
 
-### 旧接口（保留兼容，新服务端不推荐使用）
+### 本地执行入口
 
 ```text
-- POST /executor/v1/plans/{planId}:run
-- GET  /executor/v1/runs/{runId}              （内部/调试兼容，不推荐服务端主链路使用）
-- GET  /executor/v1/runs/{runId}/items        （内部/调试兼容，不推荐服务端主链路使用）
+- POST /executor/v1/plans/{planId}:run        → 用执行器本地已激活配置启动指定计划
 ```
 
 ### 所有端点列表
 - `GET /executor/v1/status` — Executor 状态
 - `POST /executor/v1/config/excel:path` — 设置最新 Excel
+- `POST /executor/v1/config/excel` — 上传 Excel 并激活为最新配置
+- `GET /executor/v1/config/latest` — 查询最新配置
+- `POST /executor/v1/plans` — 外部 Plan API 启动批次
 - `POST /executor/v1/plans/{planId}:run` — 启动 plan 执行
 - `GET /executor/v1/plans/{planId}` — 查询批次汇总
 - `GET /executor/v1/plans/{planId}/items` — 查询任务明细
-- `GET /health` — 兼容健康检查
-- `GET /version` — 兼容版本信息
-- `GET /network/ping` — 兼容网络检测
+- `POST /executor/v1/plans/{planId}/callbacks:retry` — 重试待发送回调
+- `GET /health` — 健康检查
+- `GET /version` — 版本信息
+- `GET /network/ping` — 网络检测
 - `GET /routes` — 路由列表
 
 如果启动时加 `--enable-debug-callback-receiver`，额外提供：
@@ -118,8 +117,8 @@ runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --legacy-network-boo
 - `GET /debug/plan-item-statuses` — 查询已收到回调
 - `DELETE /debug/plan-item-statuses` — 清空回调记录
 
-> **注意：** `--legacy-network-boot` 参数可启动旧版 API（仅 health/ping/version/routes），
-> 默认不传时启动的是完整 Executor API（含 plan run、callback 等能力）。
+> **注意：** 当前只保留 Executor API；`/health`、`/version`、`/network/ping`、`/routes`
+> 是 Executor API 自带的运维端点，不是另一套旧 API。
 
 **状态枚举分层：**
 
@@ -164,7 +163,6 @@ runtime\bmc-engine.exe --server --host 0.0.0.0 --port 18000 --legacy-network-boo
 | `--callback-transport` | 回调传输: fake / http | fake |
 | `--executor-id` | Executor 唯一标识 | exec-default |
 | `--enable-debug-callback-receiver` | 启用内置调试回调接收器 | — |
-| `--legacy-network-boot` | 启用旧版 Network Boot API（仅 health/ping） | — |
 | `--verbose` | Debug 日志 | — |
 
 ## 五、Excel 配置
@@ -230,8 +228,8 @@ A: 右键管理员运行 CMD，cd 到项目目录后手动执行 `启动.bat`，
 **Q: 提示"找不到执行引擎"**
 A: 确保 `runtime/bmc-engine.exe` 存在。如使用源码模式，需 `python run.py`。
 
-**Q: 默认启动的是旧版 Network Boot API 还是新版 Executor API？**
-A: 默认启动新版 Executor API。如需旧版 Network Boot API，加 `--legacy-network-boot`。
+**Q: 默认启动的是哪个 API？**
+A: 当前只保留 Executor API。健康检查和网络探活端点也由 Executor API 提供。
 
 **Q: 客户机器没有 Python，能否启动 Executor API？**
 A: 可以。使用 `runtime\bmc-engine.exe --server` 或 `启动.bat --server`，无需系统安装 Python。
@@ -308,9 +306,9 @@ Minimum reusable runtime package version: see release notes / release_manifest.j
 1. `app/src`
 2. `app/config`
 3. `app/examples`
-4. `app/api`
-5. `app/assets`
-6. `app/tasks.json`
+4. `app/assets`
+5. `app/tasks.json`
+6. `skills`
 7. `run.py`
 8. `启动.bat`
 9. `README_RELEASE.md`

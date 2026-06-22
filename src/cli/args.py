@@ -99,16 +99,13 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--runner", default="fake", choices=["fake", "real"],
                         help="API server runner mode (default: fake)")
     parser.add_argument("--callback-transport", default="fake", choices=["fake", "http"],
-                        help="API server direct-dispatch callback transport (default: fake)")
+                        help="API server plan callback transport (default: fake)")
     parser.add_argument("--executor-id", default="exec-default",
                         help="API server executor id (default: exec-default)")
     parser.add_argument("--enable-real-runner", action="store_true",
                         help="Allow API requests to execute real BMC/SSH tasks")
     parser.add_argument("--enable-debug-callback-receiver", action="store_true",
                         help="Enable built-in debug callback receiver")
-    parser.add_argument("--legacy-network-boot", action="store_true",
-                        help="Start legacy Network Boot API instead of Executor API")
-
     # --- Verbose ---
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable debug-level logging")

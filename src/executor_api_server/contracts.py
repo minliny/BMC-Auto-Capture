@@ -222,7 +222,7 @@ PLAN_ITEM_STATUS_CALLBACK_CONTRACT: dict[str, Any] = {
             "name": "planId",
             "type": "string",
             "required": True,
-            "source": "path plan_id for /plans/{plan_id}:run; callback.planId only for legacy /plans request bodies",
+            "source": "path plan_id for /plans/{plan_id}:run; callback.planId for /plans request bodies",
             "description": "Business plan ID / batch ID used by both executor and scheduler",
             "example": "<planId>",
         },
@@ -701,24 +701,8 @@ PLAN_ITEMS_CONTRACT: dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
-# Run Query + Callback Retry contracts
+# Callback Retry contract
 # ---------------------------------------------------------------------------
-
-RUN_QUERY_CONTRACT: dict[str, Any] = {
-    "id": "run-query",
-    "name": "Run Status Query (Deprecated/Internal)",
-    "method": "GET",
-    "direction": "inbound",
-    "path": "/executor/v1/runs/{run_id}",
-    "deprecated": True,
-    "debugOnly": True,
-    "pathParams": [
-        {"name": "run_id", "type": "string", "required": True},
-    ],
-    "responseBody": PLAN_QUERY_CONTRACT["responseBody"],
-    "relatedPath": "/executor/v1/runs/{run_id}/items",
-}
-
 
 CALLBACK_RETRY_CONTRACT: dict[str, Any] = {
     "id": "callback-retry",
@@ -764,7 +748,6 @@ _CONTRACTS: dict[str, dict[str, Any]] = {
     "external-plan": EXTERNAL_PLAN_CONTRACT,
     "plan-query": PLAN_QUERY_CONTRACT,
     "plan-items": PLAN_ITEMS_CONTRACT,
-    "run-query": RUN_QUERY_CONTRACT,
     "callback-retry": CALLBACK_RETRY_CONTRACT,
 }
 

@@ -530,7 +530,7 @@ class App:
 
     def _run_with_plans(self, plans: list[TaskPlan], mode: str = "full") -> list[ExecutionResult]:
         """Execute pre-parsed plans directly without loading Excel.
-        Called by the API when plans_json is provided to /execute/start.
+        Called by internal runners when an in-memory plan list is provided.
 
         mode: "sequential" = one-by-one; "full" = endpoint-aware dynamic scheduler.
         """

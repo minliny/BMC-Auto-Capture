@@ -1,16 +1,13 @@
 """
-FastAPI application for the Executor API v1 + plan/run dispatch + legacy compat.
+FastAPI application for the Executor API v1.
 """
 
 from __future__ import annotations
-import hashlib
 import logging
 import os
-import shutil
 import socket
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -20,13 +17,12 @@ from fastapi.exceptions import RequestValidationError
 
 from src._version import APP_VERSION
 from .schemas import (
-    JobDispatchRequest, JobAcceptResponse, JobStatusResponse, ExecutorStatusResponse,
-    PlanRunCallbackConfig, PlanRunRequest, ExternalPlanRequest,
+    ExecutorStatusResponse, PlanRunRequest, ExternalPlanRequest,
     ExcelPathRequest, ExcelConfigAcceptResponse, LatestConfigResponse,
     PlanRunAcceptResponse, PlanStatusResponse, PlanItemsResponse,
     CallbackRetryRequest, CallbackRetryResponse,
 )
-from .service import DirectDispatchService, ValidationError
+from .status_service import ExecutorRuntimeStatusService
 from .contracts import get_contract_index, get_contract
 
 logger = logging.getLogger("bmc_auto_capture.executor_api")
@@ -35,23 +31,22 @@ logger = logging.getLogger("bmc_auto_capture.executor_api")
 _debug_callback_store: list[dict] = []
 _debug_callback_lock = threading.Lock()
 
-# Excel config store (replaces legacy .runtime/configs/latest.xlsx)
-# Writes to executor_state/configs/by_hash/ + latest.json
+# Excel config store: writes to executor_state/configs/by_hash/ + latest.json.
+# The store can migrate historical .runtime/configs/latest.xlsx files.
 _config_store: object | None = None  # ExcelConfigStore, lazy init
 
 
 def create_app(
-    service: DirectDispatchService,
-    run_service=None,  # RunDispatchService, optional
+    status_service: ExecutorRuntimeStatusService | None = None,
     plan_run_service=None,  # PlanRunService, optional
     debug_callback_receiver: bool = False,  # Enable built-in debug callback receiver
-    managed_config_dir: str | None = None,  # Dir for uploaded Excel files
 ) -> FastAPI:
+    status_service = status_service or ExecutorRuntimeStatusService()
     app = FastAPI(title="BMC Auto-Capture Executor API v0.2", version=APP_VERSION)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                        allow_methods=["*"], allow_headers=["*"])
 
-    # Convert Pydantic validation errors to 400 (backward compat)
+    # Convert Pydantic validation errors to the API's stable 400 body.
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
         return JSONResponse(
@@ -68,7 +63,6 @@ def create_app(
             "status": "ok",
             "service": "executor-api",
             "mode": "executor",
-            "legacyCompatible": True,
         }
         # Expose callback transport mode for observability
         # Note: actual transport is auto-detected per request based on itemStatusUrl
@@ -84,9 +78,9 @@ def create_app(
         return result
 
     # ==================================================================
-    # Legacy compat routes (replaces api/boot.py)
+    # Core utility routes
     # ==================================================================
-    _register_legacy_routes(app)
+    _register_utility_routes(app)
 
     # ==================================================================
     # Contract / schema query (read-only, no side effects)
@@ -100,59 +94,26 @@ def create_app(
     if debug_callback_receiver:
         _register_debug_callback_receiver(app)
 
-    # ==================================================================
-    # Direct dispatch (existing)
-    # ==================================================================
-
-    @app.post("/executor/v1/jobs", response_model=JobAcceptResponse,
-              include_in_schema=False, deprecated=True)
-    async def receive_job(req: JobDispatchRequest):
-        try:
-            result = service.submit_job(req.model_dump())
-        except ValidationError as e:
-            raise HTTPException(status_code=400, detail={"code": e.code, "message": e.message})
-        return JobAcceptResponse(**result)
-
-    @app.get("/executor/v1/jobs/{job_id}", response_model=JobStatusResponse,
-             include_in_schema=False, deprecated=True)
-    async def get_job(job_id: str):
-        status = service.get_job_status(job_id)
-        if status.get("status") == "NOT_FOUND":
-            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
-        return JobStatusResponse(**status)
-
     @app.get("/executor/v1/status", response_model=ExecutorStatusResponse)
     async def get_status():
-        return ExecutorStatusResponse(**service.get_executor_status())
-
-    # ==================================================================
-    # Plan import + query (existing)
-    # ==================================================================
-
-    if run_service is not None:
-        _register_plan_routes(app, run_service)
-        _register_run_routes(app, run_service)
+        return ExecutorStatusResponse(**status_service.get_executor_status())
 
     # ==================================================================
     # Plan Run Item Status Callback
     # ==================================================================
 
     if plan_run_service is not None:
-        _register_plan_run_routes(
-            app,
-            plan_run_service,
-            expose_internal_run_routes=run_service is None,
-        )
+        _register_plan_run_routes(app, plan_run_service)
 
     return app
 
 
 # ==================================================================
-# Legacy compat routes
+# Core utility routes
 # ==================================================================
 
-def _register_legacy_routes(app: FastAPI):
-    """Register /version, /network/ping, /routes — compat with api/boot.py.
+def _register_utility_routes(app: FastAPI):
+    """Register /version, /network/ping, and /routes.
 
     Note: /health is registered in create_app() to access plan_run_service.
     """
@@ -164,7 +125,6 @@ def _register_legacy_routes(app: FastAPI):
             "mode": "executor-api",
             "version": APP_VERSION,
             "status": "ok",
-            "legacyCompatible": True,
         }
         # Try to read build_info.json
         for candidate in [
@@ -274,7 +234,6 @@ def _error_response(result: dict, status_code: int = 400) -> JSONResponse:
 def _register_plan_run_routes(
     app: FastAPI,
     prs,
-    expose_internal_run_routes: bool = True,
 ):
     """Plan run routes: Excel config, run start, query, and remote upload."""
 
@@ -284,7 +243,8 @@ def _register_plan_run_routes(
 
         Uses ExcelConfigStore.activate_from_local_path() which copies the
         file into executor_state/configs/by_hash/ and writes latest.json.
-        Legacy .runtime/configs/latest.xlsx triggers automatic migration.
+        Historical .runtime/configs/latest.xlsx files are migrated by
+        ExcelConfigStore when present.
         """
         path = req.excelPath
         if not path:
@@ -321,7 +281,7 @@ def _register_plan_run_routes(
         """Return info about the latest Excel config, or hasLatest=false.
 
         Reads from latest.json via ExcelConfigStore.
-        Falls back to in-memory state (legacy set_latest_excel path).
+        Falls back to process-local state created by set_latest_excel().
         """
         store = _get_config_store()
         meta = store.get_latest()
@@ -392,8 +352,8 @@ def _register_plan_run_routes(
         """Get plan summary.
 
         Handles both:
-          - int plan_id (legacy PlanRunService): no query params needed
-          - str plan_id (external plan): requires excelHash query param
+          - numeric local plan IDs: no query params needed
+          - external plan IDs: requires excelHash query param
         """
         # Try external plan first (requires excelHash)
         excel_hash = excelHash
@@ -452,29 +412,6 @@ def _register_plan_run_routes(
                                                          "message": f"Plan not found: {plan_id}"})
         return r
 
-    # ==================================================================
-    # External Plan API (excelHash + string planId)
-    # ==================================================================
-
-    if expose_internal_run_routes:
-        @app.get("/executor/v1/runs/{run_id}", response_model=PlanStatusResponse,
-                 include_in_schema=False, deprecated=True)
-        async def get_run_by_id(run_id: str):
-            r = prs.get_run(run_id)
-            if r is None:
-                raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND",
-                                                             "message": f"Run not found: {run_id}"})
-            return r
-
-        @app.get("/executor/v1/runs/{run_id}/items", response_model=PlanItemsResponse,
-                 include_in_schema=False, deprecated=True)
-        async def get_run_items_by_id(run_id: str):
-            r = prs.get_run_items(run_id)
-            if r is None:
-                raise HTTPException(status_code=404, detail={"code": "RUN_NOT_FOUND",
-                                                             "message": f"Run not found: {run_id}"})
-            return r
-
     @app.post("/executor/v1/plans/{plan_id}/callbacks:retry", response_model=CallbackRetryResponse)
     async def retry_plan_callbacks(plan_id: str, req: CallbackRetryRequest):
         result = prs.retry_pending_callbacks(plan_id, callback_url=req.callbackUrl, mode=req.mode)
@@ -505,83 +442,6 @@ def _register_plan_run_routes(
 
     # GET /executor/v1/plans/{plan_id}/items is registered above in _register_plan_run_routes.
     # External plan items are accessed via prs.get_external_plan_items().
-
-
-def _register_plan_routes(app: FastAPI, rs):
-    """DEPRECATED/ISOLATED: plan import + query routes.
-
-    These route to RunDispatchService, which is a separate flow from
-    the unified planId model.  RunDispatchService uses its own run_id
-    and does NOT contaminate PlanRunService, CallbackOutbox, or
-    executor_state/plans/{planId}.
-    """
-
-    @app.post("/executor/v1/plans:import", include_in_schema=False, deprecated=True)
-    async def import_plan(req: Request):
-        body = await req.json()
-        excel = body.get("excel_path", "")
-        vj = body.get("validation_json_path", "")
-        if not excel or not vj:
-            raise HTTPException(status_code=400, detail="excel_path and validation_json_path required")
-        result = rs.import_plan(excel, vj)
-        if not result.get("accepted"):
-            return JSONResponse(content=result, status_code=400)
-        return result
-
-    @app.get("/executor/v1/plans/{plan_id}/tasks", include_in_schema=False, deprecated=True)
-    async def get_plan_tasks(plan_id: str):
-        """DEPRECATED/ISOLATED: RunDispatchService plan tasks.
-        PlanRunService routes use /plans/{plan_id} and /plans/{plan_id}/items."""
-        tasks = rs.get_plan_tasks(plan_id)
-        if tasks is None:
-            raise HTTPException(status_code=404, detail=f"Plan not found: {plan_id}")
-        return {"plan_id": plan_id, "tasks": tasks}
-
-    @app.get("/executor/v1/plans/{plan_id}/tasks/{task_id}", include_in_schema=False, deprecated=True)
-    async def get_plan_task(plan_id: str, task_id: str):
-        t = rs.get_plan_task(plan_id, task_id)
-        if t is None:
-            raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
-        return t
-
-
-def _register_run_routes(app: FastAPI, rs):
-    """DEPRECATED/ISOLATED: POST /executor/v1/runs + GET /runs/{id}/*
-
-    This is a legacy RunDispatchService path — NOT part of the unified
-    planId model. Does NOT affect PlanRunService, CallbackOutbox, or
-    executor_state/plans/{planId}. Uses its own run_id internally.
-    New code should use /executor/v1/plans/{plan_id}:run instead.
-    """
-
-    @app.post("/executor/v1/runs", include_in_schema=False, deprecated=True)  # DEPRECATED
-    async def start_run(req: Request):
-        body = await req.json()
-        result = rs.start_run(body)
-        if not result.get("accepted"):
-            return JSONResponse(content=result, status_code=400 if "not_found" in str(result.get("reason","")) else 409)
-        return result
-
-    @app.get("/executor/v1/runs/{run_id}", include_in_schema=False, deprecated=True)
-    async def get_run(run_id: str):
-        r = rs.get_run(run_id)
-        if r is None:
-            raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-        return r
-
-    @app.get("/executor/v1/runs/{run_id}/tasks", include_in_schema=False, deprecated=True)
-    async def get_run_tasks(run_id: str):
-        tasks = rs.get_run_tasks(run_id)
-        if tasks is None:
-            raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-        return {"run_id": run_id, "tasks": tasks}
-
-    @app.get("/executor/v1/runs/{run_id}/tasks/{task_id}", include_in_schema=False, deprecated=True)
-    async def get_run_task(run_id: str, task_id: str):
-        t = rs.get_run_task(run_id, task_id)
-        if t is None:
-            raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
-        return t
 
 
 # ==================================================================

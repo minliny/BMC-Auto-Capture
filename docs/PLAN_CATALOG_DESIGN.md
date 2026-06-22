@@ -4,17 +4,17 @@ FINAL_OUTPUT_BEGIN
 
 ## 为什么需要共享 Excel + validation.json
 
-服务端和执行端导入同一份 Excel + validation.json，用同一套确定性 planner 生成完全一样的 `plan_item_id` 和 `plan_hash`。此兼容模块属于 deprecated direct dispatch 路径；统一执行链路中，`planId` 表示一次全量执行批次，`taskId` 表示 Excel 中的任务定义 ID，`planItemId` 表示批次内“一台设备 + 一个任务”的执行项。
+服务端和执行端导入同一份 Excel + validation.json，用同一套确定性 planner 生成完全一样的 `plan_item_id` 和 `plan_hash`。统一执行链路中，`planId` 表示一次全量执行批次，`taskId` 表示 Excel 中的任务定义 ID，`planItemId` 表示批次内“一台设备 + 一个任务”的执行项。
 
 ## ID 语义
 
 - `task_id`：任务定义 ID，来自 Excel `任务ID` / `tasks.json.task_id`；任务名变更不影响它。
-- `plan_item_id`：具体执行项 ID，对应“一台设备 + 一个任务”；PlanCatalog 兼容路径使用确定性哈希生成。
-- `plan_id`：统一执行链路中表示一次全量执行批次；PlanCatalog 兼容路径的 manifest `plan_id` 仍是输入快照 ID，仅用于 deprecated run dispatch。
+- `plan_item_id`：具体执行项 ID，对应“一台设备 + 一个任务”；PlanCatalog 使用确定性哈希生成。
+- `plan_id`：统一执行链路中表示一次全量执行批次。
 
 ## plan_item_id 生成规则
 
-PlanCatalog 兼容路径基于 SHA256(key_fields) 取前 16 位 hex：
+PlanCatalog 基于 SHA256(key_fields) 取前 16 位 hex：
 
 ```
 planner_version | excel_sha256 | validation_json_sha256 | device_group | device_key | task_no | task_id | task_name | task_type | execution_mode | source_row_ref
@@ -98,24 +98,26 @@ validation.json:
 
 生成 task_type=NETWORK_TEST 的 PlannedTask，lock_uri=ssh://{inband_ip}。
 
-## 后续 POST /executor/v1/runs 如何使用
+## 当前 Executor API 如何使用
 
-P1-PLAN-CATALOG-002 将实现：
+执行端按 `excelHash + planId` 启动和查询：
 
 ```json
-POST /executor/v1/runs
+POST /executor/v1/plans
 {
-  "run_id": "run-001",
-  "plan_id": "cd1afada205368a3",
-  "plan_hash": "1f6adeedeb5170d5",
-  "plan_item_ids": ["a1b2c3d4e5f6a7b8", "b2c3d4e5f6a7b8c9"]
+  "excelHash": "<sha256>",
+  "callback": {
+    "planId": "cd1afada205368a3",
+    "itemStatusUrl": "http://server.example/callback/items"
+  },
+  "runner": "fake"
 }
 ```
 
 执行端收到后：
-1. 校验 plan_hash 匹配本地
-2. 从 TaskCatalog 按 plan_item_id 查出完整任务；仅当 task_id 唯一时支持按 task_id 兼容查询
+1. 校验 `excelHash` 匹配已激活配置
+2. 从 TaskCatalog 按 `planId` 解析计划任务
 3. 按 lock_uri 串行调度
-4. 执行完成后回调 callback.status_url
+4. 执行过程回调 `callback.itemStatusUrl`
 
 FINAL_OUTPUT_END

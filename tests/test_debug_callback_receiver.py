@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest
 from fastapi.testclient import TestClient
 from src.executor_api_server.app import create_app, _debug_callback_store, _debug_callback_lock
-from src.executor_api_server.service import DirectDispatchService
+from src.executor_api_server.status_service import ExecutorRuntimeStatusService
 from src.plan_run_service import PlanRunService
 
 
@@ -46,8 +46,7 @@ CALLBACK_FORBIDDEN_FIELDS = {
 
 @pytest.fixture
 def app():
-    svc = DirectDispatchService(executor_id="test-debug-cb")
-    svc.start_background_worker()
+    svc = ExecutorRuntimeStatusService(executor_id="test-debug-cb")
     prs = PlanRunService(use_http_callback=False)
     app = create_app(svc, plan_run_service=prs, debug_callback_receiver=True)
     return app
@@ -213,8 +212,7 @@ class TestDebugCallbackWithPlanRun:
                         _debug_callback_store.append(entry)
                 return 200, '{"code":0,"message":"success","data":{"total":1,"success":1,"failed":0,"errors":[]}}'
 
-        svc = DirectDispatchService(executor_id="test-plan-run-debug")
-        svc.start_background_worker()
+        svc = ExecutorRuntimeStatusService(executor_id="test-plan-run-debug")
         prs = PlanRunService(callback_transport=DebugStoreTransport())
         app = create_app(svc, plan_run_service=prs, debug_callback_receiver=True)
         c = TestClient(app)
@@ -272,8 +270,7 @@ class TestDebugCallbackWithPlanRun:
 
     def test_debug_callback_not_available_without_flag(self):
         """Debug callback receiver NOT present when debug_callback_receiver=False."""
-        svc = DirectDispatchService(executor_id="test-no-debug")
-        svc.start_background_worker()
+        svc = ExecutorRuntimeStatusService(executor_id="test-no-debug")
         prs = PlanRunService()
         app = create_app(svc, plan_run_service=prs, debug_callback_receiver=False)
         client = TestClient(app)
@@ -324,12 +321,11 @@ class TestDebugCallbackWithPlanRun:
 # ===========================================================================
 
 class TestDefaultServerMode:
-    """Default server mode must start Executor API, not legacy Network Boot API."""
+    """Default server mode must start Executor API."""
 
     def test_default_server_mode_has_executor_routes(self, app):
         """Default create_app (without special flags) should have executor routes."""
-        svc = DirectDispatchService(executor_id="test-default")
-        svc.start_background_worker()
+        svc = ExecutorRuntimeStatusService(executor_id="test-default")
         prs = PlanRunService()
         app = create_app(svc, plan_run_service=prs)
         client = TestClient(app)
@@ -348,10 +344,10 @@ class TestDefaultServerMode:
         for route in executor_routes:
             assert route in route_paths, f"Executor route {route} must exist in default server mode"
 
-        # Legacy compatible routes should also exist
-        legacy_routes = ["/health", "/version", "/network/ping", "/routes"]
-        for route in legacy_routes:
-            assert route in route_paths, f"Legacy route {route} must exist for compatibility"
+        # Utility routes should also exist on the unified Executor API
+        utility_routes = ["/health", "/version", "/network/ping", "/routes"]
+        for route in utility_routes:
+            assert route in route_paths, f"Utility route {route} must exist on Executor API"
 
         # Debug callback should NOT be present by default
         assert "/debug/plan-item-statuses" not in route_paths, \
@@ -367,8 +363,7 @@ class TestCallbackPayloadFields:
 
     def test_callback_payload_contains_all_public_fields(self):
         """Test that any POST to debug callback receiver stores all public fields correctly."""
-        svc = DirectDispatchService(executor_id="test-6fields")
-        svc.start_background_worker()
+        svc = ExecutorRuntimeStatusService(executor_id="test-6fields")
         prs = PlanRunService()
         app = create_app(svc, plan_run_service=prs, debug_callback_receiver=True)
         c = TestClient(app)

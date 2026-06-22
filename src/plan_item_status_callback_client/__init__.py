@@ -77,7 +77,7 @@ def validate_callback_url(url: str) -> tuple[bool, str]:
 
 _STATUS_TO_SERVER: dict[str, str] = {
     "PENDING": "PENDING",
-    "RUNNING": "IN_PROGRESS",       # Legacy compat (PlanItem now uses IN_PROGRESS natively)
+    "RUNNING": "IN_PROGRESS",       # Accepted status alias; wire format uses IN_PROGRESS
     "IN_PROGRESS": "IN_PROGRESS",   # Identity for PlanItem server-aligned status
     "SUCCESS": "SUCCESS",
     "FAILED": "FAILED",
@@ -188,21 +188,21 @@ class PlanItemStatusCallbackClient:
         return self._transport
 
     # ------------------------------------------------------------------
-    # Low-level send (kept for backward compat — single-item with excelHash)
+    # Low-level single-item send
     # ------------------------------------------------------------------
 
     def send(self, url: str, plan_id: int | str, device_name: str, task_name: str,
              status: str, updater: str = "downstream-system",
              error_message: str | None = None,
              excel_hash: str | None = None) -> bool:
-        """Legacy single-item send.  Prefer send_batch() or send_single().
+        """Single-item send. Prefer send_batch() or send_single().
 
-        NOTE: excel_hash parameter is accepted for backward compatibility only
-        but is NEVER serialized to the server callback body.  The callback body
-        contains the canonical task identity/status fields.  See
-        build_callback_item() for the current callback item shape.
+        NOTE: excel_hash is accepted as an optional caller input and is NEVER
+        serialized to the server callback body. The callback body contains the
+        canonical task identity/status fields.  See build_callback_item() for
+        the current callback item shape.
         """
-        # P0-5: excel_hash is deprecated compatibility only; never sent to server.
+        # P0-5: excel_hash is accepted input only; never sent to server.
         _ = excel_hash  # explicitly ignored
         payload = _sanitize_callback_item({
             "planId": plan_id,
@@ -242,7 +242,7 @@ class PlanItemStatusCallbackClient:
         - If items is empty: returns empty CallbackResult (no POST).
         - Chunks at max_batch_size (default 1000) if needed.
         - Aggregates results from all chunks.
-        - run_id is accepted for backward-compatible callers but is not
+        - run_id is accepted as an ignored caller-supplied value but is not
           serialized into the server-facing payload.
         """
         if max_batch_size is None:
@@ -356,7 +356,7 @@ class PlanItemStatusCallbackClient:
     def _parse_server_response(self, status_code: int, body: str,
                                 expected_count: int) -> CallbackResult:
         """Parse server response into CallbackResult with error classification."""
-        safe_body = redact_sensitive_text(body)
+        safe_body = _redact_sensitive_value(body)
 
         # --- HTTP non-2xx ---
         if not (200 <= status_code < 300):

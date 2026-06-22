@@ -109,10 +109,9 @@ class PlanRunService:
         self._job_payload_builder = job_payload_builder or PlanRunJobPayloadBuilder()
         self._load_persisted_runs()
 
-        # P1-4: use_http_callback is deprecated — transport selection now uses
-        # _resolve_transport() which auto-detects HttpCallbackTransport when
-        # itemStatusUrl is provided.  The parameter is kept for backward
-        # compatibility only.
+        # P1-4: use_http_callback is retained as a constructor alias. Transport
+        # selection now uses _resolve_transport(), which auto-detects
+        # HttpCallbackTransport when itemStatusUrl is provided.
         if use_http_callback:
             logger.warning(
                 "PlanRunService(use_http_callback=True) is deprecated. "
@@ -120,7 +119,7 @@ class PlanRunService:
                 "itemStatusUrl. Pass callback_transport=HttpCallbackTransport() "
                 "if you need an explicit HTTP transport."
             )
-        self._use_http = use_http_callback  # deprecated, kept for compat
+        self._use_http = use_http_callback  # accepted constructor alias
 
     @property
     def callback_transport(self):
@@ -403,7 +402,7 @@ class PlanRunService:
             msg = "Latest Excel config is unavailable or inconsistent"
             return {"ok": False, "reason": reason, "message": msg}
 
-        # 2. Fallback to in-memory _get_latest_excel (legacy path)
+        # 2. Fallback to in-memory _get_latest_excel()
         #    Only when store.get_latest() returned None (no json at all).
         #    Damaged latest.json never falls back.
         excel = _get_latest_excel()
@@ -457,7 +456,7 @@ class PlanRunService:
             return {"ok": True, "snapshot": snapshot, "devices": excel["devices"],
                     "tasks": excel["tasks"], "excel": excel}
 
-        # Legacy in-memory only path
+        # Process-local in-memory-only path
         if excel is None:
             return {"ok": False, "reason": "NO_LATEST_EXCEL_CONFIG",
                     "message": "No latest Excel config available"}
@@ -486,7 +485,7 @@ class PlanRunService:
                 "tasks": excel["tasks"], "excel": excel}
 
     # ------------------------------------------------------------------
-    # Start plan run (legacy)
+    # Start local plan run
     # ------------------------------------------------------------------
 
     def start_plan_run(self, plan_id: int, request: dict[str, Any]) -> dict[str, Any]:
@@ -602,7 +601,7 @@ class PlanRunService:
             runner = RealRunnerAdapter(output_root=run.output_root or "./output_api_direct")
 
         # Execute in plan order.  Consecutive same-endpoint BMC items can share
-        # one login/session; all other items keep the legacy one-by-one path.
+        # one login/session; all other items use the normal per-item path.
         item_index = 0
         while item_index < len(run.items):
             item = run.items[item_index]

@@ -24,7 +24,7 @@ from src._version import APP_VERSION
 from src.executor_api_server.app import (
     create_app, _debug_callback_store, _debug_callback_lock,
 )
-from src.executor_api_server.service import DirectDispatchService
+from src.executor_api_server.status_service import ExecutorRuntimeStatusService
 from src.plan_run_service import PlanRunService
 from src.plan_run_service.service import _excel_store, _store_lock
 from src.plan_item_status_callback_client import FakeCallbackTransport
@@ -78,8 +78,7 @@ def prs():
 
 @pytest.fixture
 def svc():
-    s = DirectDispatchService(executor_id="test-remote-api")
-    s.start_background_worker()
+    s = ExecutorRuntimeStatusService(executor_id="test-remote-api")
     return s
 
 
@@ -542,9 +541,8 @@ class TestOpenAPIRoutes:
     def test_status_version_consistency(self, client):
         """GET /executor/v1/status must report the canonical app version."""
         # Need to have a server running for this
-        from src.executor_api_server.service import DirectDispatchService
-        svc2 = DirectDispatchService(executor_id="test-version")
-        svc2.start_background_worker()
+        from src.executor_api_server.status_service import ExecutorRuntimeStatusService
+        svc2 = ExecutorRuntimeStatusService(executor_id="test-version")
         app = create_app(svc2)
         c = TestClient(app)
 
@@ -558,7 +556,7 @@ class TestOpenAPIRoutes:
         routes = resp.json().get("routes", [])
         paths = [r["path"] for r in routes]
 
-        # Plan routes use plan_id; runId routes intentionally use run_id.
+        # Plan routes use plan_id.
         items_paths = [p for p in paths if "plans" in p and "items" in p]
         for p in items_paths:
             assert "{plan_id}" in p, f"Route uses wrong param naming: {p}"
@@ -657,7 +655,7 @@ class TestDebugCallbackStillWorks:
                 return 200, _callback_success_response(1)
 
         prs = PlanRunService(callback_transport=DebugTransport())
-        app = create_app(DirectDispatchService(executor_id="test-cb6"),
+        app = create_app(ExecutorRuntimeStatusService(executor_id="test-cb6"),
                          plan_run_service=prs, debug_callback_receiver=True)
         c = TestClient(app)
 
@@ -704,10 +702,10 @@ class TestRunnerMode:
 
 
 # ===========================================================================
-# Legacy path still works
+# Local path config still works
 # ===========================================================================
 
-class TestLegacyPath:
+class TestLocalPathConfig:
     """POST /executor/v1/config/excel:path still works."""
 
     def test_path_set_excel(self, client):
@@ -727,8 +725,8 @@ class TestNoPythonRequirement:
     def test_server_flag_no_python(self):
         """Verify the executor API server can be imported without system Python dependency."""
         from src.executor_api_server.app import create_app
-        from src.executor_api_server.service import DirectDispatchService
-        service = DirectDispatchService()
+        from src.executor_api_server.status_service import ExecutorRuntimeStatusService
+        service = ExecutorRuntimeStatusService()
         app = create_app(service)
         assert app is not None, "Executor API app must be importable"
 
@@ -768,9 +766,8 @@ class TestVersionConsistency:
 
     def test_explicit_version(self):
         """The status endpoint version is canonical."""
-        from src.executor_api_server.service import DirectDispatchService
-        svc = DirectDispatchService(executor_id="test-ver")
-        svc.start_background_worker()
+        from src.executor_api_server.status_service import ExecutorRuntimeStatusService
+        svc = ExecutorRuntimeStatusService(executor_id="test-ver")
         app = create_app(svc)
         c = TestClient(app)
         resp = c.get("/executor/v1/status")
@@ -778,8 +775,7 @@ class TestVersionConsistency:
 
     def test_explicit_openapi_version(self):
         """OpenAPI version is canonical."""
-        svc = DirectDispatchService(executor_id="test-ver2")
-        svc.start_background_worker()
+        svc = ExecutorRuntimeStatusService(executor_id="test-ver2")
         app = create_app(svc)
         c = TestClient(app)
         resp = c.get("/openapi.json")

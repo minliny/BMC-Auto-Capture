@@ -547,18 +547,6 @@ class TestMockServer:
 
 
 # ===========================================================================
-# Regression: Direct Dispatch tests still pass
-# ===========================================================================
-
-class TestRegression:
-    def test_direct_dispatch_still_imports(self):
-        """23. Direct Dispatch service still importable."""
-        from src.executor_api_server.service import DirectDispatchService
-        svc = DirectDispatchService(executor_id="exec-test")
-        assert svc is not None
-
-
-# ===========================================================================
 # Server PlanItem Status API Compat — New tests
 # ===========================================================================
 
@@ -1204,13 +1192,6 @@ class TestPlanItemStatusAlignment:
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
         # Plan is accepted with status RUNNING internally
         assert r["status"] == "ACCEPTED"  # response status
-
-    def test_direct_dispatch_job_status_unchanged(self):
-        """Direct Dispatch job status uses its own enum (not affected by PlanItem change)."""
-        from src.direct_dispatch_store import JobStoreStatus
-        assert JobStoreStatus.RUNNING == "RUNNING"
-        assert hasattr(JobStoreStatus, "RUNNING")
-
 
 # ===========================================================================
 # Registry client tests

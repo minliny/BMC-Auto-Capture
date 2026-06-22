@@ -253,6 +253,7 @@ echo(   Host : %HOST%
 echo(   Port : %PORT%
 echo(
 echo(   --- Executor API: http://%HOST%:%PORT%/executor/v1/status ---
+echo(   --- Health:       /health /version /network/ping /routes ---
 echo(   --- 配置 Excel:  POST /executor/v1/config/excel:path ---
 echo(   --- 执行计划:    POST /executor/v1/plans/{planId}:run ---
 echo(   --- 查询进度:    GET  /executor/v1/plans/{planId} ---
@@ -262,8 +263,6 @@ echo(   --- 接收回调:    POST /debug/plan-item-statuses ---
 echo(   --- 查询回调:    GET  /debug/plan-item-statuses ---
 echo(   --- 清空回调:    DELETE /debug/plan-item-statuses ---
 echo(
-echo(   Legacy 兼容: /health /version /network/ping /routes
-echo(   旧 Network Boot: 使用 --legacy-network-boot 参数
 echo(
 echo(   按 Ctrl+C 停止服务
 echo( ============================================================

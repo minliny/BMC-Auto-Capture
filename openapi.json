@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "BMC Auto-Capture Executor API v0.2",
-    "version": "0.2.4"
+    "version": "0.2.6"
   },
   "paths": {
     "/health": {
@@ -145,7 +145,7 @@
     "/executor/v1/config/excel:path": {
       "post": {
         "summary": "Set Latest Excel Path",
-        "description": "Set latest Excel by executor-local path (local debug only).\n\nUses ExcelConfigStore.activate_from_local_path() which copies the\nfile into executor_state/configs/by_hash/ and writes latest.json.\nLegacy .runtime/configs/latest.xlsx triggers automatic migration.",
+        "description": "Set latest Excel by executor-local path (local debug only).\n\nUses ExcelConfigStore.activate_from_local_path() which copies the\nfile into executor_state/configs/by_hash/ and writes latest.json.\nHistorical .runtime/configs/latest.xlsx files are migrated by\nExcelConfigStore when present.",
         "operationId": "set_latest_excel_path_executor_v1_config_excel_path_post",
         "requestBody": {
           "content": {
@@ -223,7 +223,7 @@
     "/executor/v1/config/latest": {
       "get": {
         "summary": "Get Latest Config",
-        "description": "Return info about the latest Excel config, or hasLatest=false.\n\nReads from latest.json via ExcelConfigStore.\nFalls back to in-memory state (legacy set_latest_excel path).",
+        "description": "Return info about the latest Excel config, or hasLatest=false.\n\nReads from latest.json via ExcelConfigStore.\nFalls back to process-local state created by set_latest_excel().",
         "operationId": "get_latest_config_executor_v1_config_latest_get",
         "responses": {
           "200": {
@@ -292,7 +292,7 @@
     "/executor/v1/plans/{plan_id}": {
       "get": {
         "summary": "Get Plan",
-        "description": "Get plan summary.\n\nHandles both:\n  - int plan_id (legacy PlanRunService): no query params needed\n  - str plan_id (external plan): requires excelHash query param",
+        "description": "Get plan summary.\n\nHandles both:\n  - numeric local plan IDs: no query params needed\n  - external plan IDs: requires excelHash query param",
         "operationId": "get_plan_executor_v1_plans__plan_id__get",
         "parameters": [
           {
@@ -488,7 +488,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File"
           }
         },
@@ -572,6 +572,42 @@
         ],
         "title": "CallbackRetryResponse"
       },
+      "CheckResultResponse": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "title": "Stage",
+            "default": ""
+          },
+          "checkId": {
+            "type": "string",
+            "title": "Checkid",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity",
+            "default": ""
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "details": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "title": "CheckResultResponse"
+      },
       "ExcelConfigAcceptResponse": {
         "properties": {
           "accepted": {
@@ -653,19 +689,7 @@
           "version": {
             "type": "string",
             "title": "Version",
-            "default": "0.2.4"
-          },
-          "job_counts": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Job Counts"
-          },
-          "total_jobs": {
-            "type": "integer",
-            "title": "Total Jobs",
-            "default": 0
+            "default": "0.2.6"
           },
           "uptime_seconds": {
             "type": "number",
@@ -813,6 +837,16 @@
       },
       "PlanItemStatusResponse": {
         "properties": {
+          "taskId": {
+            "type": "string",
+            "title": "Taskid",
+            "default": ""
+          },
+          "planItemId": {
+            "type": "string",
+            "title": "Planitemid",
+            "default": ""
+          },
           "deviceGroup": {
             "type": "string",
             "title": "Devicegroup",
@@ -872,6 +906,43 @@
             },
             "type": "array",
             "title": "Infoevents"
+          },
+          "executionStatus": {
+            "type": "string",
+            "title": "Executionstatus",
+            "default": ""
+          },
+          "ruleStatus": {
+            "type": "string",
+            "title": "Rulestatus",
+            "default": ""
+          },
+          "artifactStatus": {
+            "type": "string",
+            "title": "Artifactstatus",
+            "default": ""
+          },
+          "readyStatus": {
+            "type": "string",
+            "title": "Readystatus",
+            "default": ""
+          },
+          "checkpointStatus": {
+            "type": "string",
+            "title": "Checkpointstatus",
+            "default": ""
+          },
+          "finalVerdict": {
+            "type": "string",
+            "title": "Finalverdict",
+            "default": ""
+          },
+          "checkResults": {
+            "items": {
+              "$ref": "#/components/schemas/CheckResultResponse"
+            },
+            "type": "array",
+            "title": "Checkresults"
           }
         },
         "type": "object",

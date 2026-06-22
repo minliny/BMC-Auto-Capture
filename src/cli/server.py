@@ -55,8 +55,6 @@ def build_server_parser() -> argparse.ArgumentParser:
                         help="Allow API requests to execute real BMC/SSH tasks")
     parser.add_argument("--enable-debug-callback-receiver", action="store_true",
                         help="Enable built-in debug callback receiver")
-    parser.add_argument("--legacy-network-boot", action="store_true",
-                        help="Start legacy Network Boot API instead of Executor API")
     return parser
 
 
@@ -67,16 +65,6 @@ def server_main(argv: list[str] | None = None, app_dir: Path | None = None) -> i
     resolved_app_dir = Path(args.app_dir).resolve() if args.app_dir else app_dir
     _prepend_app_dir(resolved_app_dir)
 
-    if args.legacy_network_boot:
-        start_minimal_server = _import_attr("api.boot", "start_minimal_server")
-        start_minimal_server(
-            host=args.host,
-            port=args.port,
-            log_level=args.log_level,
-            app_dir=str(resolved_app_dir) if resolved_app_dir else None,
-        )
-        return 0
-
     use_http = args.callback_transport == "http"
     use_real = args.runner == "real"
     if use_real and not args.enable_real_runner:
@@ -84,8 +72,8 @@ def server_main(argv: list[str] | None = None, app_dir: Path | None = None) -> i
         return 2
 
     try:
-        DirectDispatchService = _import_attr(
-            "src.executor_api_server.service", "DirectDispatchService",
+        ExecutorRuntimeStatusService = _import_attr(
+            "src.executor_api_server.status_service", "ExecutorRuntimeStatusService",
         )
         create_app = _import_attr("src.executor_api_server.app", "create_app")
         PlanRunService = _import_attr("src.plan_run_service", "PlanRunService")
@@ -101,15 +89,9 @@ def server_main(argv: list[str] | None = None, app_dir: Path | None = None) -> i
         print("Install it with: pip install uvicorn fastapi", file=sys.stderr)
         return 1
 
-    svc = DirectDispatchService(
+    status_service = ExecutorRuntimeStatusService(
         executor_id=args.executor_id,
-        use_http_callback=use_http,
-        callback_timeout_seconds=args.callback_timeout,
-        runner_mode="real" if use_real else "fake",
-        output_root=args.output,
-        allow_real_runner=args.enable_real_runner,
     )
-    svc.start_background_worker()
 
     prs = PlanRunService(
         use_http_callback=use_http,
@@ -117,18 +99,18 @@ def server_main(argv: list[str] | None = None, app_dir: Path | None = None) -> i
     )
 
     app = create_app(
-        svc,
+        status_service,
         plan_run_service=prs,
         debug_callback_receiver=args.enable_debug_callback_receiver,
     )
 
-    print("Executor API server starting (legacy compat enabled):")
+    print("Executor API server starting:")
     print(f"  host={args.host} port={args.port}")
     print(f"  executorId={args.executor_id}")
     print(f"  runner={args.runner} callback={args.callback_transport}")
     print(f"  realRunnerEnabled={args.enable_real_runner}")
-    print("  Legacy endpoints: /health /version /network/ping /routes")
-    print("  Executor endpoints: /executor/v1/status /executor/v1/plans/...")
+    print("  Utility endpoints: /health /version /network/ping /routes")
+    print("  Executor endpoints: /executor/v1/status /executor/v1/config/... /executor/v1/plans/...")
     if args.enable_debug_callback_receiver:
         print("  Debug callback: POST/GET/DELETE /debug/plan-item-statuses")
 

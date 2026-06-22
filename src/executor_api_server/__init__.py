@@ -2,14 +2,15 @@
 Executor API server — local HTTP endpoints for server-to-executor communication.
 
 Exposes:
-  POST /executor/v1/jobs          — receive dispatched job
-  GET  /executor/v1/jobs/{job_id} — query job status
-  GET  /executor/v1/status        — executor health + job counts
+  GET  /executor/v1/status        — executor status
+  POST /executor/v1/config/excel  — upload and activate Excel config
+  POST /executor/v1/plans         — start an external plan by excelHash + planId
+  GET  /executor/v1/plans/{id}    — query plan status
 
-Uses FastAPI + uvicorn. All business logic delegated to DirectDispatchService.
+Uses FastAPI + uvicorn. Plan/config routes delegate to the plan-run services.
 """
 
-from .service import DirectDispatchService
+from .status_service import ExecutorRuntimeStatusService
 from .app import create_app
 
-__all__ = ["DirectDispatchService", "create_app"]
+__all__ = ["ExecutorRuntimeStatusService", "create_app"]
