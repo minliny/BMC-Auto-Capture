@@ -183,13 +183,30 @@ def check_result_from_checkpoint(
     status = normalize_check_status(getattr(checkpoint, "status", "ERROR"))
     details = str(getattr(checkpoint, "details", "") or "")
     evidence_ref = str(getattr(checkpoint, "evidence_ref", "") or "")
+    severity = str(getattr(checkpoint, "severity", "") or "ERROR")
+    rule_id = str(getattr(checkpoint, "rule_id", "") or "")
+    rule_class = str(getattr(checkpoint, "rule_class", "") or "")
+    priority = str(getattr(checkpoint, "priority", "") or "")
+    result_layer = str(getattr(checkpoint, "result_layer", "") or "")
+    effect_on_final = str(getattr(checkpoint, "effect_on_final", "") or "")
+    detail_payload = {"checkpoint_name": name, "details": details}
+    if rule_id:
+        detail_payload["rule_id"] = rule_id
+    if rule_class:
+        detail_payload["rule_class"] = rule_class
+    if priority:
+        detail_payload["priority"] = priority
+    if result_layer:
+        detail_payload["result_layer"] = result_layer
+    if effect_on_final:
+        detail_payload["effect_on_final"] = effect_on_final
     return CheckResult(
         stage=stage,
-        check_id=f"{source}.{name}",
+        check_id=f"{source}.{rule_id or name}",
         status=status,
-        severity="ERROR",
+        severity=severity,
         message=details,
-        details={"checkpoint_name": name, "details": details},
+        details=detail_payload,
         source=source,
         evidence_ref=evidence_ref,
         evaluated_at=float(getattr(checkpoint, "evaluated_at", 0.0) or 0.0),

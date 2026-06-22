@@ -84,6 +84,11 @@ RulePacks are managed through the current Executor API config surface:
 
 Stored RulePacks live under `config/rule_packs/{protocol}/{task_id}.json`.
 
+Rule metadata is preserved through runtime evaluation. For BMC conditions,
+SSH/TELNET result rules, and SSH/TELNET checkpoints, non-blocking RulePack
+items (`severity=WARNING/INFO`, `priority=P2`, or `effect_on_final` set to
+`partial`, `warning`, or `none`) report WARN instead of forcing a final FAIL.
+
 ## Skill Contract
 
 Skills fill task-specific rule instances from real evidence:

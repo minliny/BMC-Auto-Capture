@@ -16,6 +16,12 @@ class CheckpointResult:
     details: str = ""           # 判定依据描述
     evidence_ref: str = ""      # 关联的截图/HTML/TXT 路径
     evaluated_at: float = 0.0   # 时间戳
+    severity: str = "ERROR"     # "ERROR" | "WARNING" | "INFO"
+    rule_id: str = ""
+    rule_class: str = ""
+    priority: str = ""
+    result_layer: str = ""
+    effect_on_final: str = ""
 
     def __post_init__(self):
         if self.evaluated_at == 0.0:
@@ -42,6 +48,11 @@ class CheckpointSpec:
     target: str = ""            # 检查的文本内容或正则 pattern
     expect: str = ""            # 期望值（部分类型使用）
     severity: str = "ERROR"     # "ERROR" | "WARNING" | "INFO" — affects final_verdict weighting
+    rule_id: str = ""
+    rule_class: str = ""
+    priority: str = ""
+    result_layer: str = ""
+    effect_on_final: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> "CheckpointSpec":
@@ -53,6 +64,11 @@ class CheckpointSpec:
             target=str(d.get("target", "")),
             expect=str(d.get("expect", "")),
             severity=str(d.get("severity", "ERROR")),
+            rule_id=str(d.get("rule_id", "")),
+            rule_class=str(d.get("rule_class", "")),
+            priority=str(d.get("priority", "")),
+            result_layer=str(d.get("result_layer", "")),
+            effect_on_final=str(d.get("effect_on_final", "")),
         )
 
 

@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from src.checks import CheckStage, check_result_from_checkpoint
 from src.executor_api_server.app import create_app
 from src.executor_api_server.status_service import ExecutorRuntimeStatusService
+from src.models.checkpoint import CheckpointSpec
 from src.plan_item_status_callback_client import FakeCallbackTransport
 from src.plan_run_service import PlanRunService
 from src.rulepacks import RulePackStore, adapt_rule_pack_to_task_def, validate_rule_pack
 from src.rulepacks.fingerprint import sha256_text
+from src.rules.checkpoint_engine import CheckpointEngine
+from src.rules.engine import RuleContext
 from src.rules.result_rules import ResultRuleContext, evaluate_result_rules
 
 
@@ -156,6 +161,46 @@ def test_rulepack_adapter_maps_ssh_classes_to_current_fields():
     ]
     assert merged["checkpoints"][0]["rule_id"] == "ssh.transcript_marker"
     assert merged["rule_pack"]["audit_metadata"]["created_by"] == "bmc-auto-capture-ssh-output-rules"
+
+
+def test_rulepack_ssh_evidence_checkpoint_warning_is_not_blocking():
+    pack = _ssh_rule_pack()
+    pack["rule_classes"]["evidence_validation"] = [
+        {
+            "rule_id": "ssh.no_error_marker",
+            "priority": "P2",
+            "effect_on_final": "warning",
+            "checks": [{"type": "text_not_contains", "target": "ERROR"}],
+        }
+    ]
+    task_def = {
+        "task_id": "task.019",
+        "task_type": "SSH",
+        "execution_mode": "SSH_CMD",
+        "command_or_url": "display interface brief",
+    }
+    merged = adapt_rule_pack_to_task_def(pack, task_def)
+    checkpoint = merged["checkpoints"][0]
+    ctx = RuleContext()
+    ctx.text_output = "display interface brief\nERROR optional warning marker\n<HUAWEI>"
+
+    evaluation = asyncio.run(
+        CheckpointEngine().evaluate([CheckpointSpec.from_dict(checkpoint)], ctx, evidence_ref="task.019.txt")
+    )
+    result = evaluation.results[0]
+    check_result = check_result_from_checkpoint(
+        result,
+        stage=CheckStage.RESULT,
+        source="ssh.checkpoint",
+    )
+
+    assert checkpoint["severity"] == "WARNING"
+    assert evaluation.rollup_status() == "CHECK_WARN"
+    assert result.rule_id == "ssh.no_error_marker"
+    assert check_result.status == "WARN"
+    assert check_result.severity == "WARNING"
+    assert check_result.check_id == "ssh.checkpoint.ssh.no_error_marker"
+    assert check_result.details["priority"] == "P2"
 
 
 def test_load_task_defs_merges_rulepack_from_config_dir(tmp_path):

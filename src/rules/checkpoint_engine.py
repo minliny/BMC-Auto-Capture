@@ -73,26 +73,37 @@ class CheckpointEngine:
         handler_name = self._HANDLERS.get(spec.check_type)
         if not handler_name:
             logger.warning("Unknown checkpoint type: %s", spec.check_type)
-            return CheckpointResult(
+            return self._attach_spec_metadata(CheckpointResult(
                 checkpoint_name=spec.name,
                 status="CHECK_SKIP",
                 details=f"Unknown check_type: {spec.check_type}",
                 evidence_ref=evidence_ref,
                 evaluated_at=time.time(),
-            )
+            ), spec)
 
         handler = getattr(self, handler_name)
         try:
-            return await handler(spec, context, evidence_ref)
+            return self._attach_spec_metadata(await handler(spec, context, evidence_ref), spec)
         except Exception as e:
             logger.warning("Checkpoint '%s' raised: %s", spec.name, e)
-            return CheckpointResult(
+            return self._attach_spec_metadata(CheckpointResult(
                 checkpoint_name=spec.name,
                 status="CHECK_WARN",
                 details=f"Checkpoint evaluation error: {e}",
                 evidence_ref=evidence_ref,
                 evaluated_at=time.time(),
-            )
+            ), spec)
+
+    def _attach_spec_metadata(self, result: CheckpointResult, spec: CheckpointSpec) -> CheckpointResult:
+        result.severity = str(getattr(spec, "severity", "") or "ERROR")
+        result.rule_id = str(getattr(spec, "rule_id", "") or "")
+        result.rule_class = str(getattr(spec, "rule_class", "") or "")
+        result.priority = str(getattr(spec, "priority", "") or "")
+        result.result_layer = str(getattr(spec, "result_layer", "") or "")
+        result.effect_on_final = str(getattr(spec, "effect_on_final", "") or "")
+        if result.status == "CHECK_FAIL" and _checkpoint_is_non_blocking(spec):
+            result.status = "CHECK_WARN"
+        return result
 
     # ------------------------------------------------------------------
     # BMC (Playwright page) checkpoint handlers
@@ -222,3 +233,14 @@ class CheckpointEngine:
             details=f"Regex should NOT match: {resolved_target}" if match else f"Regex does NOT match (OK): {resolved_target}",
             evidence_ref=evidence_ref,
         )
+
+
+def _checkpoint_is_non_blocking(spec: CheckpointSpec) -> bool:
+    severity = str(getattr(spec, "severity", "") or "").upper()
+    priority = str(getattr(spec, "priority", "") or "").upper()
+    effect = str(getattr(spec, "effect_on_final", "") or "").lower()
+    return (
+        severity in {"WARNING", "WARN", "INFO"}
+        or priority == "P2"
+        or effect in {"partial", "warning", "none"}
+    )
