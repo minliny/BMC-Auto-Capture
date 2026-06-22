@@ -929,6 +929,8 @@ class SSHExecutor(AbstractExecutor):
                     pass
 
                 combined = self._stream_events_to_text(stream_events)
+                if exit_code_available:
+                    combined = combined.rstrip("\n") + f"\n[exit_code:{exit_code}]\n"
 
                 cmd_outputs[cmd_name] = combined
                 all_output.append(combined)

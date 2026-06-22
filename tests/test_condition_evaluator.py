@@ -6,10 +6,18 @@ from src.rules.condition_evaluator import evaluate_ready_conditions, parse_ready
 
 
 class _FakeElement:
-    def __init__(self, text: str = "", *, visible: bool = True, enabled: bool = True):
+    def __init__(
+        self,
+        text: str = "",
+        *,
+        visible: bool = True,
+        enabled: bool = True,
+        attrs: dict[str, str] | None = None,
+    ):
         self._text = text
         self._visible = visible
         self._enabled = enabled
+        self._attrs = attrs or {}
 
     async def is_visible(self):
         return self._visible
@@ -22,6 +30,9 @@ class _FakeElement:
 
     async def text_content(self):
         return self._text
+
+    async def get_attribute(self, name: str):
+        return self._attrs.get(name, "")
 
 
 class _FakePage:
@@ -133,3 +144,18 @@ def test_ready_region_stable_respects_timeout():
 
     assert result.results[0].status == "FAIL"
     assert "not stable" in result.results[0].details
+
+
+def test_ready_conditions_support_action_state_checks():
+    page = (
+        _FakePage(body="CPU active details ready")
+        .add("#tab-cpu", _FakeElement("CPU", attrs={"class": "el-tabs__item is-active"}))
+        .add("#details", _FakeElement("CPU active details ready"))
+    )
+
+    result = _run_ready([
+        {"type": "active_tab_changed", "selector": "#tab-cpu", "values": ["is-active"]},
+        {"type": "post_action_state_changed", "selector": "#details", "expected": "active details"},
+    ], page)
+
+    assert [r.status for r in result.results] == ["PASS", "PASS"]

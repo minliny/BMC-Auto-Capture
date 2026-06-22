@@ -71,6 +71,8 @@ Generate only condition types the executor supports:
 - `text_nonempty`
 - `text_not_in`
 - `region_stable`
+- `active_tab_changed`
+- `post_action_state_changed`
 
 For important pages, prefer this minimum pattern:
 

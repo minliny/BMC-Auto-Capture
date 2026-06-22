@@ -192,3 +192,46 @@ def test_result_rules_regex_all_of_reports_missing_patterns():
 
     assert evaluation.rule_status == "RULE_FAILED"
     assert "regex patterns not matched" in evaluation.failure_summary()
+
+
+def test_result_rules_support_action_completion_checks():
+    output = """
+display diagnostic
+operation complete
+[exit_code:0]
+<HUAWEI>
+"""
+    rules = [{
+        "rule_id": "action_completion",
+        "checks": [
+            {"type": "sentinel_seen", "target": "operation complete"},
+            {"type": "exit_code_in", "allowed": [0]},
+            {"type": "pager_exhausted"},
+        ],
+    }]
+
+    evaluation = evaluate_result_rules(rules, ResultRuleContext(combined_output=output))
+
+    assert evaluation.rule_status == "RULE_PASSED"
+    assert evaluation.evaluated_checks == 3
+
+
+def test_result_rules_detect_pager_and_bad_exit_code():
+    output = """
+display diagnostic
+---- More ----
+[exit_code:2]
+"""
+    rules = [{
+        "rule_id": "bad_completion",
+        "checks": [
+            {"type": "exit_code_in", "allowed": [0]},
+            {"type": "pager_exhausted"},
+        ],
+    }]
+
+    evaluation = evaluate_result_rules(rules, ResultRuleContext(combined_output=output))
+
+    assert evaluation.rule_status == "RULE_FAILED"
+    assert "exit codes [2] not in [0]" in evaluation.failure_summary()
+    assert "pager prompt remains" in evaluation.failure_summary()

@@ -89,6 +89,10 @@ SSH/TELNET result rules, and SSH/TELNET checkpoints, non-blocking RulePack
 items (`severity=WARNING/INFO`, `priority=P2`, or `effect_on_final` set to
 `partial`, `warning`, or `none`) report WARN instead of forcing a final FAIL.
 
+The capability registry is the source of truth for supported rule types. Skills
+must read it before authoring rules and must not emit check types absent from
+the registry.
+
 ## Skill Contract
 
 Skills fill task-specific rule instances from real evidence:

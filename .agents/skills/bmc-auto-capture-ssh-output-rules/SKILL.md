@@ -63,6 +63,9 @@ Generate only check types the executor supports:
 - `min_body_lines`
 - `command_echo_required`
 - `prompt_required`
+- `sentinel_seen`
+- `exit_code_in`
+- `pager_exhausted`
 - `interface_status`
 
 If a task uses `display interface brief`, prefer `interface_status` over substring checks for `down`. The parser ignores command echo, prompts, headers, legends, and descriptions.
@@ -84,6 +87,8 @@ Use regex checks for tables or variable spacing:
 Use `min_body_lines` instead of `min_output_lines` when prompt, command echo, login banner, or blank lines should not count as evidence body.
 
 Use `command_echo_required` and `prompt_required` only when the task expects terminal-style evidence. Do not use them for plain `exec_command` evidence unless echo/prompt are actually present.
+
+Use `sentinel_seen` for explicit completion markers in the transcript, `exit_code_in` only when an exit-code marker is present, and `pager_exhausted` to reject leftover pager prompts such as `---- More ----`.
 
 ## Security
 

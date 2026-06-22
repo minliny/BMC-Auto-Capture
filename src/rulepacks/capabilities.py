@@ -35,6 +35,8 @@ BMC_READY_CHECKS = frozenset({
     "text_nonempty",
     "text_not_in",
     "region_stable",
+    "active_tab_changed",
+    "post_action_state_changed",
 })
 
 BMC_EVIDENCE_CHECKS = frozenset({
@@ -69,6 +71,9 @@ SSH_RESULT_CHECKS = frozenset({
     "prompt_required",
     "interface_status",
     "interface_status_not",
+    "sentinel_seen",
+    "exit_code_in",
+    "pager_exhausted",
 })
 
 SSH_EVIDENCE_CHECKS = frozenset({
@@ -138,6 +143,9 @@ CAPABILITY_REGISTRY: dict[str, Any] = {
                 "check_types": sorted({
                     "command_echo_required",
                     "prompt_required",
+                    "sentinel_seen",
+                    "exit_code_in",
+                    "pager_exhausted",
                 }),
             },
             "content_integrity": {
@@ -164,6 +172,9 @@ CAPABILITY_REGISTRY: dict[str, Any] = {
                 "check_types": sorted({
                     "command_echo_required",
                     "prompt_required",
+                    "sentinel_seen",
+                    "exit_code_in",
+                    "pager_exhausted",
                 }),
             },
             "content_integrity": {
@@ -174,21 +185,6 @@ CAPABILITY_REGISTRY: dict[str, Any] = {
                 "runtime_binding": "checkpoints",
                 "check_types": sorted(SSH_EVIDENCE_CHECKS),
             },
-        },
-    },
-    "planned_not_yet_supported": {
-        "SSH": {
-            "action_completion": [
-                "sentinel_seen",
-                "exit_code_in",
-                "pager_exhausted",
-            ],
-        },
-        "BMC": {
-            "action_completion": [
-                "active_tab_changed",
-                "post_action_state_changed",
-            ],
         },
     },
 }

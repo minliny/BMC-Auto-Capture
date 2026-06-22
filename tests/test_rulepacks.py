@@ -28,10 +28,18 @@ from src.rules.result_rules import ResultRuleContext, evaluate_result_rules
 
 
 class _FakeElement:
-    def __init__(self, text: str = "", *, visible: bool = True, enabled: bool = True):
+    def __init__(
+        self,
+        text: str = "",
+        *,
+        visible: bool = True,
+        enabled: bool = True,
+        attrs: dict[str, str] | None = None,
+    ):
         self._text = text
         self._visible = visible
         self._enabled = enabled
+        self._attrs = attrs or {}
 
     async def is_visible(self):
         return self._visible
@@ -45,6 +53,9 @@ class _FakeElement:
     async def text_content(self):
         return self._text
 
+    async def get_attribute(self, name: str):
+        return self._attrs.get(name, "")
+
 
 class _FakePage:
     def __init__(self):
@@ -54,6 +65,8 @@ class _FakePage:
             ".visible": [_FakeElement("System health ready")],
             ".hidden": [_FakeElement("hidden", visible=False)],
             ".row": [_FakeElement("row 1"), _FakeElement("row 2")],
+            "#active-tab": [_FakeElement("System", attrs={"class": "el-tabs__item is-active"})],
+            "#post-state": [_FakeElement("System health ready")],
         }
 
     def is_closed(self):
@@ -198,6 +211,10 @@ def _bmc_ready_spec(check_type: str) -> dict:
             "sample_interval_ms": 5,
             "timeout_ms": 50,
         }
+    if check_type == "active_tab_changed":
+        return {"type": check_type, "selector": "#active-tab", "values": ["is-active"]}
+    if check_type == "post_action_state_changed":
+        return {"type": check_type, "selector": "#post-state", "expected": "System health"}
     raise AssertionError(f"missing BMC ready fixture for {check_type}")
 
 
@@ -246,6 +263,12 @@ def _ssh_result_check(check_type: str) -> dict:
         return {"type": check_type}
     if check_type in {"interface_status", "interface_status_not"}:
         return {"type": check_type, "fields": ["physical", "protocol"], "forbidden": ["down"]}
+    if check_type == "sentinel_seen":
+        return {"type": check_type, "target": "PHY"}
+    if check_type == "exit_code_in":
+        return {"type": check_type, "allowed": [0]}
+    if check_type == "pager_exhausted":
+        return {"type": check_type}
     raise AssertionError(f"missing SSH result fixture for {check_type}")
 
 
@@ -382,6 +405,7 @@ display interface brief
 Interface                   PHY   Protocol Description
 100GE1/0/1                  up    up       uplink
 <HUAWEI>
+[exit_code:0]
 """
     ctx = ResultRuleContext(
         combined_output=output,

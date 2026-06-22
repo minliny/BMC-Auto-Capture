@@ -269,6 +269,53 @@ def _evaluate_check(
             return _failure(rule_name, check_type, f"[{rule_name}] {desc}: forbidden regex '{pattern}' matched")
         return None
 
+    if check_type == "sentinel_seen":
+        patterns = _coerce_values(check.get("patterns", target or check.get("sentinel")))
+        if not patterns:
+            return _parse_failure(rule_name, check_type, f"[{rule_name}] RULE_PARSE_FAILED no sentinel configured")
+        use_regex = bool(check.get("regex") or check.get("pattern") or check.get("patterns"))
+        missing = []
+        for pattern in patterns:
+            found = re.search(pattern, context.combined_output) is not None if use_regex else pattern in context.combined_output
+            if not found:
+                missing.append(pattern)
+        if missing:
+            return _failure(rule_name, check_type, f"[{rule_name}] {desc}: sentinel not seen: {missing}")
+        return None
+
+    if check_type == "exit_code_in":
+        allowed = _coerce_int_values(
+            check.get("allowed", check.get("values", check.get("codes", target))),
+        )
+        if not allowed:
+            return _parse_failure(rule_name, check_type, f"[{rule_name}] RULE_PARSE_FAILED no allowed exit codes")
+        exit_codes = _extract_exit_codes(context)
+        if not exit_codes:
+            return _parse_failure(rule_name, check_type, f"[{rule_name}] RULE_PARSE_FAILED no exit code marker found")
+        disallowed = [code for code in exit_codes if code not in allowed]
+        if disallowed:
+            return _failure(
+                rule_name,
+                check_type,
+                f"[{rule_name}] {desc}: exit codes {disallowed} not in {allowed}",
+                details={"exit_codes": exit_codes, "allowed": allowed},
+            )
+        return None
+
+    if check_type == "pager_exhausted":
+        patterns = _coerce_values(check.get("patterns", check.get("forbidden")))
+        if not patterns:
+            patterns = [
+                r"----\s*More\s*----",
+                r"--\s*More\s*--",
+                r"More:\s*$",
+                r"Press\s+any\s+key\s+to\s+continue",
+            ]
+        matches = [pattern for pattern in patterns if re.search(pattern, context.combined_output, re.IGNORECASE | re.MULTILINE)]
+        if matches:
+            return _failure(rule_name, check_type, f"[{rule_name}] {desc}: pager prompt remains: {matches}")
+        return None
+
     if check_type in ("interface_status", "interface_status_not"):
         fields = coerce_status_fields(check.get("fields", check.get("field", check.get("target_field"))))
         forbidden_values = coerce_status_values(
@@ -380,6 +427,42 @@ def _coerce_values(raw: Any) -> list[str]:
     if isinstance(raw, list | tuple | set):
         return [str(value) for value in raw if str(value)]
     return [str(raw)]
+
+
+def _coerce_int_values(raw: Any) -> list[int]:
+    values: list[int] = []
+    for item in _coerce_values(raw):
+        for part in re.split(r"[,\s]+", item):
+            if not part:
+                continue
+            try:
+                values.append(int(part))
+            except ValueError:
+                continue
+    return values
+
+
+def _extract_exit_codes(context: ResultRuleContext) -> list[int]:
+    text = "\n".join([context.combined_output, *context.cmd_outputs.values()])
+    patterns = [
+        r"\[exit_code:(-?\d+)\]",
+        r"\bexit[_ -]?code\s*[:=]\s*(-?\d+)\b",
+        r"\breturn[_ -]?code\s*[:=]\s*(-?\d+)\b",
+        r"\brc\s*[:=]\s*(-?\d+)\b",
+        r"__EXIT_CODE__\s*[:=]\s*(-?\d+)",
+    ]
+    codes: list[int] = []
+    seen: set[int] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            try:
+                code = int(match.group(1))
+            except ValueError:
+                continue
+            if code not in seen:
+                codes.append(code)
+                seen.add(code)
+    return codes
 
 
 def _body_lines(context: ResultRuleContext) -> list[str]:

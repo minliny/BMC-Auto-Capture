@@ -61,6 +61,8 @@ class ReadyConditionSpec:
     stable_for_ms: int = 0
     sample_interval_ms: int = 250
     timeout_ms: int = 5000
+    attribute: str = ""
+    expected: str = ""
     rule_id: str = ""
     rule_class: str = ""
     priority: str = ""
@@ -92,6 +94,8 @@ class ReadyConditionSpec:
             stable_for_ms=_coerce_int(d.get("stable_for_ms"), 0),
             sample_interval_ms=_coerce_int(d.get("sample_interval_ms"), 250),
             timeout_ms=int(d.get("timeout_ms", d.get("timeout", 5000))),
+            attribute=str(d.get("attribute", d.get("attr", ""))),
+            expected=str(d.get("expected", d.get("expect", d.get("value", "")))),
             rule_id=str(d.get("rule_id", "")),
             rule_class=str(d.get("rule_class", "")),
             priority=str(d.get("priority", "")),
@@ -407,6 +411,9 @@ async def _eval_one_ready(page, spec: ReadyConditionSpec) -> ConditionResult:
             stable = await _region_stable(page, spec)
             return stable
 
+        elif ct in ("active_tab_changed", "post_action_state_changed"):
+            return await _post_action_state_observed(page, spec)
+
         else:
             return ConditionResult(ct, "SKIP", target, "", f"unknown type: {ct}")
 
@@ -625,6 +632,70 @@ async def _selector_text(page, selector: str) -> str:
             return await el.text_content() or ""
         except Exception:
             return ""
+
+
+async def _selector_attribute(page, selector: str, attribute: str) -> str:
+    if not selector or not attribute:
+        return ""
+    el = await page.query_selector(selector)
+    if not el:
+        return ""
+    try:
+        getter = getattr(el, "get_attribute", None)
+        if getter is None:
+            return ""
+        value = await getter(attribute)
+        return value or ""
+    except Exception:
+        return ""
+
+
+async def _post_action_state_observed(page, spec: ReadyConditionSpec) -> ConditionResult:
+    """Check that an action's expected post-state is visible in the current page."""
+    selectors = _ready_selectors(spec)
+    if not selectors:
+        return ConditionResult(spec.condition_type, "SKIP", "", "", "no selector configured")
+
+    candidates = _resolve_candidates(spec)
+    if spec.expected:
+        candidates.append(spec.expected)
+    attribute = spec.attribute or "class"
+    observations: list[str] = []
+
+    for selector in selectors:
+        visible = await _selector_is_visible(page, selector)
+        text = (await _selector_text(page, selector)).strip()
+        attr_value = (await _selector_attribute(page, selector, attribute)).strip()
+        observations.append(
+            f"{selector}: visible={visible} text={_shorten(text)!r} {attribute}={_shorten(attr_value)!r}"
+        )
+        if not visible:
+            continue
+        if not candidates:
+            return ConditionResult(
+                spec.condition_type,
+                "PASS",
+                selector,
+                "; ".join(observations),
+                "post-action selector visible",
+            )
+        for candidate in candidates:
+            if candidate and (candidate in text or candidate in attr_value):
+                return ConditionResult(
+                    spec.condition_type,
+                    "PASS",
+                    selector,
+                    candidate,
+                    f"post-action state matched {candidate!r}",
+                )
+
+    return ConditionResult(
+        spec.condition_type,
+        "FAIL",
+        ",".join(selectors),
+        "; ".join(observations),
+        f"expected post-action state not observed: {candidates}" if candidates else "selector not visible",
+    )
 
 
 async def _region_stable(page, spec: ReadyConditionSpec) -> ConditionResult:

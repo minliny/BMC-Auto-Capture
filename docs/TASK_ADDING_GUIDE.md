@@ -286,6 +286,8 @@ BMC 支持两种任务：
 | `text_nonempty` | 校验一个或多个字段不是空文本 | `selector` 或 `selectors` |
 | `text_not_in` | 校验字段不为占位符或 loading 文本 | `selector`/`selectors`, `values` |
 | `region_stable` | 校验目标区域文本在稳定窗口内不再变化 | `selector`, `stable_for_ms`, `sample_interval_ms` |
+| `active_tab_changed` | 校验点击后活动页签/按钮状态可见 | `selector`, `values` 或 `expected` |
+| `post_action_state_changed` | 校验动作后目标区域出现期望状态 | `selector`, `values` 或 `expected` |
 
 关键 BMC 页面建议至少组合 `url_contains`、业务容器 `selector_visible`、关键字段 `text_nonempty`、占位符排除 `text_not_in`。动态表格页面再加 `count_ge` 和 `region_stable`。
 

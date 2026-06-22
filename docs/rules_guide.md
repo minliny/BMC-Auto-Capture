@@ -110,6 +110,9 @@ SSH/TELNET `result_rules` 支持的检查类型：
 | `min_body_lines` | 去掉命令回显、空行、prompt 后正文行数不少于指定值 | `target` |
 | `command_echo_required` | interactive shell 输出中必须能看到命令回显 | 无 |
 | `prompt_required` | interactive shell 输出中必须能看到设备 prompt | 无 |
+| `sentinel_seen` | 命令输出必须出现明确完成标记 | `target`, `patterns` |
+| `exit_code_in` | 输出中的 exit-code 标记必须在允许集合内 | `allowed`, `values`, `target` |
+| `pager_exhausted` | 输出中不得残留分页提示 | `patterns` 或默认分页提示 |
 | `interface_status` | 结构化解析 `display interface brief` 真实接口行 | `fields`, `forbidden` |
 
 `interface_status` 不做全文 substring 匹配，只检查真实接口记录中的 `physical` / `protocol` 字段。命令回显、prompt、表头、legend、分隔线、描述字段里的 `down` 不会触发失败；无法解析接口行时返回 `RULE_PARSE_FAILED`。SSH/TELNET 命令执行成功但 `result_rules` 失败时，执行状态为 `EXEC_SUCCESS_RULE_FAILED`，失败明细进入 `CheckResult.details.failures` 和 `failure_detail.csv`，TXT 证据仍保留完整命令输出。
