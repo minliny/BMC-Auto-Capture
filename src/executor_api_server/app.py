@@ -228,7 +228,7 @@ def _rule_packs_from_body(body):
 
 def _register_rule_pack_routes(app: FastAPI):
     """Register RulePack capability, validation, import, and update routes."""
-    from ..rulepacks import RulePackStore, get_rule_capabilities, validate_rule_pack
+    from ..rulepacks import RulePackStore, get_rule_capabilities, validate_rule_pack_for_workspace
 
     @app.get("/executor/v1/config/rule-capabilities")
     async def get_rule_capabilities_route():
@@ -237,7 +237,7 @@ def _register_rule_pack_routes(app: FastAPI):
     @app.post("/executor/v1/config/rule-packs:validate", response_model=RulePackValidationResponse)
     async def validate_rule_pack_route(request: Request):
         body = await request.json()
-        report = validate_rule_pack(_rule_pack_from_body(body))
+        report = validate_rule_pack_for_workspace(_rule_pack_from_body(body))
         return report.to_dict(include_normalized=True)
 
     @app.post("/executor/v1/config/rule-packs:import", response_model=RulePackImportResponse)
@@ -247,7 +247,7 @@ def _register_rule_pack_routes(app: FastAPI):
         items = []
         errors = []
         for raw_pack in _rule_packs_from_body(body):
-            report = validate_rule_pack(raw_pack)
+            report = validate_rule_pack_for_workspace(raw_pack)
             if not report.valid:
                 errors.append(report.to_dict(include_normalized=True))
                 continue
@@ -317,7 +317,7 @@ def _register_rule_pack_routes(app: FastAPI):
                     "errors": [{"code": "RULEPACK_TASK_ID_MISMATCH", "message": "path task_id and body task_id differ"}],
                 },
             )
-        report = validate_rule_pack(pack)
+        report = validate_rule_pack_for_workspace(pack)
         if not report.valid:
             return JSONResponse(
                 status_code=400,

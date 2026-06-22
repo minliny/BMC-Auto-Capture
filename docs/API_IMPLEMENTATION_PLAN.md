@@ -43,7 +43,7 @@ API family.
 | `src/excel_config_store/` | Managed config storage and latest metadata. |
 | `src/plan_run_service/` | Plan execution, query projection, persistence, and callback delivery. |
 | `src/plan_item_status_callback_client/` | Outbound plan item callback transport and payload sanitization. |
-| `src/rulepacks/` | RulePack capability registry, validation, storage, and runtime adapter. |
+| `src/rulepacks/` | RulePack capability registry, validation, workspace binding, storage, and runtime adapter. |
 
 ## RulePack Framework
 

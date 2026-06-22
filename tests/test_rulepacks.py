@@ -10,6 +10,7 @@ from src.executor_api_server.status_service import ExecutorRuntimeStatusService
 from src.plan_item_status_callback_client import FakeCallbackTransport
 from src.plan_run_service import PlanRunService
 from src.rulepacks import RulePackStore, adapt_rule_pack_to_task_def, validate_rule_pack
+from src.rulepacks.fingerprint import sha256_text
 from src.rules.result_rules import ResultRuleContext, evaluate_result_rules
 
 
@@ -101,6 +102,14 @@ def _bmc_rule_pack(task_id: str = "task.001") -> dict:
             ],
         },
     }
+
+
+def _write_tasks_json(root: Path, task_def: dict) -> None:
+    task_id = str(task_def.get("task_id") or "task.019")
+    (root / "tasks.json").write_text(
+        json.dumps({"tasks": {task_id: task_def}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 def test_rulepack_validator_rejects_unsupported_check_type():
@@ -201,6 +210,44 @@ def test_rulepack_api_validate_import_get_put():
     updated = client.put("/executor/v1/config/rule-packs/task.019", json=updated_pack)
     assert updated.status_code == 200
     assert updated.json()["accepted"] is True
+
+
+def test_rulepack_api_import_rejects_task_type_mismatch(tmp_path):
+    _write_tasks_json(tmp_path, {
+        "task_id": "task.019",
+        "task_name": "Interface brief",
+        "task_type": "BMC",
+        "execution_mode": "BMC_URL",
+        "command_or_url": "/UI/Static/#/navigate/system",
+    })
+    app = create_app(ExecutorRuntimeStatusService(executor_id="rulepack-test"))
+    client = TestClient(app)
+
+    response = client.post("/executor/v1/config/rule-packs:import", json={"rulePacks": [_ssh_rule_pack()]})
+
+    assert response.status_code == 400
+    assert response.json()["accepted"] is False
+    assert "RULEPACK_TASK_TYPE_MISMATCH" in json.dumps(response.json())
+
+
+def test_rulepack_api_import_rejects_command_fingerprint_mismatch(tmp_path):
+    _write_tasks_json(tmp_path, {
+        "task_id": "task.019",
+        "task_name": "Interface brief",
+        "task_type": "SSH",
+        "execution_mode": "SSH_CMD",
+        "command_or_url": "display interface brief",
+    })
+    pack = _ssh_rule_pack()
+    pack["applies_to"]["command_fingerprint"] = sha256_text("display vlan brief")
+    app = create_app(ExecutorRuntimeStatusService(executor_id="rulepack-test"))
+    client = TestClient(app)
+
+    response = client.post("/executor/v1/config/rule-packs:import", json={"rulePacks": [pack]})
+
+    assert response.status_code == 400
+    assert response.json()["accepted"] is False
+    assert "RULEPACK_FINGERPRINT_MISMATCH" in json.dumps(response.json())
 
 
 def test_p2_result_rule_failure_becomes_warning_not_rule_failed():

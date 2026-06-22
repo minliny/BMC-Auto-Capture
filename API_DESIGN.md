@@ -69,6 +69,12 @@ are generated from real BMC/SSH evidence by the authoring skills and imported
 through the RulePack config API. Runtime compatibility is handled by the
 RulePack adapter, which maps RulePacks into the current executor fields.
 
+When `tasks.json` is available in the executor workspace, RulePack validation,
+import, and update also verify the package against the current task definition:
+`task_id`, `task_type`, `execution_mode`, and any declared fingerprints must
+match. Missing `tasks.json` is reported as a warning so downstream systems can
+stage RulePacks before uploading the corresponding task config.
+
 ## Removed HTTP Designs
 
 The previous job/command/runId API drafts have been removed from the active

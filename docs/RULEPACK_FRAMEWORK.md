@@ -63,6 +63,12 @@ RulePacks are matched by `task_id` and then checked against task metadata:
 
 `task_name` is display text only and must not be used for automatic matching.
 
+The RulePack API validates against the current workspace `tasks.json` when it
+is present. A `task_id`, `task_type`, execution mode, or fingerprint mismatch
+rejects import/update. If `tasks.json` is not present, validation still checks
+schema and capability support, returns a warning, and allows import so rules can
+be staged before the task config arrives.
+
 ## API
 
 RulePacks are managed through the current Executor API config surface:
