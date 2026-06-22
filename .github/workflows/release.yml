@@ -331,7 +331,6 @@ jobs:
           copy scripts\start_executor_api_server.py bmc-auto-capture\scripts\ >nul
           copy scripts\submit_plan_run.py bmc-auto-capture\scripts\ >nul
           copy scripts\mock_plan_status_server.py bmc-auto-capture\scripts\ >nul
-          copy scripts\submit_direct_job.py bmc-auto-capture\scripts\ >nul
           copy scripts\build_plan_manifest.py bmc-auto-capture\scripts\ >nul
           copy scripts\mock_callback_server.py bmc-auto-capture\scripts\ >nul
           copy scripts\smoke_executor_runtime.ps1 bmc-auto-capture\scripts\ >nul
@@ -436,7 +435,6 @@ jobs:
           @(
             "$base\scripts\start_executor_api_server.py",
             "$base\scripts\submit_plan_run.py",
-            "$base\scripts\submit_direct_job.py",
             "$base\scripts\smoke_executor_runtime.ps1",
             "$base\app\src\executor_api_server",
             "$base\app\src\plan_run_service",
