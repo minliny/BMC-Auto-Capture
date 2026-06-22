@@ -1,4 +1,4 @@
 interface:
   display_name: "Rule Authoring Router"
-  short_description: "Route BMC and SSH rule generation."
-  default_prompt: "Generate or review BMC Auto-Capture rule JSON from evidence."
+  short_description: "Route BMC and SSH RulePack generation."
+  default_prompt: "Generate or review BMC Auto-Capture rulepack.v1 JSON from evidence."

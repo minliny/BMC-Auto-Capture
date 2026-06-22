@@ -35,30 +35,17 @@
 }
 ```
 
-现有 `rules`、`result_rules`、`capture_ready_conditions`、`evidence_checkpoints` 和 legacy `checkpoints` 会继续兼容，同时迁移为统一 `CheckResult` 输出。
+新规则应通过 `rulepack.v1` 管理。执行端会把 RulePack 适配成 `result_rules`、`capture_ready_conditions` 和 `evidence_checkpoints`。旧 `rules`、`rules_json`、`ssh_rules`、`checkpoints`、`stderr_fail_patterns`、`stderr_allow_patterns`、`stderr_ignore_patterns`、`allow_exit_codes` 只作为兼容输入保留，不应由 skill 或新 API 客户端生成。
 
 每个成功进入取证阶段的 BMC/SSH 任务还会生成 `<证据文件名>.metadata.json`，记录本次产物清单、相对路径、文件大小和 SHA-256。该清单只用于离线复核截图/HTML/TXT/state JSON 是否完整、是否被替换；它不代替 `capture_ready_conditions` 的页面就绪判断，也不代替 `result_rules` 的业务结果判断。
 
-## 一、规则在 tasks.json 中的位置
+## 一、规则入口
 
-```json
-{
-  "tasks": {
-    "task.bmc.storage": {
-      "task_id": "task.bmc.storage",
-      "task_name": "存储页面检查",
-      "task_type": "BMC",
-      "execution_mode": "BMC_URL",
-      "command_or_url": "/UI/Static/#/navigate/system/storage",
-      "rules": [
-        // 规则组写在这里
-      ]
-    }
-  }
-}
-```
+推荐入口是 `config/rule_packs/{protocol}/{task_id}.json`。`tasks.json` 中的运行字段由 RulePack adapter 生成或兼容读取；不要为新任务手写 `rules` / `ssh_rules` / `checkpoints` / `stderr_fail_patterns`。
 
-## 二、规则组格式
+## 二、legacy `rules` 规则组格式
+
+本节只说明旧 `rules` / `rules_json` 兼容层。新规则包不要使用这个格式。
 
 ```json
 {
@@ -70,11 +57,9 @@
 }
 ```
 
-每个任务的 BMC 页面检查使用 `rules: [规则组, 规则组, ...]`；SSH/TELNET 命令执行结果检查推荐使用 `result_rules: [规则组, 规则组, ...]`。
+`result_rules` 是执行端运行字段，只读取命令输出和已保存证据，不执行页面点击、填表、截图等动作。新规则包不要直接生成 `result_rules`；应生成 RulePack 的 `stage_gate`、`action_completion`、`content_integrity` 或 `evidence_validation`。
 
-`result_rules` 是执行结果校验规则，只读取命令输出和已保存证据，不执行页面点击、填表、截图等动作。旧字段 `ssh_rules` 和 SSH/TELNET 任务上的 `rules` 会继续兼容，但新任务应写 `result_rules`。
-
-## 三、检查项格式
+## 三、legacy 检查项格式
 
 ```json
 {
@@ -85,7 +70,7 @@
 }
 ```
 
-## 四、检查类型
+## 四、legacy BMC 检查类型与 SSH/TELNET 运行检查类型
 
 | type | 含义 | target 填写 | expect 填写 |
 |---|---|---|---|
@@ -106,16 +91,19 @@ SSH/TELNET `result_rules` 支持的检查类型：
 | `regex_all_of` | 命令输出必须匹配全部正则 | `patterns` |
 | `regex_any_of` | 命令输出至少匹配一个正则 | `patterns` |
 | `regex_not_exists` / `regex_not_match` | 命令输出不得匹配正则 | `pattern` 或 `target` |
+| `allowed_patterns` | 指定输出流每个非空行必须匹配 allow 或 ignore pattern | `source`, `patterns`, `ignore_patterns` |
 | `min_output_lines` | 输出行数不少于指定值 | `target` |
 | `min_body_lines` | 去掉命令回显、空行、prompt 后正文行数不少于指定值 | `target` |
 | `command_echo_required` | interactive shell 输出中必须能看到命令回显 | 无 |
 | `prompt_required` | interactive shell 输出中必须能看到设备 prompt | 无 |
 | `sentinel_seen` | 命令输出必须出现明确完成标记 | `target`, `patterns` |
-| `exit_code_in` | 输出中的 exit-code 标记必须在允许集合内 | `allowed`, `values`, `target` |
+| `exit_code_in` | exit code 必须在允许集合内 | `source: "exit_code"`, `allowed`, `values`, `target` |
 | `pager_exhausted` | 输出中不得残留分页提示 | `patterns` 或默认分页提示 |
-| `interface_status` | 结构化解析 `display interface brief` 真实接口行 | `fields`, `forbidden` |
+| `interface_status` / `interface_status_not` | 结构化解析 `display interface brief` 真实接口行 | `fields`, `forbidden` |
 
 `interface_status` 不做全文 substring 匹配，只检查真实接口记录中的 `physical` / `protocol` 字段。命令回显、prompt、表头、legend、分隔线、描述字段里的 `down` 不会触发失败；无法解析接口行时返回 `RULE_PARSE_FAILED`。SSH/TELNET 命令执行成功但 `result_rules` 失败时，执行状态为 `EXEC_SUCCESS_RULE_FAILED`，失败明细进入 `CheckResult.details.failures` 和 `failure_detail.csv`，TXT 证据仍保留完整命令输出。
+
+SSH/TELNET 检查可使用 `source` 限定检查对象：`combined`、`stdout`、`stderr`、`cmd:<name>` 或 `exit_code`。旧 `stderr_fail_patterns` 等字段会被兼容转换为 source-aware `result_rules`，但不再作为新配置入口。
 
 ## 五、如何找到 CSS 选择器（HTML 元素定位）
 
@@ -128,23 +116,22 @@ SSH/TELNET `result_rules` 支持的检查类型：
 - Class：`.port-status`
 - 标签+属性：`td.down`、`span.alert`
 
-## 六、BMC 页面常用检查模式
+## 六、RulePack 检查常用模式
 
 ### 检查页面正常加载
 ```json
-{"type": "text_exists", "target": "Storage", "expect": "", "desc": "页面包含 Storage 标题"}
+{"type": "text_contains", "target": "Storage", "desc": "页面包含 Storage 标题"}
 ```
 
 ### 检查无异常告警
 ```json
-{"type": "element_not_exists", "target": ".alert-danger", "expect": "", "desc": "无红色告警"}
-{"type": "text_not_exists", "target": "告警", "expect": "", "desc": "页面无告警文字"}
-{"type": "text_not_exists", "target": "异常", "expect": "", "desc": "无异常状态"}
+{"type": "selector_not_visible", "selector": ".alert-danger", "desc": "无红色告警"}
+{"type": "text_not_in", "target": "body", "values": ["告警", "异常"], "desc": "页面无异常告警文字"}
 ```
 
 ### 检查设备信息正确
 ```json
-{"type": "element_text_contains", "target": "#device-status", "expect": "OK", "desc": "设备状态为OK"}
+{"type": "text_contains", "target": "OK", "desc": "设备状态为 OK"}
 ```
 
 ### 检查端口状态（SSH 命令输出）
@@ -157,61 +144,133 @@ SSH/TELNET `result_rules` 支持的检查类型：
 }
 ```
 
-## 七、完整示例
+## 七、RulePack 完整示例
 
 ```json
 {
-  "tasks": {
-    "task.bmc.raid_config": {
-      "task_id": "task.bmc.raid_config",
-      "task_name": "RAID配置测试",
-      "task_type": "BMC",
-      "execution_mode": "BMC_URL",
-      "command_or_url": "/UI/Static/#/navigate/system/storage",
-      "rules": [
-        {
-          "name": "RAID页面基础检查",
-          "desc": "验证存储页面正常加载，无异常告警，RAID卡信息可见",
-          "checks": [
-            {"type": "text_exists", "target": "Storage", "expect": "", "desc": "页面标题包含Storage"},
-            {"type": "element_not_exists", "target": ".alert-danger", "expect": "", "desc": "无红色告警"},
-            {"type": "text_not_exists", "target": "异常", "expect": "", "desc": "无异常状态"},
-            {"type": "text_not_exists", "target": "告警", "expect": "", "desc": "无告警信息"}
-          ]
-        }
-      ]
-    }
+  "schema_version": "rulepack.v1",
+  "rule_pack_id": "rulepack.task.bmc.raid_config.v1",
+  "task_id": "task.bmc.raid_config",
+  "protocol": "BMC",
+  "execution_mode": "BMC_URL",
+  "applies_to": {
+    "task_ids": ["task.bmc.raid_config"],
+    "task_type": "BMC",
+    "execution_modes": ["BMC_URL"]
+  },
+  "audit_metadata": {
+    "created_by": "bmc-auto-capture-bmc-page-rules",
+    "created_from_artifacts": ["output/task.bmc.raid_config.html"],
+    "artifact_hashes": {},
+    "review_status": "generated"
+  },
+  "rule_classes": {
+    "stage_gate": [
+      {
+        "rule_id": "bmc.storage_route_ready",
+        "priority": "P0",
+        "effect_on_final": "fail",
+        "checks": [
+          {"type": "url_contains", "target": "/navigate/system/storage"},
+          {"type": "text_contains", "target": "Storage"}
+        ]
+      }
+    ],
+    "action_completion": [],
+    "content_integrity": [
+      {
+        "rule_id": "bmc.storage_no_alert",
+        "priority": "P1",
+        "effect_on_final": "partial",
+        "checks": [
+          {"type": "selector_not_visible", "selector": ".alert-danger"},
+          {"type": "text_not_in", "target": "body", "values": ["异常", "告警"]}
+        ]
+      }
+    ],
+    "evidence_validation": [
+      {
+        "rule_id": "bmc.storage_evidence_contains_title",
+        "priority": "P2",
+        "effect_on_final": "warning",
+        "checks": [
+          {"type": "html_contains", "target": "Storage"}
+        ]
+      }
+    ]
   }
 }
 ```
 
 ```json
 {
-  "tasks": {
-    "task.019": {
-      "task_id": "task.019",
-      "task_name": "计算节点L1交换网络端口查询测试",
-      "task_type": "SSH",
-      "execution_mode": "SSH_CMD",
-      "command_or_url": "display interface brief | include up",
-      "result_rules": [
-        {
-          "name": "端口状态检查",
-          "desc": "L1交换机接口状态字段应正常，不因描述文本中的 down 误判",
-          "checks": [
-            {
-              "type": "interface_status",
-              "fields": ["physical", "protocol"],
-              "forbidden": ["down"],
-              "desc": "真实接口记录的 physical/protocol 状态不得为 down"
-            }
-          ]
-        }
-      ]
-    }
+  "schema_version": "rulepack.v1",
+  "rule_pack_id": "rulepack.task.019.v1",
+  "task_id": "task.019",
+  "protocol": "SSH",
+  "execution_mode": "SSH_CMD",
+  "applies_to": {
+    "task_ids": ["task.019"],
+    "task_type": "SSH",
+    "execution_modes": ["SSH_CMD"]
+  },
+  "audit_metadata": {
+    "created_by": "bmc-auto-capture-ssh-output-rules",
+    "created_from_artifacts": ["output/task.019.txt"],
+    "artifact_hashes": {},
+    "review_status": "generated"
+  },
+  "rule_classes": {
+    "stage_gate": [
+      {
+        "rule_id": "ssh.prompt_seen",
+        "priority": "P1",
+        "effect_on_final": "partial",
+        "checks": [
+          {"type": "prompt_required"}
+        ]
+      }
+    ],
+    "action_completion": [
+      {
+        "rule_id": "ssh.exit_code_ok",
+        "priority": "P0",
+        "effect_on_final": "fail",
+        "checks": [
+          {"type": "exit_code_in", "source": "exit_code", "allowed": [0]}
+        ]
+      }
+    ],
+    "content_integrity": [
+      {
+        "rule_id": "ssh.interface_status_ok",
+        "priority": "P0",
+        "effect_on_final": "fail",
+        "checks": [
+          {
+            "type": "interface_status",
+            "fields": ["physical", "protocol"],
+            "forbidden": ["down"],
+            "desc": "真实接口记录的 physical/protocol 状态不得为 down"
+          }
+        ]
+      }
+    ],
+    "evidence_validation": [
+      {
+        "rule_id": "ssh.transcript_contains_command",
+        "priority": "P2",
+        "effect_on_final": "warning",
+        "checks": [
+          {"type": "text_contains", "target": "display interface brief"}
+        ]
+      }
+    ]
   }
 }
 ```
+
+旧 `rules` / `rules_json` / `ssh_rules` / `checkpoints` / `stderr_*` / `allow_exit_codes` 只读兼容，不作为新示例。
 
 ## 八、关键原则
 

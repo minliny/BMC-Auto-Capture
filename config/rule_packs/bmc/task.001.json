@@ -1,0 +1,89 @@
+{
+  "schema_version": "rulepack.v1",
+  "rule_pack_id": "rulepack.task.001.v1",
+  "task_id": "task.001",
+  "protocol": "BMC",
+  "execution_mode": "BMC_ACTIONS",
+  "audit_metadata": {
+    "created_by": "bmc-auto-capture-bmc-page-rules",
+    "created_from_artifacts": [],
+    "artifact_hashes": {},
+    "review_status": "generated"
+  },
+  "applies_to": {
+    "task_ids": [
+      "task.001"
+    ],
+    "task_type": "BMC",
+    "execution_modes": [
+      "BMC_ACTIONS"
+    ]
+  },
+  "rule_classes": {
+    "stage_gate": [
+      {
+        "rule_id": "bmc.storage.route_reached",
+        "priority": "P0",
+        "effect_on_final": "fail",
+        "checks": [
+          {
+            "type": "url_contains",
+            "target": "/navigate/system/storage"
+          }
+        ]
+      }
+    ],
+    "action_completion": [],
+    "content_integrity": [
+      {
+        "rule_id": "bmc.storage.logical_drive_ready",
+        "priority": "P1",
+        "effect_on_final": "partial",
+        "checks": [
+          {
+            "type": "selector_visible",
+            "selector": "#LogicalDrive0"
+          },
+          {
+            "type": "text_nonempty",
+            "selector": "#LogicalDrive0"
+          },
+          {
+            "type": "text_contains_any",
+            "values": [
+              "Logical Drive 0",
+              "RAID",
+              "Status",
+              "状态"
+            ]
+          },
+          {
+            "type": "region_stable",
+            "selector": "body",
+            "stable_for_ms": 1000,
+            "sample_interval_ms": 250,
+            "timeout_ms": 3000
+          }
+        ]
+      }
+    ],
+    "evidence_validation": [
+      {
+        "rule_id": "bmc.storage.logical_drive_evidence",
+        "priority": "P2",
+        "effect_on_final": "warning",
+        "checks": [
+          {
+            "type": "text_contains_any",
+            "values": [
+              "Logical Drive 0",
+              "RAID",
+              "Status",
+              "状态"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -6,16 +6,14 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from src.checks import CheckStage, check_result_from_checkpoint
+from src.checks import CheckStage, check_result_from_condition
 from src.executor_api_server.app import create_app
 from src.executor_api_server.status_service import ExecutorRuntimeStatusService
-from src.models.checkpoint import CheckpointSpec
 from src.plan_item_status_callback_client import FakeCallbackTransport
 from src.plan_run_service import PlanRunService
 from src.rulepacks import RulePackStore, adapt_rule_pack_to_task_def, validate_rule_pack
 from src.rulepacks.capabilities import CAPABILITY_REGISTRY
 from src.rulepacks.fingerprint import sha256_text
-from src.rules.checkpoint_engine import CheckpointEngine
 from src.rules.condition_evaluator import (
     ArtifactContext,
     evaluate_evidence_checkpoints,
@@ -23,7 +21,6 @@ from src.rules.condition_evaluator import (
     parse_checkpoint_specs,
     parse_ready_specs,
 )
-from src.rules.engine import RuleContext
 from src.rules.result_rules import ResultRuleContext, evaluate_result_rules
 
 
@@ -235,6 +232,8 @@ def _bmc_evidence_spec(check_type: str, artifact_path: Path) -> dict:
         return {"type": check_type, "values": ["Fatal", "Traceback"]}
     if check_type == "regex_match":
         return {"type": check_type, "target": r"System\s+health"}
+    if check_type == "regex_not_match":
+        return {"type": check_type, "target": r"Traceback|Fatal"}
     raise AssertionError(f"missing BMC evidence fixture for {check_type}")
 
 
@@ -255,6 +254,8 @@ def _ssh_result_check(check_type: str) -> dict:
         return {"type": check_type, "patterns": ["Fatal", "PHY"]}
     if check_type in {"regex_not_exists", "regex_not_match"}:
         return {"type": check_type, "target": r"Traceback|Fatal"}
+    if check_type == "allowed_patterns":
+        return {"type": check_type, "source": "stderr", "patterns": [], "ignore_patterns": []}
     if check_type in {"min_output_lines", "min_body_lines"}:
         return {"type": check_type, "target": "2"}
     if check_type == "command_echo_required":
@@ -314,7 +315,7 @@ def test_rulepack_adapter_maps_ssh_classes_to_current_fields():
         "ssh.prompt_seen",
         "ssh.body_not_empty",
     ]
-    assert merged["checkpoints"][0]["rule_id"] == "ssh.transcript_marker"
+    assert merged["evidence_checkpoints"][0]["rule_id"] == "ssh.transcript_marker"
     assert merged["rule_pack"]["audit_metadata"]["created_by"] == "bmc-auto-capture-ssh-output-rules"
 
 
@@ -335,26 +336,24 @@ def test_rulepack_ssh_evidence_checkpoint_warning_is_not_blocking():
         "command_or_url": "display interface brief",
     }
     merged = adapt_rule_pack_to_task_def(pack, task_def)
-    checkpoint = merged["checkpoints"][0]
-    ctx = RuleContext()
-    ctx.text_output = "display interface brief\nERROR optional warning marker\n<HUAWEI>"
+    checkpoint = merged["evidence_checkpoints"][0]
+    artifacts = ArtifactContext(txt_content="display interface brief\nERROR optional warning marker\n<HUAWEI>")
 
-    evaluation = asyncio.run(
-        CheckpointEngine().evaluate([CheckpointSpec.from_dict(checkpoint)], ctx, evidence_ref="task.019.txt")
-    )
+    evaluation = evaluate_evidence_checkpoints(parse_checkpoint_specs([checkpoint]), artifacts)
     result = evaluation.results[0]
-    check_result = check_result_from_checkpoint(
+    check_result = check_result_from_condition(
         result,
         stage=CheckStage.RESULT,
-        source="ssh.checkpoint",
+        check_id_prefix="ssh.evidence_checkpoint",
+        source="evidence_checkpoints",
     )
 
     assert checkpoint["severity"] == "WARNING"
-    assert evaluation.rollup_status() == "CHECK_WARN"
+    assert evaluation.rollup() == "WARN"
     assert result.rule_id == "ssh.no_error_marker"
     assert check_result.status == "WARN"
     assert check_result.severity == "WARNING"
-    assert check_result.check_id == "ssh.checkpoint.ssh.no_error_marker"
+    assert check_result.check_id == "ssh.evidence_checkpoint.ssh.no_error_marker"
     assert check_result.details["priority"] == "P2"
 
 
@@ -426,10 +425,25 @@ Interface                   PHY   Protocol Description
 
     assert parse_failed == []
 
-    checkpoint_handlers = set(CheckpointEngine._HANDLERS)
+    condition_handlers = {
+        "text_contains",
+        "text_not_contains",
+        "regex_match",
+        "regex_not_match",
+    }
     for protocol in ("SSH", "TELNET"):
         exposed = set(CAPABILITY_REGISTRY["protocols"][protocol]["evidence_validation"]["check_types"])
-        assert exposed <= checkpoint_handlers
+        assert exposed <= condition_handlers
+        specs = parse_checkpoint_specs([
+            {"type": check_type, "target": "System health ready"}
+            for check_type in sorted(exposed)
+        ])
+        result = evaluate_evidence_checkpoints(
+            specs,
+            ArtifactContext(txt_content="System health ready"),
+            page_text="System health ready",
+        )
+        assert not [r for r in result.results if "unknown type" in r.details]
 
 
 def test_load_task_defs_merges_rulepack_from_config_dir(tmp_path):

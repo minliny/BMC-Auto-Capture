@@ -9,52 +9,8 @@
       "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/system/storage\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \".el-tree-node__expand-icon:not(.is-leaf)\", \"_note\": \"展开存储树\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"click\", \"selector\": \"#LogicalDrive0\", \"_note\": \"点击Logical Drive 0\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"screenshot\", \"value\": \"logical_drive_0\"}, {\"action\": \"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
-      "capture_ready_conditions": [
-        {
-          "type": "url_contains",
-          "target": "/navigate/system/storage"
-        },
-        {
-          "type": "selector_visible",
-          "selector": "#LogicalDrive0"
-        },
-        {
-          "type": "text_nonempty",
-          "selector": "#LogicalDrive0"
-        },
-        {
-          "type": "text_contains_any",
-          "values": [
-            "Logical Drive 0",
-            "RAID",
-            "Status",
-            "状态"
-          ]
-        },
-        {
-          "type": "region_stable",
-          "selector": "body",
-          "stable_for_ms": 1000,
-          "sample_interval_ms": 250,
-          "timeout_ms": 3000
-        }
-      ],
-      "evidence_checkpoints": [
-        {
-          "name": "logical_drive_info",
-          "type": "text_contains_any",
-          "values": [
-            "Logical Drive 0",
-            "RAID",
-            "Status",
-            "状态"
-          ],
-          "severity": "WARNING"
-        }
-      ],
       "task_id": "task.001",
       "task_name": "RAID配置测试"
     },
@@ -64,7 +20,6 @@
       "command_or_url": "/UI/Static/#/navigate/manager/network",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
       "task_id": "task.002",
@@ -76,7 +31,6 @@
       "command_or_url": "/UI/Static/#/navigate/system/power/control",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
       "task_id": "task.003",
@@ -88,7 +42,6 @@
       "command_or_url": "/UI/Static/#/navigate/system/info/product",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
       "task_id": "task.004",
@@ -100,7 +53,6 @@
       "command_or_url": "/UI/Static/#/navigate/system/info/net",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
       "task_id": "task.005",
@@ -112,7 +64,6 @@
       "command_or_url": "/UI/Static/#/navigate/system/info/sensor",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
       "task_id": "task.006",
@@ -124,7 +75,6 @@
       "command_or_url": "/UI/Static/#/navigate/system/power/converter",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
       "task_id": "task.007",
@@ -136,7 +86,6 @@
       "command_or_url": "/UI/Static/#/navigate/system/fans/fans-info",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
       "task_id": "task.008",
@@ -148,7 +97,6 @@
       "command_or_url": "/UI/Static/#/navigate/system/fans/fans-info",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
       "task_id": "task.009",
@@ -160,49 +108,8 @@
       "command_or_url": "/UI/Static/#/navigate/home",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [
-        {
-          "rule_name": "bmc_page_no_alarm",
-          "rule_type": "advanced",
-          "enabled": false,
-          "actions": [
-            {
-              "action_type": "assert_text",
-              "value": "正常",
-              "_note": "BMC 页面不应包含告警关键字。需在真实设备上确认 BMC 正常状态下的文本特征。"
-            }
-          ],
-          "_note": "通用 BMC 页面无告警检查。需在真实设备验证后启用。"
-        }
-      ],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
-      "capture_ready_conditions": [
-        {
-          "type": "url_contains",
-          "target": "/navigate/home"
-        },
-        {
-          "type": "text_contains_any",
-          "values": [
-            "首页",
-            "Home",
-            "系统",
-            "System",
-            "设备",
-            "Device",
-            "告警",
-            "Alarm"
-          ]
-        },
-        {
-          "type": "region_stable",
-          "selector": "body",
-          "stable_for_ms": 1000,
-          "sample_interval_ms": 250,
-          "timeout_ms": 3000
-        }
-      ],
       "task_id": "task.010",
       "task_name": "A3 BMC首页截图"
     },
@@ -212,7 +119,6 @@
       "command_or_url": "uname -a",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "task_id": "task.011",
@@ -224,7 +130,6 @@
       "command_or_url": "npu-smi info\n/usr/local/Ascend/driver/tools/upgrade-tool --device_index -1 --component -1 --version",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "task_id": "task.012",
@@ -236,7 +141,6 @@
       "command_or_url": "system-view\ninterface MEth0/0/0\ndisplay this",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "task_id": "task.013",
@@ -248,7 +152,6 @@
       "command_or_url": "display device elabel",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "task_id": "task.014",
@@ -260,7 +163,6 @@
       "command_or_url": "display device card\ndisplay version",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "task_id": "task.015",
@@ -272,45 +174,10 @@
       "command_or_url": "screen-length 0 temporary\ndisplay interface brief\ndisplay interface 200GHL1/2/48",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
-      "capture_ready_conditions": [],
-      "evidence_checkpoints": [
-        {
-          "name": "no_interface_down",
-          "type": "not_contains_any",
-          "values": [
-            "down",
-            "DOWN",
-            "error-down"
-          ],
-          "severity": "ERROR"
-        },
-        {
-          "name": "has_up_port",
-          "type": "text_contains",
-          "target": "up",
-          "severity": "WARNING"
-        }
-      ],
       "task_id": "task.016",
-      "task_name": "计算节点光口状态查询测试",
-      "result_rules": [
-        {
-          "rule_name": "check_no_interface_down",
-          "rule_type": "advanced",
-          "enabled": false,
-          "actions": [
-            {
-              "action_type": "assert_text",
-              "value": "up",
-              "_note": "接口状态应包含 up，如果接口 down 则规则 FAIL"
-            }
-          ],
-          "_note": "需在真实设备验证后启用。预期端口清单待业务方确认。"
-        }
-      ]
+      "task_name": "计算节点光口状态查询测试"
     },
     "task.017": {
       "task_type": "SSH",
@@ -326,12 +193,6 @@
         "L2": 180
       },
       "retry_count": 0,
-      "stderr_fail_patterns": [
-        "Get invalid major cmd",
-        "command not found",
-        "Permission denied"
-      ],
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "per_group_no_split": {
@@ -346,7 +207,6 @@
       "command_or_url": "display device temperature",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "task_id": "task.018",
@@ -358,30 +218,10 @@
       "command_or_url": "display interface brief | include up",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "task_id": "task.019",
-      "task_name": "计算节点L1交换网络端口查询测试",
-      "result_rules": [
-        {
-          "name": "端口状态检查",
-          "desc": "L1交换机接口状态字段应正常，不因描述文本中的 down 误判",
-          "checks": [
-            {
-              "type": "interface_status",
-              "fields": [
-                "physical",
-                "protocol"
-              ],
-              "forbidden": [
-                "down"
-              ],
-              "desc": "真实接口记录的 physical/protocol 状态不得为 down"
-            }
-          ]
-        }
-      ]
+      "task_name": "计算节点L1交换网络端口查询测试"
     },
     "task.020": {
       "task_type": "SSH",
@@ -389,26 +229,10 @@
       "command_or_url": "display interface brief",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}",
       "task_id": "task.020",
-      "task_name": "模块拔插告警上报测试",
-      "result_rules": [
-        {
-          "rule_name": "check_no_error_down",
-          "rule_type": "advanced",
-          "enabled": false,
-          "actions": [
-            {
-              "action_type": "assert_text",
-              "value": "up",
-              "_note": "接口应处于 up 状态，如存在 down/error-down 则规则 FAIL"
-            }
-          ],
-          "_note": "需在真实设备验证后启用。拔插场景和目标端口未定义前不启用。"
-        }
-      ]
+      "task_name": "模块拔插告警上报测试"
     },
     "task.021": {
       "task_type": "BMC",
@@ -416,7 +240,6 @@
       "command_or_url": "/UI/Static/#/navigate/system/info/memory",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_page_capture wrapper, PAGE_MAP 映射缺失)",
       "_migrated_to": "BMC_URL — 旧版本仅打开 memory 页面截图，无点击交互",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
@@ -430,7 +253,6 @@
       "command_or_url": "/UI/Static/#/navigate/system/info/processor",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_page_capture wrapper, PAGE_MAP 映射缺失)",
       "_migrated_to": "BMC_URL — 旧版本仅打开 processor 页面截图，无点击交互",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
@@ -444,7 +266,6 @@
       "command_or_url": "/UI/Static/#/navigate/manager/network",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_2_ibmc_ip_network_test)",
       "_migrated_to": "BMC_URL — 旧版本源码仅打开 network 页面截图，无实际 IP 设置动作",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
@@ -459,7 +280,6 @@
       "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/system/info/processor\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"click\",\"selector\":\"#tab-0\",\"_note\":\"CPU tab\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"click\",\"selector\":\"xpath=(//i[contains(@class,'el-icon')][.//*[local-name()='path' and starts-with(@d,'M340.864')]])[1]\",\"_note\":\"展开箭头\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\"},{\"action\":\"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_processor_cpu_test)",
       "_migrated_to": "BMC_ACTIONS — goto processor → click CPU tab → click expand → screenshot",
       "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。",
@@ -475,7 +295,6 @@
       "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/system/info/processor\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \"#tab-1\", \"_note\": \"NPU tab\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"screenshot\"}, {\"action\": \"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_processor_npu_test)",
       "_migrated_to": "BMC_ACTIONS — goto processor → click NPU tab → click expand → screenshot",
       "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。",
@@ -491,7 +310,6 @@
       "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/system/info/memory\"},{\"action\":\"wait\",\"value\":\"3\"},{\"action\":\"click\",\"selector\":\".el-table__expand-icon:not(.el-table__expand-icon--expanded)\",\"_note\":\"展开表格行\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\"},{\"action\":\"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_memory_info_test)",
       "_migrated_to": "BMC_ACTIONS — goto memory → click table expand icon → screenshot",
       "_note": "未在真实设备验证，默认禁用。使用 el-table 展开图标 selector。",
@@ -507,47 +325,11 @@
       "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/maintance/alarm\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \"span:has-text('系统事件')\", \"_note\": \"系统事件 tab\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"screenshot\", \"value\": \"system_event\"}, {\"action\": \"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_2_rm211_power_redundancy_system_event)",
       "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
       "_note": "未在真实设备验证，默认禁用。旧版同一脚本同时用于电源冗余和硬盘冗余-系统日志。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
-      "capture_ready_conditions": [
-        {
-          "type": "url_contains",
-          "target": "/navigate/maintance/alarm"
-        },
-        {
-          "type": "text_contains",
-          "target": "系统事件"
-        },
-        {
-          "type": "selector_visible",
-          "selector": "span:has-text('系统事件')"
-        },
-        {
-          "type": "region_stable",
-          "selector": "body",
-          "stable_for_ms": 1000,
-          "sample_interval_ms": 250,
-          "timeout_ms": 3000
-        }
-      ],
-      "evidence_checkpoints": [
-        {
-          "name": "alarm_page_content",
-          "type": "text_contains_any",
-          "values": [
-            "事件",
-            "时间",
-            "级别",
-            "描述",
-            "系统事件"
-          ],
-          "severity": "WARNING"
-        }
-      ],
       "task_id": "task.027",
       "task_name": "电源冗余测试"
     },
@@ -558,47 +340,11 @@
       "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/maintance/alarm\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \"span:has-text('系统事件')\", \"_note\": \"系统事件 tab\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"screenshot\", \"value\": \"system_event\"}, {\"action\": \"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_2_rm211_power_redundancy_system_event — 同脚本)",
       "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
       "_note": "未在真实设备验证，默认禁用。与电源冗余测试使用相同脚本。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
-      "capture_ready_conditions": [
-        {
-          "type": "url_contains",
-          "target": "/navigate/maintance/alarm"
-        },
-        {
-          "type": "text_contains",
-          "target": "系统事件"
-        },
-        {
-          "type": "selector_visible",
-          "selector": "span:has-text('系统事件')"
-        },
-        {
-          "type": "region_stable",
-          "selector": "body",
-          "stable_for_ms": 1000,
-          "sample_interval_ms": 250,
-          "timeout_ms": 3000
-        }
-      ],
-      "evidence_checkpoints": [
-        {
-          "name": "alarm_page_content",
-          "type": "text_contains_any",
-          "values": [
-            "事件",
-            "时间",
-            "级别",
-            "描述",
-            "系统事件"
-          ],
-          "severity": "WARNING"
-        }
-      ],
       "task_id": "task.028",
       "task_name": "硬盘冗余测试-系统日志"
     },
@@ -609,55 +355,11 @@
       "actions_json": "[{\"action\": \"goto\", \"value\": \"/UI/Static/#/navigate/system/storage\"}, {\"action\": \"wait\", \"value\": \"3\"}, {\"action\": \"click\", \"selector\": \".el-tree-node__expand-icon:not(.is-leaf)\", \"_note\": \"展开存储树（如已展开则跳过，selector 只匹配可展开节点）\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"click\", \"selector\": \"#LogicalDrive0\", \"_note\": \"点击 Logical Drive 0\"}, {\"action\": \"wait\", \"value\": \"2\"}, {\"action\": \"screenshot\", \"value\": \"logical_drive_0\"}, {\"action\": \"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_4_a3_disk_redundancy_logical_drive)",
       "_migrated_to": "BMC_ACTIONS — goto storage → expand tree → click Logical Drive 0 → screenshot",
       "_note": "未在真实设备验证，默认禁用。只读查看，不涉及 RAID 配置变更。UI 控件可能因 BMC 版本不同而异。",
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带外管理IP}-{设备名称}",
-      "capture_ready_conditions": [
-        {
-          "type": "url_contains",
-          "target": "/navigate/system/storage"
-        },
-        {
-          "type": "selector_visible",
-          "selector": "#LogicalDrive0"
-        },
-        {
-          "type": "text_nonempty",
-          "selector": "#LogicalDrive0"
-        },
-        {
-          "type": "text_contains_any",
-          "values": [
-            "Logical Drive 0",
-            "RAID",
-            "Status",
-            "状态"
-          ]
-        },
-        {
-          "type": "region_stable",
-          "selector": "body",
-          "stable_for_ms": 1000,
-          "sample_interval_ms": 250,
-          "timeout_ms": 3000
-        }
-      ],
-      "evidence_checkpoints": [
-        {
-          "name": "logical_drive_info",
-          "type": "text_contains_any",
-          "values": [
-            "Logical Drive 0",
-            "RAID",
-            "Status",
-            "状态"
-          ],
-          "severity": "WARNING"
-        }
-      ],
       "task_id": "task.029",
       "task_name": "硬盘冗余测试"
     }

@@ -23,6 +23,7 @@ from .base import AbstractExecutor
 from ..checks import (
     CheckStage,
     check_result_from_artifact_status,
+    check_result_from_condition,
     check_result_from_checkpoint,
     check_result_from_execution_status,
 )
@@ -37,6 +38,11 @@ from ..rules.result_rules import (
     ResultRuleContext,
     evaluate_task_result_rules,
     has_enabled_result_rules,
+)
+from ..rules.condition_evaluator import (
+    ArtifactContext,
+    evaluate_evidence_checkpoints,
+    parse_checkpoint_specs,
 )
 from ..utils.template import resolve_template, check_unreplaced_vars
 from ..utils.path_safety import safe_filename, validate_template_for_path
@@ -488,6 +494,9 @@ class SSHExecutor(AbstractExecutor):
                     client, device, commands, cmd_spec, strategy, options,
                 )
             )
+            stdout_outputs = dict(getattr(self, "_last_stdout_outputs", {}) or {})
+            stderr_outputs = dict(getattr(self, "_last_stderr_outputs", {}) or {})
+            exit_codes = tuple(getattr(self, "_last_exit_codes", ()) or ())
 
             result.step_results = step_results
 
@@ -556,7 +565,9 @@ class SSHExecutor(AbstractExecutor):
             # P0-6: evaluate SSH result rules.
             rule_eval = self._evaluate_ssh_rule_results(
                 task, combined_output="".join(all_output), cmd_outputs=cmd_outputs,
-                strategy=strategy,
+                strategy=strategy, command_spec=cmd_spec,
+                stdout_outputs=stdout_outputs, stderr_outputs=stderr_outputs,
+                exit_codes=exit_codes,
             )
             rule_failure = rule_eval.failure_summary(include_warnings=False)
             if rule_eval.has_blocking_failures:
@@ -670,8 +681,16 @@ class SSHExecutor(AbstractExecutor):
                     details=str(e),
                 ))
 
-            # Evaluate checkpoints
-            if cmd_spec.get("checkpoints"):
+            # Evaluate evidence checkpoints. The canonical field is
+            # evidence_checkpoints; checkpoints is legacy read compatibility.
+            if self._task_has_evidence_checkpoints(task, cmd_spec):
+                import asyncio
+                asyncio.get_event_loop().run_until_complete(
+                    self._evaluate_ssh_evidence_checkpoints(
+                        task, cmd_spec, cmd_outputs, result, txt_path, ss_path,
+                    )
+                )
+            elif cmd_spec.get("checkpoints"):
                 import asyncio
                 asyncio.get_event_loop().run_until_complete(
                     self._evaluate_ssh_checkpoints(cmd_spec["checkpoints"], cmd_outputs, variables,
@@ -791,6 +810,9 @@ class SSHExecutor(AbstractExecutor):
     # Command execution — router
     # ------------------------------------------------------------------
     def _execute_commands(self, client, device, commands, cmd_spec, strategy, options):
+        self._last_stdout_outputs = {}
+        self._last_stderr_outputs = {}
+        self._last_exit_codes = []
         if strategy == "interactive_shell":
             return self._execute_interactive_shell(client, device, commands, cmd_spec, options)
         if strategy == "terminal_session":
@@ -855,6 +877,9 @@ class SSHExecutor(AbstractExecutor):
     def _execute_exec_command(self, client, device, commands, cmd_spec, options):
         step_results: list[StepResult] = []
         cmd_outputs: dict[str, str] = {}
+        stdout_outputs: dict[str, str] = {}
+        stderr_outputs: dict[str, str] = {}
+        exit_codes: list[int] = []
         variables: dict[str, str] = {}
         all_output: list[str] = []
         has_failure = False
@@ -933,6 +958,10 @@ class SSHExecutor(AbstractExecutor):
                     combined = combined.rstrip("\n") + f"\n[exit_code:{exit_code}]\n"
 
                 cmd_outputs[cmd_name] = combined
+                stdout_outputs[cmd_name] = out
+                stderr_outputs[cmd_name] = err
+                if exit_code_available:
+                    exit_codes.append(exit_code)
                 all_output.append(combined)
 
                 if cmd_spec.get("extractors"):
@@ -940,19 +969,11 @@ class SSHExecutor(AbstractExecutor):
                         if ex.get("from") == f"cmd:{cmd_name}" or not ex.get("from"):
                             self._run_extractor(ex, combined, variables)
 
-                # P0-6: determine step status — exit code / timeout / stderr all matter
-                step_has_failure = False
-                stderr_failure = self._stderr_failure_reason(
-                    err, cmd_spec, exit_code if exit_code_available else None,
-                )
-                nonzero_failure = self._exit_code_is_failure(
-                    exit_code if exit_code_available else None,
-                    cmd_spec,
-                )
+                # Transport/runtime failures stay at execution layer. stderr
+                # and exit-code assertions are evaluated by result_rules.
                 if cmd_timed_out:
                     has_timeout = True
                     has_failure = True
-                    step_has_failure = True
                     failure_reasons.append(f"命令超时: {cmd[:50]}... ({command_timeout}s)")
                     step_results.append(StepResult(
                         step_index=step_index, step_name=step_name,
@@ -965,29 +986,11 @@ class SSHExecutor(AbstractExecutor):
                             "partial_output": combined,
                         }, ensure_ascii=False),
                     ))
-                elif nonzero_failure:
-                    step_has_failure = True
-                    has_failure = True
-                    reason = f"命令非零退出码: exit_code={exit_code} cmd={cmd[:50]}"
-                    if err:
-                        reason += f" stderr={err[:120]}"
-                    failure_reasons.append(reason)
-                    step_results.append(StepResult(
-                        step_index=step_index, step_name=step_name,
-                        status="FAILED", details=reason,
-                    ))
-                elif stderr_failure:
-                    has_failure = True
-                    failure_reasons.append(stderr_failure)
-                    step_results.append(StepResult(
-                        step_index=step_index, step_name=step_name,
-                        status="FAILED", details=stderr_failure,
-                    ))
                 else:
                     step_results.append(StepResult(
                         step_index=step_index, step_name=step_name,
                         status="SUCCESS",
-                        details=f"output {len(combined)} chars, exit_code={exit_code}",
+                        details=f"output {len(combined)} chars, stderr {len(err)} chars, exit_code={exit_code}",
                     ))
 
             except TimeoutError as e:
@@ -1008,12 +1011,18 @@ class SSHExecutor(AbstractExecutor):
 
             step_index += 1
 
+        self._last_stdout_outputs = stdout_outputs
+        self._last_stderr_outputs = stderr_outputs
+        self._last_exit_codes = exit_codes
         return all_output, has_failure, has_timeout, failure_reasons, cmd_outputs, step_results
 
     def _execute_terminal_session(self, client, device, commands, cmd_spec, options):
         """Linux PTY session used for terminal-faithful A3 evidence."""
         step_results: list[StepResult] = []
         cmd_outputs: dict[str, str] = {}
+        stdout_outputs: dict[str, str] = {}
+        stderr_outputs: dict[str, str] = {}
+        exit_codes: list[int] = []
         all_output: list[str] = []
         has_failure = False
         has_timeout = False
@@ -1048,6 +1057,10 @@ class SSHExecutor(AbstractExecutor):
             if cmd not in output:
                 output = f"{cmd}\n{output}"
             cmd_outputs[cmd_name] = output
+            stdout_outputs[cmd_name] = output
+            stderr_outputs[cmd_name] = ""
+            if exit_code is not None:
+                exit_codes.append(exit_code)
             all_output.append(output)
 
             if meta["hard_timeout_hit"]:
@@ -1059,18 +1072,6 @@ class SSHExecutor(AbstractExecutor):
                 reason = f"命令超时: {cmd[:50]}... ({options.command_timeout}s){marker_info}{trunc_info}"
                 failure_reasons.append(reason)
                 status = "TIMEOUT"
-            elif self._matches_any_pattern(
-                output, list(cmd_spec.get("stderr_fail_patterns", [])),
-            ):
-                has_failure = True
-                reason = f"terminal output matched fail pattern: {output[:160]}"
-                failure_reasons.append(reason)
-                status = "FAILED"
-            elif exit_code not in (None, 0):
-                has_failure = True
-                reason = f"命令退出码非0: {exit_code} ({cmd[:50]}...)"
-                failure_reasons.append(reason)
-                status = "FAILED"
             else:
                 status = "SUCCESS"
             step_results.append(StepResult(
@@ -1084,6 +1085,9 @@ class SSHExecutor(AbstractExecutor):
             channel.close()
         except Exception:
             pass
+        self._last_stdout_outputs = stdout_outputs
+        self._last_stderr_outputs = stderr_outputs
+        self._last_exit_codes = exit_codes
         return all_output, has_failure, has_timeout, failure_reasons, cmd_outputs, step_results
 
     def _make_terminal_sentinel(self, step_index: int) -> str:
@@ -1198,6 +1202,8 @@ class SSHExecutor(AbstractExecutor):
     def _execute_interactive_shell(self, client, device, commands, cmd_spec, options):
         step_results: list[StepResult] = []
         cmd_outputs: dict[str, str] = {}
+        stdout_outputs: dict[str, str] = {}
+        stderr_outputs: dict[str, str] = {}
         variables: dict[str, str] = {}
         all_output: list[str] = []
         has_failure = False
@@ -1261,6 +1267,8 @@ class SSHExecutor(AbstractExecutor):
                     idle_timeout=options.idle_timeout,
                 )
                 cmd_outputs[cmd_name] = output
+                stdout_outputs[cmd_name] = output
+                stderr_outputs[cmd_name] = ""
                 all_output.append(output)
 
                 # Check output classification for quality issues
@@ -1382,6 +1390,9 @@ class SSHExecutor(AbstractExecutor):
         except Exception:
             pass
 
+        self._last_stdout_outputs = stdout_outputs
+        self._last_stderr_outputs = stderr_outputs
+        self._last_exit_codes = []
         return all_output, has_failure, has_timeout, failure_reasons, cmd_outputs, step_results
 
     # ------------------------------------------------------------------
@@ -1822,6 +1833,7 @@ class SSHExecutor(AbstractExecutor):
                     "commands": commands,
                     "command_roles": command_roles,
                     "extractors": spec.get("extractors", []),
+                    "evidence_checkpoints": spec.get("evidence_checkpoints", []),
                     "checkpoints": spec.get("checkpoints", []),
                     "stderr_allow_patterns": spec.get("stderr_allow_patterns", []),
                     "stderr_ignore_patterns": spec.get("stderr_ignore_patterns", []),
@@ -1841,6 +1853,7 @@ class SSHExecutor(AbstractExecutor):
                 for name, cmd in commands
             },
             "extractors": [],
+            "evidence_checkpoints": task_def.get("evidence_checkpoints", []),
             "checkpoints": [],
             "stderr_allow_patterns": task_def.get("stderr_allow_patterns", []),
             "stderr_ignore_patterns": task_def.get("stderr_ignore_patterns", []),
@@ -1888,16 +1901,26 @@ class SSHExecutor(AbstractExecutor):
         combined_output: str,
         cmd_outputs: dict[str, str],
         strategy: str,
+        command_spec: dict | None = None,
+        stdout_outputs: dict[str, str] | None = None,
+        stderr_outputs: dict[str, str] | None = None,
+        exit_codes: tuple[int, ...] | list[int] = (),
     ):
         return evaluate_task_result_rules(
             task,
             ResultRuleContext(
                 combined_output=combined_output,
+                stdout="\n".join((stdout_outputs or {}).values()),
+                stderr="\n".join((stderr_outputs or {}).values()),
+                exit_codes=tuple(exit_codes or ()),
                 cmd_outputs=cmd_outputs,
+                stdout_outputs=dict(stdout_outputs or {}),
+                stderr_outputs=dict(stderr_outputs or {}),
                 strategy=strategy,
                 resolved_commands=getattr(task, "_resolved_commands", None) or [],
                 command_or_url=getattr(task, "command_or_url", "") or "",
             ),
+            command_spec=command_spec,
         )
 
     def _evaluate_ssh_rules(
@@ -1918,6 +1941,56 @@ class SSHExecutor(AbstractExecutor):
     @staticmethod
     def _task_has_ssh_rules(task) -> bool:
         return has_enabled_result_rules(task)
+
+    @staticmethod
+    def _task_has_evidence_checkpoints(task, cmd_spec: dict | None = None) -> bool:
+        tdef = getattr(task, "_task_def", None) or {}
+        if tdef.get("evidence_checkpoints"):
+            return True
+        return bool((cmd_spec or {}).get("evidence_checkpoints"))
+
+    async def _evaluate_ssh_evidence_checkpoints(
+        self, task, cmd_spec, cmd_outputs, result, txt_path, ss_path,
+    ) -> None:
+        tdef = getattr(task, "_task_def", None) or {}
+        raw = tdef.get("evidence_checkpoints") or (cmd_spec or {}).get("evidence_checkpoints")
+        if not raw:
+            return
+        transcript = "\n\n".join(
+            f"[{name}]\n{out}" for name, out in cmd_outputs.items()
+        )
+        artifacts = ArtifactContext(
+            screenshot_path=ss_path,
+            txt_path=txt_path,
+            txt_content=transcript,
+        )
+        specs = parse_checkpoint_specs(raw)
+        eval_result = evaluate_evidence_checkpoints(specs, artifacts, page_text=transcript)
+        result.checkpoint_status = self._checkpoint_rollup_from_condition(eval_result)
+        for cr in eval_result.results:
+            result.add_check_result(check_result_from_condition(
+                cr,
+                stage=CheckStage.RESULT,
+                check_id_prefix="ssh.evidence_checkpoint",
+                source="evidence_checkpoints",
+            ))
+            result.step_results.append(StepResult(
+                step_index=len(result.step_results),
+                step_name=f"evidence_checkpoint_{cr.condition_type}",
+                status="SUCCESS" if cr.status == "PASS" else "WARN" if cr.status == "WARN" else "FAILED" if cr.status == "FAIL" else "SKIP",
+                details=f"{cr.details} target={cr.target}" if cr.details else f"target={cr.target}",
+                step_type="checkpoint",
+            ))
+
+    @staticmethod
+    def _checkpoint_rollup_from_condition(eval_result) -> str:
+        mapping = {
+            "FAIL": "CHECK_FAIL",
+            "WARN": "CHECK_WARN",
+            "PASS": "CHECK_PASS",
+            "SKIP": "CHECK_SKIP",
+        }
+        return mapping.get(eval_result.rollup(), "CHECK_SKIP")
 
     async def _evaluate_ssh_checkpoints(
         self, checkpoints, cmd_outputs, variables, result, txt_path, ss_path,

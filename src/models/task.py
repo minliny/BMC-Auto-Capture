@@ -1,5 +1,8 @@
 """
-Task + Rule + RuleAction models.
+Task + legacy Rule + RuleAction models.
+
+Rule/RuleAction are retained for `rules` / `rules_json` compatibility. New
+task-specific audit rules should be authored as RulePack JSON.
 """
 
 

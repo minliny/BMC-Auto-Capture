@@ -1,0 +1,47 @@
+{
+  "schema_version": "rulepack.v1",
+  "rule_pack_id": "rulepack.task.019.v1",
+  "task_id": "task.019",
+  "protocol": "SSH",
+  "execution_mode": "SSH_CMD",
+  "audit_metadata": {
+    "created_by": "bmc-auto-capture-ssh-output-rules",
+    "created_from_artifacts": [],
+    "artifact_hashes": {},
+    "review_status": "generated"
+  },
+  "applies_to": {
+    "task_ids": [
+      "task.019"
+    ],
+    "task_type": "SSH",
+    "execution_modes": [
+      "SSH_CMD"
+    ]
+  },
+  "rule_classes": {
+    "stage_gate": [],
+    "action_completion": [],
+    "content_integrity": [
+      {
+        "rule_id": "ssh.interface_status_normal",
+        "priority": "P0",
+        "effect_on_final": "fail",
+        "checks": [
+          {
+            "type": "interface_status",
+            "fields": [
+              "physical",
+              "protocol"
+            ],
+            "forbidden": [
+              "down"
+            ],
+            "desc": "真实接口记录的 physical/protocol 状态不得为 down"
+          }
+        ]
+      }
+    ],
+    "evidence_validation": []
+  }
+}

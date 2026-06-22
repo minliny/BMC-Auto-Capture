@@ -235,3 +235,64 @@ display diagnostic
     assert evaluation.rule_status == "RULE_FAILED"
     assert "exit codes [2] not in [0]" in evaluation.failure_summary()
     assert "pager prompt remains" in evaluation.failure_summary()
+
+
+def test_result_rules_support_source_aware_stderr_and_exit_codes():
+    rules = [{
+        "rule_id": "execution_result",
+        "checks": [
+            {"type": "forbidden_patterns", "source": "stderr", "patterns": [r"fatal|permission denied"], "match": "regex"},
+            {"type": "allowed_patterns", "source": "stderr", "patterns": [r"^WARNING:"], "ignore_patterns": []},
+            {"type": "exit_code_in", "source": "exit_code", "allowed": [0]},
+        ],
+    }]
+    ctx = ResultRuleContext(
+        combined_output="stdout body\n[exit_code:0]\n",
+        stdout="stdout body",
+        stderr="WARNING: harmless\n",
+        exit_codes=(0,),
+    )
+
+    evaluation = evaluate_result_rules(rules, ctx)
+
+    assert evaluation.rule_status == "RULE_PASSED"
+
+
+def test_result_rules_source_aware_stderr_failures_are_structured():
+    rules = [{
+        "rule_id": "execution_result",
+        "checks": [
+            {"type": "forbidden_patterns", "source": "stderr", "patterns": [r"fatal|permission denied"], "match": "regex"},
+            {"type": "allowed_patterns", "source": "stderr", "patterns": [r"^WARNING:"], "ignore_patterns": []},
+            {"type": "exit_code_in", "source": "exit_code", "allowed": [0]},
+        ],
+    }]
+    ctx = ResultRuleContext(
+        combined_output="stdout body\n[exit_code:2]\n",
+        stdout="stdout body",
+        stderr="fatal: bad\nunexpected error\n",
+        exit_codes=(2,),
+    )
+
+    evaluation = evaluate_result_rules(rules, ctx)
+    summary = evaluation.failure_summary()
+
+    assert evaluation.rule_status == "RULE_FAILED"
+    assert "forbidden" in summary
+    assert "not allowlisted" in summary
+    assert "exit codes [2] not in [0]" in summary
+
+
+def test_result_rules_migrate_legacy_ssh_execution_fields():
+    task = SimpleNamespace(_task_def={
+        "stderr_fail_patterns": [r"fatal|permission denied"],
+        "stderr_allow_patterns": [r"^WARNING:"],
+        "allow_exit_codes": [2],
+    })
+    ctx = ResultRuleContext(stderr="WARNING: harmless\n", exit_codes=(2,))
+
+    rules = extract_result_rules(task, context=ctx)
+    evaluation = evaluate_task_result_rules(task, ctx)
+
+    assert rules[0]["rule_id"] == "ssh.execution_result"
+    assert evaluation.rule_status == "RULE_PASSED"

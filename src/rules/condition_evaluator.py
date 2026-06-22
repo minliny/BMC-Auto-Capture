@@ -556,6 +556,18 @@ def _eval_one_checkpoint(
                                    match.group(0)[:60] if match else "",
                                    f"[{name}]" if name else "")
 
+        elif ct == "regex_not_match":
+            content = page_text or txt_content
+            if not content:
+                return ConditionResult(ct, "SKIP", target, "", f"[{name}] no text content")
+            match = re.search(target, content)
+            ok = match is None
+            status = "FAIL" if (not ok and severity == "ERROR") else \
+                     "WARN" if (not ok and severity == "WARNING") else "PASS"
+            return ConditionResult(ct, status, target,
+                                   match.group(0)[:60] if match else "",
+                                   f"[{name}]" if name else "")
+
         else:
             return ConditionResult(ct, "SKIP", target, "",
                                    f"[{name}] unknown type: {ct}")

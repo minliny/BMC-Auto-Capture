@@ -1,5 +1,8 @@
 """
-Rule Engine — evaluates basic and advanced rules against a RuleContext.
+Legacy Rule Engine — evaluates basic and advanced rules against a RuleContext.
+
+This engine is kept for `rules` / `rules_json` compatibility. New audit rule
+authoring must use RulePack JSON; skills should not generate this format.
 
 Basic rules define evidence collection (screenshot, save HTML, save TXT).
   Failure = execution failure.

@@ -48,6 +48,7 @@ BMC_EVIDENCE_CHECKS = frozenset({
     "text_not_contains",
     "not_contains_any",
     "regex_match",
+    "regex_not_match",
 })
 
 SSH_RESULT_CHECKS = frozenset({
@@ -65,6 +66,7 @@ SSH_RESULT_CHECKS = frozenset({
     "regex_any_of",
     "regex_not_exists",
     "regex_not_match",
+    "allowed_patterns",
     "min_output_lines",
     "min_body_lines",
     "command_echo_required",
@@ -153,7 +155,7 @@ CAPABILITY_REGISTRY: dict[str, Any] = {
                 "check_types": sorted(SSH_RESULT_CHECKS),
             },
             "evidence_validation": {
-                "runtime_binding": "checkpoints",
+                "runtime_binding": "evidence_checkpoints",
                 "check_types": sorted(SSH_EVIDENCE_CHECKS),
             },
         },
@@ -182,7 +184,7 @@ CAPABILITY_REGISTRY: dict[str, Any] = {
                 "check_types": sorted(SSH_RESULT_CHECKS),
             },
             "evidence_validation": {
-                "runtime_binding": "checkpoints",
+                "runtime_binding": "evidence_checkpoints",
                 "check_types": sorted(SSH_EVIDENCE_CHECKS),
             },
         },

@@ -1,4 +1,4 @@
-# BMC Auto-Capture v0.2.4 — 使用说明
+# BMC Auto-Capture v0.2.6 — 使用说明
 
 ## 一、简介
 

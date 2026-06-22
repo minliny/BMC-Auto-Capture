@@ -60,10 +60,10 @@ class TaskSnapshot:
     match_group: str = ""
     command_or_url: str = ""
     actions_json: str = ""
-    rules_json: str = ""
-    rules: list[TaskRule] = field(default_factory=list)
-    result_rules: list[dict[str, Any]] = field(default_factory=list)
-    ssh_rules: list[dict[str, Any]] = field(default_factory=list)
+    rules_json: str = ""  # legacy rules_json compatibility; do not generate for new rules
+    rules: list[TaskRule] = field(default_factory=list)  # legacy rules compatibility
+    result_rules: list[dict[str, Any]] = field(default_factory=list)  # runtime adapter output
+    ssh_rules: list[dict[str, Any]] = field(default_factory=list)  # legacy alias for result_rules
     task_def: dict[str, Any] = field(default_factory=dict)
     output_dir_template: str = "{device_name}/{task_name}"
     image_name_template: str = "{device_name}_{task_name}_{step}_{timestamp}"
@@ -86,8 +86,6 @@ class TaskSnapshot:
             "match_group": self.match_group,
             "command_or_url": self.command_or_url,
             "actions_json": self.actions_json,
-            "rules_json": self.rules_json,
-            "rules": [r.to_dict() for r in self.rules],
             "output_dir_template": self.output_dir_template,
             "image_name_template": self.image_name_template,
             "timeout_seconds": self.timeout_seconds,
@@ -95,6 +93,10 @@ class TaskSnapshot:
             "full_screenshot": self.full_screenshot,
             "screenshot_mode": self.screenshot_mode,
         }
+        if self.rules_json:
+            data["rules_json"] = self.rules_json
+        if self.rules:
+            data["rules"] = [r.to_dict() for r in self.rules]
         if self.ssh_profile:
             data["ssh_profile"] = self.ssh_profile
         if self.ssh_evidence_mode:

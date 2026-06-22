@@ -1,4 +1,4 @@
 interface:
   display_name: "BMC Page Rules"
-  short_description: "Generate BMC ready and evidence rules."
-  default_prompt: "Generate BMC page ready and evidence checkpoint JSON."
+  short_description: "Generate BMC RulePack JSON."
+  default_prompt: "Generate BMC page rulepack.v1 JSON from real page evidence."

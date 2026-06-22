@@ -1,0 +1,48 @@
+{
+  "schema_version": "rulepack.v1",
+  "rule_pack_id": "rulepack.task.017.v1",
+  "task_id": "task.017",
+  "protocol": "SSH",
+  "execution_mode": "SSH_CMD",
+  "audit_metadata": {
+    "created_by": "bmc-auto-capture-ssh-output-rules",
+    "created_from_artifacts": [],
+    "artifact_hashes": {},
+    "review_status": "generated"
+  },
+  "applies_to": {
+    "task_ids": [
+      "task.017"
+    ],
+    "task_type": "SSH",
+    "execution_modes": [
+      "SSH_CMD"
+    ]
+  },
+  "rule_classes": {
+    "stage_gate": [],
+    "action_completion": [],
+    "content_integrity": [
+      {
+        "rule_id": "ssh.command_error_markers",
+        "priority": "P0",
+        "result_layer": "availability",
+        "effect_on_final": "fail",
+        "checks": [
+          {
+            "type": "forbidden_patterns",
+            "source": "combined",
+            "patterns": [
+              "Get invalid major cmd",
+              "command not found",
+              "Permission denied"
+            ],
+            "match": "regex",
+            "desc": "命令输出不得包含执行错误"
+          }
+        ]
+      }
+    ],
+    "evidence_validation": []
+  }
+}

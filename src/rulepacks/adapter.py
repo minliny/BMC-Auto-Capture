@@ -45,7 +45,7 @@ def adapt_rule_pack_to_task_def(rule_pack: dict[str, Any], task_def: dict[str, A
 
         checkpoints = _checks_with_metadata(pack, "evidence_validation")
         if checkpoints:
-            merged["checkpoints"] = [
+            merged["evidence_checkpoints"] = [
                 _checkpoint_check_from_rule_check(c, index)
                 for index, c in enumerate(checkpoints)
             ]

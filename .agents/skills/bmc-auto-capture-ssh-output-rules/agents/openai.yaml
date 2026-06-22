@@ -1,4 +1,4 @@
 interface:
   display_name: "SSH Output Rules"
-  short_description: "Generate SSH transcript result rules."
-  default_prompt: "Generate SSH/TELNET result_rules JSON from transcript evidence."
+  short_description: "Generate SSH/TELNET RulePack JSON."
+  default_prompt: "Generate SSH/TELNET rulepack.v1 JSON from transcript evidence."

@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from src.executor.bmc_executor import BMCExecutor
+from src.loader.excel_reader import _load_task_defs
 from src.models.task import Task
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _tasks():
-    data = json.loads((PROJECT_ROOT / "tasks.json").read_text(encoding="utf-8"))
-    return data["tasks"]
+    return _load_task_defs(PROJECT_ROOT / "tasks.json")
 
 
 def _types(task):

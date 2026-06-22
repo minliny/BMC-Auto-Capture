@@ -65,7 +65,7 @@
 - SSH 任务必须有命令来源：`command_or_url` 或 `per_group_commands`。
 - BMC 任务必须有目标页面来源：`command_or_url` 或 `actions_json` 第一条 `goto`。
 - 含分号的 shell 复合命令必须配置 `no_split` 或 `per_group_no_split`。
-- 对关键 BMC 页面，建议加 `capture_ready_conditions`，不要只依赖“能截图”判断页面正确。
+- 对关键 BMC 页面，建议在 RulePack 里加 ready checks，不要只依赖“能截图”判断页面正确。
 
 ## 二、SSH 终端任务
 
@@ -98,7 +98,6 @@ SSH 当前按用户语义分两类：
       "command_or_url": "uname -a",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}"
     }
@@ -111,6 +110,7 @@ SSH 当前按用户语义分两类：
 - `ssh_evidence_mode: "terminal"` 是当前主链路，表示保留终端样式证据。
 - 终端模式会保留命令回显、prompt 和终端输出，更接近人工登录看到的样式。
 - 如果只想要结构化远程执行并依赖 exit code/stderr，可显式设置 `ssh_evidence_mode: "structured"`，执行端会走内部 `exec_command` 能力。普通证据采集不推荐使用。
+- 任务 JSON 只描述执行方式；审计规则写入 `config/rule_packs/{protocol}/{task_id}.json`。
 
 ### 2. VRP 任务
 
@@ -129,18 +129,6 @@ SSH 当前按用户语义分两类：
       "command_or_url": "screen-length 0 temporary\ndisplay interface brief",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [
-        {
-          "name": "接口输出检查",
-          "checks": [
-            {
-              "type": "text_exists",
-              "target": "up",
-              "desc": "输出包含 up 状态"
-            }
-          ]
-        }
-      ],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}"
     }
@@ -180,11 +168,6 @@ SSH 当前按用户语义分两类：
         "L2": 60
       },
       "retry_count": 0,
-      "stderr_fail_patterns": [
-        "command not found",
-        "Permission denied"
-      ],
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
       "image_name_template": "{带内管理IP}-{设备名称}"
     }
@@ -214,8 +197,7 @@ SSH 当前按用户语义分两类：
 | `timeout_seconds` | 推荐 | 单任务超时时间 |
 | `per_group_timeout_seconds` | 否 | 按设备分组覆盖超时，适合同一任务同时覆盖 Linux 长命令和 VRP 短命令 |
 | `retry_count` | 推荐 | 失败后重试次数 |
-| `rules` | 否 | 输出规则检查 |
-| `stderr_fail_patterns` | 否 | 输出命中后判失败的错误文本 |
+| `result_rules` | 兼容 | 执行端运行字段；新规则建议通过 RulePack 生成 |
 
 ## 三、BMC 浏览器页面任务
 
@@ -243,25 +225,8 @@ BMC 支持两种任务：
       "command_or_url": "/UI/Static/#/navigate/<PAGE>",
       "timeout_seconds": 60,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}",
-      "capture_ready_conditions": [
-        {
-          "type": "url_contains",
-          "target": "/navigate/<PAGE>"
-        }
-      ],
-      "evidence_checkpoints": [
-        {
-          "name": "page_content",
-          "type": "text_contains_any",
-          "values": [
-            "<EXPECTED_TEXT>"
-          ],
-          "severity": "WARNING"
-        }
-      ]
+      "image_name_template": "{带外管理IP}-{设备名称}"
     }
   }
 }
@@ -271,11 +236,10 @@ BMC 支持两种任务：
 
 - `command_or_url` 推荐写相对页面路径，执行端会自动拼到当前设备的 BMC 地址。
 - 如果写完整 URL，host 必须和当前设备 BMC 地址一致，否则会被拦截。
-- `capture_ready_conditions` 在最终截图前检查页面是否到位。
-- `evidence_checkpoints` 在截图/HTML 保存后检查证据内容。
-- 如果 BMC 任务没有显式配置 `capture_ready_conditions`，执行端会默认检查页面存活、未回到登录页，并从 `command_or_url` 或第一条 `goto` 派生目标路由 `url_contains`。
+- BMC 页面就绪和证据规则写入 `config/rule_packs/bmc/{task_id}.json`，不要在新任务里直接写运行字段。
+- 如果 BMC 任务没有 RulePack ready checks，执行端会默认检查页面存活、未回到登录页，并从 `command_or_url` 或第一条 `goto` 派生目标路由 `url_contains`。
 
-`capture_ready_conditions` 常用类型：
+RulePack 中 BMC ready checks 常用类型：
 
 | type | 用途 | 关键字段 |
 | --- | --- | --- |
@@ -307,25 +271,8 @@ BMC 支持两种任务：
       "actions_json": "[{\"action\":\"goto\",\"value\":\"/UI/Static/#/navigate/<PAGE>\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"click\",\"selector\":\"<CSS_SELECTOR>\"},{\"action\":\"wait\",\"value\":\"2\"},{\"action\":\"screenshot\",\"value\":\"after_click\"},{\"action\":\"save_html\"}]",
       "timeout_seconds": 120,
       "retry_count": 0,
-      "rules": [],
       "output_dir_template": "{任务序号} {任务名称}/{设备分类}",
-      "image_name_template": "{带外管理IP}-{设备名称}",
-      "capture_ready_conditions": [
-        {
-          "type": "selector_visible",
-          "selector": "<CSS_SELECTOR>"
-        }
-      ],
-      "evidence_checkpoints": [
-        {
-          "name": "action_result",
-          "type": "text_contains_any",
-          "values": [
-            "<EXPECTED_TEXT>"
-          ],
-          "severity": "WARNING"
-        }
-      ]
+      "image_name_template": "{带外管理IP}-{设备名称}"
     }
   }
 }
@@ -348,9 +295,9 @@ BMC 支持两种任务：
 | `actions_json` | `BMC_ACTIONS` 必填 | 页面动作 JSON 字符串，第一条应为 `goto` |
 | `timeout_seconds` | 推荐 | 单任务超时时间 |
 | `retry_count` | 推荐 | 失败后重试次数 |
-| `capture_ready_conditions` | 推荐 | 截图前页面就绪检查 |
-| `evidence_checkpoints` | 推荐 | 截图/HTML 保存后的证据检查 |
-| `rules` | 否 | 页面规则校验 |
+| `capture_ready_conditions` | 兼容 | RulePack adapter 输出；新任务不要手写 |
+| `evidence_checkpoints` | 兼容 | RulePack adapter 输出；新任务不要手写 |
+| `rules` | legacy | 旧页面规则校验；新规则不要生成 |
 | `output_dir_template` | 推荐 | 输出目录模板 |
 | `image_name_template` | 推荐 | 证据文件名模板 |
 | `artifact_profile` | 可选 | `full` 完整证据；`fast` 仅 PNG/HTML |
@@ -437,7 +384,7 @@ Windows release 包可运行：
 - `BMC_URL.command_or_url` 是否指向正确页面。
 - `BMC_ACTIONS.actions_json` 第一条是否为 `goto`。
 - 是否需要等待页面加载、展开树、切换 tab。
-- 是否配置了 `capture_ready_conditions`。
+- 是否为关键页面配置了 RulePack ready checks。
 
 ### 5. 任务状态无法可靠回写服务端
 

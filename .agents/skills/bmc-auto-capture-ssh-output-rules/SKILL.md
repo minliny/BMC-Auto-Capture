@@ -5,7 +5,7 @@ description: Generate, review, and patch BMC Auto-Capture SSH/TELNET RulePack JS
 
 # SSH/TELNET Output Rule Authoring
 
-Use this skill only for SSH/TELNET command-output rule authoring. Its output is a task-scoped `rulepack.v1`; the runtime adapter maps compatible rule classes into `result_rules` and SSH checkpoints.
+Use this skill only for SSH/TELNET command-output rule authoring. Its output is a task-scoped `rulepack.v1`; the runtime adapter maps compatible rule classes into `result_rules` and `evidence_checkpoints`.
 
 ## Inspect First
 
@@ -51,14 +51,15 @@ Use `evidence_validation` for saved transcript evidence:
 
 ## Supported Checks
 
-Generate only check types the executor supports:
+Generate only canonical check types for new RulePacks:
 
 - `contains`, `text_exists`, `required_pattern`, `required_patterns`
-- `not_contains`, `text_not_exists`, `forbidden_pattern`, `forbidden_patterns`
+- `not_contains`, `text_not_exists`
 - `regex_exists`, `regex_match`
 - `regex_all_of`
 - `regex_any_of`
 - `regex_not_exists`, `regex_not_match`
+- `allowed_patterns`
 - `min_output_lines`
 - `min_body_lines`
 - `command_echo_required`
@@ -66,9 +67,16 @@ Generate only check types the executor supports:
 - `sentinel_seen`
 - `exit_code_in`
 - `pager_exhausted`
-- `interface_status`
+- `interface_status`, `interface_status_not`
 
 If a task uses `display interface brief`, prefer `interface_status` over substring checks for `down`. The parser ignores command echo, prompts, headers, legends, and descriptions.
+
+For `evidence_validation`, generate only saved-transcript checkpoint checks:
+
+- `text_contains`
+- `text_not_contains`
+- `regex_match`
+- `regex_not_match`
 
 ## Rule Choice
 
@@ -89,6 +97,15 @@ Use `min_body_lines` instead of `min_output_lines` when prompt, command echo, lo
 Use `command_echo_required` and `prompt_required` only when the task expects terminal-style evidence. Do not use them for plain `exec_command` evidence unless echo/prompt are actually present.
 
 Use `sentinel_seen` for explicit completion markers in the transcript, `exit_code_in` only when an exit-code marker is present, and `pager_exhausted` to reject leftover pager prompts such as `---- More ----`.
+
+Use `source` when a check must target a specific stream:
+
+- `source: "combined"` for the full transcript
+- `source: "stdout"` for stdout-only checks when available
+- `source: "stderr"` for stderr-only checks when available
+- `source: "exit_code"` with `exit_code_in`
+
+Do not generate `stderr_fail_patterns`, `stderr_allow_patterns`, `stderr_ignore_patterns`, `allow_exit_codes`, `ssh_rules`, raw `result_rules`, `checkpoints`, `forbidden_pattern`, or `forbidden_patterns`. Express those assertions inside the RulePack checks instead.
 
 ## Security
 
@@ -165,18 +182,39 @@ When editing, write the RulePack to `config/rule_packs/ssh/{task_id}.json`.
 
 ```json
 {
-  "result_rules": [
-    {
-      "rule_id": "terminal_output_shape",
-      "enabled": true,
-      "checks": [
-        {"type": "command_echo_required"},
-        {"type": "prompt_required"},
-        {"type": "min_body_lines", "target": "2"},
-        {"type": "regex_any_of", "patterns": ["(?i)success", "(?i)normal", "up"]}
-      ]
-    }
-  ]
+  "schema_version": "rulepack.v1",
+  "rule_pack_id": "rulepack.task.xxx.v1",
+  "task_id": "task.xxx",
+  "protocol": "SSH",
+  "execution_mode": "SSH_CMD",
+  "rule_classes": {
+    "stage_gate": [],
+    "action_completion": [
+      {
+        "rule_id": "ssh.command_completed",
+        "priority": "P0",
+        "effect_on_final": "fail",
+        "checks": [
+          {"type": "command_echo_required"},
+          {"type": "prompt_required"},
+          {"type": "exit_code_in", "source": "exit_code", "allowed": [0]}
+        ]
+      }
+    ],
+    "content_integrity": [
+      {
+        "rule_id": "ssh.output_shape",
+        "priority": "P1",
+        "effect_on_final": "partial",
+        "checks": [
+          {"type": "min_body_lines", "target": "2"},
+          {"type": "regex_any_of", "patterns": ["(?i)success", "(?i)normal", "up"]},
+          {"type": "regex_not_match", "source": "stderr", "pattern": "(?i)(permission denied|command not found)"}
+        ]
+      }
+    ],
+    "evidence_validation": []
+  }
 }
 ```
 

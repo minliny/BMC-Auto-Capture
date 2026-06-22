@@ -1,0 +1,64 @@
+{
+  "schema_version": "rulepack.v1",
+  "rule_pack_id": "rulepack.task.016.v1",
+  "task_id": "task.016",
+  "protocol": "SSH",
+  "execution_mode": "SSH_CMD",
+  "audit_metadata": {
+    "created_by": "bmc-auto-capture-ssh-output-rules",
+    "created_from_artifacts": [],
+    "artifact_hashes": {},
+    "review_status": "generated"
+  },
+  "applies_to": {
+    "task_ids": [
+      "task.016"
+    ],
+    "task_type": "SSH",
+    "execution_modes": [
+      "SSH_CMD"
+    ]
+  },
+  "rule_classes": {
+    "stage_gate": [],
+    "action_completion": [],
+    "content_integrity": [
+      {
+        "rule_id": "ssh.interface_status_normal",
+        "priority": "P0",
+        "effect_on_final": "fail",
+        "checks": [
+          {
+            "type": "interface_status",
+            "fields": [
+              "physical",
+              "protocol"
+            ],
+            "forbidden": [
+              "down"
+            ],
+            "desc": "真实接口记录的 physical/protocol 状态不得为 down"
+          },
+          {
+            "type": "contains",
+            "target": "up",
+            "desc": "命令输出应包含 up 状态端口"
+          }
+        ]
+      }
+    ],
+    "evidence_validation": [
+      {
+        "rule_id": "ssh.interface_transcript_has_up",
+        "priority": "P2",
+        "effect_on_final": "warning",
+        "checks": [
+          {
+            "type": "text_contains",
+            "target": "up"
+          }
+        ]
+      }
+    ]
+  }
+}

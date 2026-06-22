@@ -65,7 +65,7 @@ Do not invent concrete selectors or text from the task name. Use only observed H
 Generate only condition types the executor supports:
 
 - `url_contains`, `url_not_contains`
-- `selector_visible`, `selector_hidden`, `selector_not_visible`
+- `selector_visible`, `selector_enabled`, `selector_hidden`, `selector_not_visible`
 - `selector_count_ge`, `count_ge`
 - `text_contains`, `text_contains_any`
 - `text_nonempty`
@@ -105,6 +105,7 @@ Generate only checkpoint types the executor supports:
 - `text_not_contains`
 - `not_contains_any`
 - `regex_match`
+- `regex_not_match`
 
 Use `severity: "ERROR"` only for hard failures. Use `severity: "WARNING"` for BMC-version-dependent labels or optional quality checks.
 

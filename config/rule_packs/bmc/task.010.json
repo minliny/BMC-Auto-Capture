@@ -1,0 +1,68 @@
+{
+  "schema_version": "rulepack.v1",
+  "rule_pack_id": "rulepack.task.010.v1",
+  "task_id": "task.010",
+  "protocol": "BMC",
+  "execution_mode": "BMC_URL",
+  "audit_metadata": {
+    "created_by": "bmc-auto-capture-bmc-page-rules",
+    "created_from_artifacts": [],
+    "artifact_hashes": {},
+    "review_status": "generated"
+  },
+  "applies_to": {
+    "task_ids": [
+      "task.010"
+    ],
+    "task_type": "BMC",
+    "execution_modes": [
+      "BMC_URL"
+    ]
+  },
+  "rule_classes": {
+    "stage_gate": [
+      {
+        "rule_id": "bmc.home.route_reached",
+        "priority": "P0",
+        "effect_on_final": "fail",
+        "checks": [
+          {
+            "type": "url_contains",
+            "target": "/navigate/home"
+          }
+        ]
+      }
+    ],
+    "action_completion": [],
+    "content_integrity": [
+      {
+        "rule_id": "bmc.home.dashboard_ready",
+        "priority": "P1",
+        "effect_on_final": "partial",
+        "checks": [
+          {
+            "type": "text_contains_any",
+            "values": [
+              "首页",
+              "Home",
+              "系统",
+              "System",
+              "设备",
+              "Device",
+              "告警",
+              "Alarm"
+            ]
+          },
+          {
+            "type": "region_stable",
+            "selector": "body",
+            "stable_for_ms": 1000,
+            "sample_interval_ms": 250,
+            "timeout_ms": 3000
+          }
+        ]
+      }
+    ],
+    "evidence_validation": []
+  }
+}

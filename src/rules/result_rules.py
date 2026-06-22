@@ -24,7 +24,12 @@ VRP_PROMPT_RE = re.compile(
 @dataclass(frozen=True)
 class ResultRuleContext:
     combined_output: str = ""
+    stdout: str = ""
+    stderr: str = ""
+    exit_codes: tuple[int, ...] = ()
     cmd_outputs: dict[str, str] = field(default_factory=dict)
+    stdout_outputs: dict[str, str] = field(default_factory=dict)
+    stderr_outputs: dict[str, str] = field(default_factory=dict)
     strategy: str = ""
     resolved_commands: list[tuple[str, str]] = field(default_factory=list)
     command_or_url: str = ""
@@ -127,14 +132,21 @@ class ResultRuleEvaluation:
         )
 
 
-def extract_result_rules(task: Any) -> list[dict[str, Any]]:
+def extract_result_rules(
+    task: Any,
+    *,
+    command_spec: dict[str, Any] | None = None,
+    context: ResultRuleContext | None = None,
+) -> list[dict[str, Any]]:
     tdef = getattr(task, "_task_def", None) or {}
     raw = tdef.get("result_rules")
     if raw is None:
         raw = tdef.get("ssh_rules")
     if raw is None:
         raw = tdef.get("rules")
-    return normalize_result_rules(raw)
+    rules = normalize_result_rules(raw)
+    rules.extend(_legacy_execution_rules(tdef, command_spec, context))
+    return rules
 
 
 def normalize_result_rules(raw: Any) -> list[dict[str, Any]]:
@@ -153,8 +165,13 @@ def has_enabled_result_rules(task: Any) -> bool:
     return any(rule.get("enabled", True) is not False for rule in extract_result_rules(task))
 
 
-def evaluate_task_result_rules(task: Any, context: ResultRuleContext) -> ResultRuleEvaluation:
-    return evaluate_result_rules(extract_result_rules(task), context)
+def evaluate_task_result_rules(
+    task: Any,
+    context: ResultRuleContext,
+    *,
+    command_spec: dict[str, Any] | None = None,
+) -> ResultRuleEvaluation:
+    return evaluate_result_rules(extract_result_rules(task, command_spec=command_spec, context=context), context)
 
 
 def evaluate_result_rules(
@@ -203,13 +220,14 @@ def _evaluate_check(
     check_type = str(check.get("type") or check.get("action_type") or "")
     target = check.get("target", check.get("value", check.get("expect", check.get("pattern", ""))))
     desc = str(check.get("desc", check.get("description", check_type)))
+    source_text = _source_text(check, context)
 
     if check_type in (
         "text_exists", "required_pattern", "required_patterns",
         "text_contains", "assert_text", "contains",
     ):
         for value in _coerce_values(target or check.get("patterns")):
-            if value and value not in context.combined_output:
+            if value and value not in source_text:
                 return _failure(rule_name, check_type, f"[{rule_name}] {desc}: '{value}' not found")
         return None
 
@@ -230,19 +248,19 @@ def _evaluate_check(
                 )
                 if message:
                     return _failure(rule_name, check_type, message, details=details)
-            elif value in context.combined_output:
+            elif _pattern_found(value, source_text, bool(check.get("regex") or check.get("match") == "regex")):
                 return _failure(rule_name, check_type, f"[{rule_name}] {desc}: forbidden '{value}' found")
         return None
 
     if check_type in ("regex_exists", "regex_match"):
         pattern = str(target or "")
-        if pattern and re.search(pattern, context.combined_output) is None:
+        if pattern and re.search(pattern, source_text) is None:
             return _failure(rule_name, check_type, f"[{rule_name}] {desc}: regex '{pattern}' not matched")
         return None
 
     if check_type == "regex_all_of":
         patterns = _coerce_values(check.get("patterns", target))
-        missing = [pattern for pattern in patterns if re.search(pattern, context.combined_output) is None]
+        missing = [pattern for pattern in patterns if re.search(pattern, source_text) is None]
         if missing:
             return _failure(
                 rule_name,
@@ -255,7 +273,7 @@ def _evaluate_check(
         patterns = _coerce_values(check.get("patterns", target))
         if not patterns:
             return None
-        if not any(re.search(pattern, context.combined_output) for pattern in patterns):
+        if not any(re.search(pattern, source_text) for pattern in patterns):
             return _failure(
                 rule_name,
                 check_type,
@@ -264,9 +282,10 @@ def _evaluate_check(
         return None
 
     if check_type in ("regex_not_exists", "regex_not_match"):
-        pattern = str(target or "")
-        if pattern and re.search(pattern, context.combined_output) is not None:
-            return _failure(rule_name, check_type, f"[{rule_name}] {desc}: forbidden regex '{pattern}' matched")
+        patterns = _coerce_values(check.get("patterns", target))
+        matched = [pattern for pattern in patterns if pattern and re.search(pattern, source_text) is not None]
+        if matched:
+            return _failure(rule_name, check_type, f"[{rule_name}] {desc}: forbidden regex matched: {matched}")
         return None
 
     if check_type == "sentinel_seen":
@@ -276,7 +295,7 @@ def _evaluate_check(
         use_regex = bool(check.get("regex") or check.get("pattern") or check.get("patterns"))
         missing = []
         for pattern in patterns:
-            found = re.search(pattern, context.combined_output) is not None if use_regex else pattern in context.combined_output
+            found = re.search(pattern, source_text) is not None if use_regex else pattern in source_text
             if not found:
                 missing.append(pattern)
         if missing:
@@ -311,7 +330,7 @@ def _evaluate_check(
                 r"More:\s*$",
                 r"Press\s+any\s+key\s+to\s+continue",
             ]
-        matches = [pattern for pattern in patterns if re.search(pattern, context.combined_output, re.IGNORECASE | re.MULTILINE)]
+        matches = [pattern for pattern in patterns if re.search(pattern, source_text, re.IGNORECASE | re.MULTILINE)]
         if matches:
             return _failure(rule_name, check_type, f"[{rule_name}] {desc}: pager prompt remains: {matches}")
         return None
@@ -336,9 +355,9 @@ def _evaluate_check(
     if check_type in ("min_output_lines", "min_body_lines"):
         min_lines = int(target) if target else 1
         if check_type == "min_body_lines":
-            actual_lines = len(_body_lines(context))
+            actual_lines = len(_body_lines(context, source_text))
         else:
-            actual_lines = len(context.combined_output.split("\n"))
+            actual_lines = len(source_text.split("\n"))
         if actual_lines < min_lines:
             return _failure(
                 rule_name,
@@ -355,8 +374,27 @@ def _evaluate_check(
         return None
 
     if check_type == "prompt_required":
-        if context.strategy == "interactive_shell" and not VRP_PROMPT_RE.search(context.combined_output):
+        if context.strategy == "interactive_shell" and not VRP_PROMPT_RE.search(source_text):
             return _failure(rule_name, check_type, f"[{rule_name}] VRP prompt not detected in output")
+        return None
+
+    if check_type in ("allowed_patterns", "allowlist_patterns"):
+        if not source_text.strip():
+            return None
+        allowed = _coerce_values(check.get("patterns", check.get("allowed", check.get("allow_patterns"))))
+        ignored = _coerce_values(check.get("ignore_patterns", check.get("ignored", check.get("ignore"))))
+        unmatched_lines = [
+            line for line in source_text.splitlines()
+            if line.strip() and not _matches_any_pattern(line, allowed + ignored)
+        ]
+        if unmatched_lines:
+            return _failure(
+                rule_name,
+                check_type,
+                f"[{rule_name}] {desc}: source {check.get('source', 'combined')} not allowlisted: "
+                f"{' | '.join(unmatched_lines)[:160]}",
+                details={"unmatched_lines": unmatched_lines[:5], "source": check.get("source", "combined")},
+            )
         return None
 
     return _parse_failure(
@@ -443,6 +481,8 @@ def _coerce_int_values(raw: Any) -> list[int]:
 
 
 def _extract_exit_codes(context: ResultRuleContext) -> list[int]:
+    if context.exit_codes:
+        return list(context.exit_codes)
     text = "\n".join([context.combined_output, *context.cmd_outputs.values()])
     patterns = [
         r"\[exit_code:(-?\d+)\]",
@@ -465,10 +505,11 @@ def _extract_exit_codes(context: ResultRuleContext) -> list[int]:
     return codes
 
 
-def _body_lines(context: ResultRuleContext) -> list[str]:
+def _body_lines(context: ResultRuleContext, text: str | None = None) -> list[str]:
     commands = {cmd.strip() for _name, cmd in context.resolved_commands if cmd.strip()}
     lines: list[str] = []
-    for raw_line in context.combined_output.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+    source = context.combined_output if text is None else text
+    for raw_line in source.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         line = raw_line.strip()
         if not line:
             continue
@@ -480,6 +521,94 @@ def _body_lines(context: ResultRuleContext) -> list[str]:
             continue
         lines.append(line)
     return lines
+
+
+def _source_text(check: dict[str, Any], context: ResultRuleContext) -> str:
+    source = str(check.get("source") or check.get("stream") or "combined").strip().lower()
+    if source in {"combined", "output", "transcript", ""}:
+        return context.combined_output
+    if source == "stdout":
+        return context.stdout or "\n".join(context.stdout_outputs.values())
+    if source == "stderr":
+        return context.stderr or "\n".join(context.stderr_outputs.values())
+    if source.startswith("cmd:"):
+        key = source.split(":", 1)[1]
+        return context.cmd_outputs.get(key, "")
+    return context.combined_output
+
+
+def _pattern_found(pattern: str, text: str, regex: bool) -> bool:
+    if regex:
+        return re.search(pattern, text, re.IGNORECASE | re.MULTILINE) is not None
+    return pattern in text
+
+
+def _matches_any_pattern(text: str, patterns: list[str]) -> bool:
+    for pattern in patterns:
+        try:
+            if re.search(pattern, text, re.IGNORECASE | re.MULTILINE):
+                return True
+        except re.error:
+            if pattern.lower() in text.lower():
+                return True
+    return False
+
+
+def _legacy_execution_rules(
+    task_def: dict[str, Any],
+    command_spec: dict[str, Any] | None,
+    context: ResultRuleContext | None,
+) -> list[dict[str, Any]]:
+    spec = command_spec or {}
+    fail_patterns = list(spec.get("stderr_fail_patterns", task_def.get("stderr_fail_patterns", [])) or [])
+    allow_patterns = list(spec.get("stderr_allow_patterns", task_def.get("stderr_allow_patterns", [])) or [])
+    ignore_patterns = list(spec.get("stderr_ignore_patterns", task_def.get("stderr_ignore_patterns", [])) or [])
+    allow_exit_codes = _coerce_int_values(spec.get("allow_exit_codes", task_def.get("allow_exit_codes", [])))
+
+    checks: list[dict[str, Any]] = []
+    stderr_source = "stderr"
+    if context is not None and not (context.stderr or "").strip() and context.strategy in {"terminal_session", "interactive_shell"}:
+        stderr_source = "combined"
+    if fail_patterns:
+        checks.append({
+            "type": "forbidden_patterns",
+            "source": stderr_source,
+            "patterns": fail_patterns,
+            "match": "regex",
+            "desc": "legacy stderr fail patterns",
+        })
+    if (
+        allow_patterns
+        or ignore_patterns
+        or (context is not None and (context.stderr or "").strip())
+    ):
+        checks.append({
+            "type": "allowed_patterns",
+            "source": "stderr",
+            "patterns": allow_patterns,
+            "ignore_patterns": ignore_patterns,
+            "desc": "legacy stderr allowlist",
+        })
+    if context is not None:
+        exit_codes = list(context.exit_codes) or _extract_exit_codes(context)
+        if exit_codes:
+            allowed = sorted({0, *allow_exit_codes})
+            checks.append({
+                "type": "exit_code_in",
+                "source": "exit_code",
+                "allowed": allowed,
+                "desc": "legacy allowed exit codes",
+            })
+    if not checks:
+        return []
+    return [{
+        "rule_id": "ssh.execution_result",
+        "rule_class": "action_completion",
+        "priority": "P0",
+        "result_layer": "availability",
+        "effect_on_final": "fail",
+        "checks": checks,
+    }]
 
 
 def _failure(

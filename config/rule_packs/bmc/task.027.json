@@ -1,0 +1,89 @@
+{
+  "schema_version": "rulepack.v1",
+  "rule_pack_id": "rulepack.task.027.v1",
+  "task_id": "task.027",
+  "protocol": "BMC",
+  "execution_mode": "BMC_ACTIONS",
+  "audit_metadata": {
+    "created_by": "bmc-auto-capture-bmc-page-rules",
+    "created_from_artifacts": [],
+    "artifact_hashes": {},
+    "review_status": "generated"
+  },
+  "applies_to": {
+    "task_ids": [
+      "task.027"
+    ],
+    "task_type": "BMC",
+    "execution_modes": [
+      "BMC_ACTIONS"
+    ]
+  },
+  "rule_classes": {
+    "stage_gate": [
+      {
+        "rule_id": "bmc.alarm.route_reached",
+        "priority": "P0",
+        "effect_on_final": "fail",
+        "checks": [
+          {
+            "type": "url_contains",
+            "target": "/navigate/maintance/alarm"
+          }
+        ]
+      }
+    ],
+    "action_completion": [
+      {
+        "rule_id": "bmc.alarm.system_event_tab_selected",
+        "priority": "P1",
+        "effect_on_final": "partial",
+        "checks": [
+          {
+            "type": "text_contains",
+            "target": "系统事件"
+          },
+          {
+            "type": "selector_visible",
+            "selector": "span:has-text('系统事件')"
+          }
+        ]
+      }
+    ],
+    "content_integrity": [
+      {
+        "rule_id": "bmc.alarm.system_event_ready",
+        "priority": "P1",
+        "effect_on_final": "partial",
+        "checks": [
+          {
+            "type": "region_stable",
+            "selector": "body",
+            "stable_for_ms": 1000,
+            "sample_interval_ms": 250,
+            "timeout_ms": 3000
+          }
+        ]
+      }
+    ],
+    "evidence_validation": [
+      {
+        "rule_id": "bmc.alarm.system_event_evidence",
+        "priority": "P2",
+        "effect_on_final": "warning",
+        "checks": [
+          {
+            "type": "text_contains_any",
+            "values": [
+              "事件",
+              "时间",
+              "级别",
+              "描述",
+              "系统事件"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
