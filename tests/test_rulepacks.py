@@ -13,10 +13,64 @@ from src.models.checkpoint import CheckpointSpec
 from src.plan_item_status_callback_client import FakeCallbackTransport
 from src.plan_run_service import PlanRunService
 from src.rulepacks import RulePackStore, adapt_rule_pack_to_task_def, validate_rule_pack
+from src.rulepacks.capabilities import CAPABILITY_REGISTRY
 from src.rulepacks.fingerprint import sha256_text
 from src.rules.checkpoint_engine import CheckpointEngine
+from src.rules.condition_evaluator import (
+    ArtifactContext,
+    evaluate_evidence_checkpoints,
+    evaluate_ready_conditions,
+    parse_checkpoint_specs,
+    parse_ready_specs,
+)
 from src.rules.engine import RuleContext
 from src.rules.result_rules import ResultRuleContext, evaluate_result_rules
+
+
+class _FakeElement:
+    def __init__(self, text: str = "", *, visible: bool = True, enabled: bool = True):
+        self._text = text
+        self._visible = visible
+        self._enabled = enabled
+
+    async def is_visible(self):
+        return self._visible
+
+    async def is_enabled(self):
+        return self._enabled
+
+    async def inner_text(self):
+        return self._text
+
+    async def text_content(self):
+        return self._text
+
+
+class _FakePage:
+    def __init__(self):
+        self.url = "https://bmc/UI/Static/#/navigate/system"
+        self.body = "System health ready"
+        self.elements = {
+            ".visible": [_FakeElement("System health ready")],
+            ".hidden": [_FakeElement("hidden", visible=False)],
+            ".row": [_FakeElement("row 1"), _FakeElement("row 2")],
+        }
+
+    def is_closed(self):
+        return False
+
+    async def query_selector(self, selector: str):
+        matches = self.elements.get(selector, [])
+        return matches[0] if matches else None
+
+    async def query_selector_all(self, selector: str):
+        return self.elements.get(selector, [])
+
+    async def inner_text(self, selector: str):
+        if selector == "body":
+            return self.body
+        element = await self.query_selector(selector)
+        return await element.inner_text() if element else ""
 
 
 def _ssh_rule_pack(task_id: str = "task.019") -> dict:
@@ -117,6 +171,84 @@ def _write_tasks_json(root: Path, task_def: dict) -> None:
     )
 
 
+def _bmc_ready_spec(check_type: str) -> dict:
+    if check_type in {"page_alive", "not_login_page"}:
+        return {"type": check_type}
+    if check_type == "url_contains":
+        return {"type": check_type, "target": "/navigate/system"}
+    if check_type == "url_not_contains":
+        return {"type": check_type, "target": "/login"}
+    if check_type in {"selector_visible", "selector_enabled", "text_nonempty"}:
+        return {"type": check_type, "selector": ".visible"}
+    if check_type in {"selector_hidden", "selector_not_visible"}:
+        return {"type": check_type, "selector": ".hidden"}
+    if check_type in {"selector_count_ge", "count_ge"}:
+        return {"type": check_type, "selector": ".row", "min_count": 2}
+    if check_type == "text_contains":
+        return {"type": check_type, "target": "System health"}
+    if check_type == "text_contains_any":
+        return {"type": check_type, "values": ["System health", "Dashboard"]}
+    if check_type == "text_not_in":
+        return {"type": check_type, "values": ["Fatal", "Traceback"]}
+    if check_type == "region_stable":
+        return {
+            "type": check_type,
+            "selector": ".visible",
+            "stable_for_ms": 0,
+            "sample_interval_ms": 5,
+            "timeout_ms": 50,
+        }
+    raise AssertionError(f"missing BMC ready fixture for {check_type}")
+
+
+def _bmc_evidence_spec(check_type: str, artifact_path: Path) -> dict:
+    if check_type == "file_exists":
+        return {"type": check_type, "target": str(artifact_path)}
+    if check_type == "html_contains":
+        return {"type": check_type, "target": "System health"}
+    if check_type == "txt_contains":
+        return {"type": check_type, "target": "System health"}
+    if check_type == "text_contains":
+        return {"type": check_type, "target": "System health"}
+    if check_type == "text_contains_any":
+        return {"type": check_type, "values": ["System health", "Dashboard"]}
+    if check_type == "text_not_contains":
+        return {"type": check_type, "target": "Fatal"}
+    if check_type == "not_contains_any":
+        return {"type": check_type, "values": ["Fatal", "Traceback"]}
+    if check_type == "regex_match":
+        return {"type": check_type, "target": r"System\s+health"}
+    raise AssertionError(f"missing BMC evidence fixture for {check_type}")
+
+
+def _ssh_result_check(check_type: str) -> dict:
+    if check_type in {"contains", "text_exists", "text_contains", "required_pattern"}:
+        return {"type": check_type, "target": "PHY"}
+    if check_type == "required_patterns":
+        return {"type": check_type, "patterns": ["PHY", "Protocol"]}
+    if check_type in {"not_contains", "text_not_exists", "forbidden_pattern", "assert_no_text"}:
+        return {"type": check_type, "target": "Fatal"}
+    if check_type in {"forbidden_patterns", "not_contains_any"}:
+        return {"type": check_type, "patterns": ["Fatal", "Traceback"]}
+    if check_type in {"regex_exists", "regex_match"}:
+        return {"type": check_type, "target": r"100GE\d+/\d+/\d+"}
+    if check_type == "regex_all_of":
+        return {"type": check_type, "patterns": ["PHY", "Protocol"]}
+    if check_type == "regex_any_of":
+        return {"type": check_type, "patterns": ["Fatal", "PHY"]}
+    if check_type in {"regex_not_exists", "regex_not_match"}:
+        return {"type": check_type, "target": r"Traceback|Fatal"}
+    if check_type in {"min_output_lines", "min_body_lines"}:
+        return {"type": check_type, "target": "2"}
+    if check_type == "command_echo_required":
+        return {"type": check_type}
+    if check_type == "prompt_required":
+        return {"type": check_type}
+    if check_type in {"interface_status", "interface_status_not"}:
+        return {"type": check_type, "fields": ["physical", "protocol"], "forbidden": ["down"]}
+    raise AssertionError(f"missing SSH result fixture for {check_type}")
+
+
 def test_rulepack_validator_rejects_unsupported_check_type():
     pack = _bmc_rule_pack()
     pack["rule_classes"]["content_integrity"][0]["checks"] = [{"type": "interface_status"}]
@@ -201,6 +333,79 @@ def test_rulepack_ssh_evidence_checkpoint_warning_is_not_blocking():
     assert check_result.severity == "WARNING"
     assert check_result.check_id == "ssh.checkpoint.ssh.no_error_marker"
     assert check_result.details["priority"] == "P2"
+
+
+def test_rulepack_capability_registry_matches_bmc_runtime(tmp_path):
+    bmc_caps = CAPABILITY_REGISTRY["protocols"]["BMC"]
+    ready_types = set()
+    for rule_class in ("stage_gate", "action_completion", "content_integrity"):
+        ready_types.update(bmc_caps[rule_class]["check_types"])
+    ready_specs = parse_ready_specs([_bmc_ready_spec(check_type) for check_type in sorted(ready_types)])
+
+    ready_result = asyncio.run(evaluate_ready_conditions(_FakePage(), ready_specs, protocol="BMC"))
+
+    assert len(ready_result.results) == len(ready_types)
+    assert not [r for r in ready_result.results if "unknown type" in r.details]
+
+    artifact = tmp_path / "evidence.txt"
+    artifact.write_text("System health ready\n", encoding="utf-8")
+    evidence_types = set(bmc_caps["evidence_validation"]["check_types"])
+    checkpoint_specs = parse_checkpoint_specs([
+        _bmc_evidence_spec(check_type, artifact)
+        for check_type in sorted(evidence_types)
+    ])
+    artifacts = ArtifactContext(
+        screenshot_path=str(artifact),
+        html_path="",
+        txt_path=str(artifact),
+        html_text="System health ready",
+        txt_content="System health ready",
+    )
+
+    checkpoint_result = evaluate_evidence_checkpoints(
+        checkpoint_specs,
+        artifacts,
+        page_text="System health ready",
+    )
+
+    assert len(checkpoint_result.results) == len(evidence_types)
+    assert not [r for r in checkpoint_result.results if "unknown type" in r.details]
+
+
+def test_rulepack_capability_registry_matches_ssh_runtime():
+    ssh_caps = CAPABILITY_REGISTRY["protocols"]["SSH"]
+    result_types = set()
+    for rule_class in ("stage_gate", "action_completion", "content_integrity"):
+        result_types.update(ssh_caps[rule_class]["check_types"])
+    output = """
+display interface brief
+Interface                   PHY   Protocol Description
+100GE1/0/1                  up    up       uplink
+<HUAWEI>
+"""
+    ctx = ResultRuleContext(
+        combined_output=output,
+        cmd_outputs={"cmd_0": output},
+        strategy="interactive_shell",
+        resolved_commands=[("cmd_0", "display interface brief")],
+        command_or_url="display interface brief",
+    )
+
+    parse_failed = []
+    for check_type in sorted(result_types):
+        evaluation = evaluate_result_rules(
+            [{"rule_id": f"capability.{check_type}", "checks": [_ssh_result_check(check_type)]}],
+            ctx,
+        )
+        if evaluation.rule_status == "RULE_PARSE_FAILED":
+            parse_failed.append((check_type, evaluation.failure_summary()))
+
+    assert parse_failed == []
+
+    checkpoint_handlers = set(CheckpointEngine._HANDLERS)
+    for protocol in ("SSH", "TELNET"):
+        exposed = set(CAPABILITY_REGISTRY["protocols"][protocol]["evidence_validation"]["check_types"])
+        assert exposed <= checkpoint_handlers
 
 
 def test_load_task_defs_merges_rulepack_from_config_dir(tmp_path):
