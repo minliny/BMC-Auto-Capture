@@ -113,6 +113,12 @@ jobs:
           $channel = if ($isRc) { "rc" } else { "stable" }
           $minimumRuntime = "${{ github.event.inputs.min_reusable_runtime_version }}"
           if ([string]::IsNullOrWhiteSpace($minimumRuntime)) {
+            $runtimeBaselineFile = "release/runtime_baseline.txt"
+            if (Test-Path $runtimeBaselineFile) {
+              $minimumRuntime = (Get-Content $runtimeBaselineFile -Raw).Trim()
+            }
+          }
+          if ([string]::IsNullOrWhiteSpace($minimumRuntime)) {
             $minimumRuntime = $tag
           }
 
