@@ -18,6 +18,7 @@ logger = logging.getLogger("bmc_auto_capture.acceptance_docx")
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+TASK_DIR_PATTERN = re.compile(r"^(\d+(?:\.\d+)+)[._](.+)$")
 DEFAULT_TEMPLATE_RELATIVE_PATH = Path(
     "templates/acceptance/Atlas 900 A3 SuperPoD 超节点 验收测试指南 03.docx"
 )
@@ -103,6 +104,8 @@ def generate_acceptance_artifacts(
         "evidence_zip": str(evidence_zip_path),
         "matched_cases": match_report["matched_cases"],
         "unmatched_cases": match_report["unmatched_cases"],
+        "unmatched_case_details": match_report["unmatched_case_details"],
+        "unmatched_result_tasks": match_report["unmatched_result_tasks"],
         "cases": match_report["cases"],
         "packaged_files": zip_report["packaged_files"],
         "missing_files": zip_report["missing_files"],
@@ -150,7 +153,10 @@ def read_result_rows(run_root: Path) -> list[ResultRow]:
 def _read_rows_for_export(run_root: Path, selected_dirs: list[Path]) -> list[ResultRow]:
     if _has_result_csv(run_root):
         rows = read_result_rows(run_root)
-        return _filter_rows_by_dirs(rows, selected_dirs) if selected_dirs else rows
+        if selected_dirs:
+            rows = _remap_rows_to_selected_dirs(rows, selected_dirs)
+            return _filter_rows_by_dirs(rows, selected_dirs)
+        return rows
     if selected_dirs:
         return _synthesize_rows_from_dirs(run_root, selected_dirs)
     raise FileNotFoundError(f"Neither final_result.csv nor result.csv exists under {run_root}")
@@ -204,7 +210,7 @@ def _nearest_result_root(path: Path) -> Path | None:
 def _nearest_task_parent(path: Path) -> Path | None:
     current = path.resolve()
     for candidate in [current, *current.parents]:
-        if re.match(r"^(\d+(?:\.\d+)+)\.(.+)$", candidate.name):
+        if _parse_task_dir_name(candidate.name):
             return candidate.parent
     return None
 
@@ -225,6 +231,170 @@ def _filter_rows_by_dirs(rows: list[ResultRow], selected_dirs: list[Path]) -> li
     if not selected_dirs:
         return rows
     return [row for row in rows if _row_matches_selected_dirs(row, selected_dirs)]
+
+
+def _remap_rows_to_selected_dirs(
+    rows: list[ResultRow],
+    selected_dirs: list[Path],
+) -> list[ResultRow]:
+    files = _collect_selected_evidence_files(selected_dirs)
+    for row in rows:
+        row.screenshot_paths = [
+            _remap_file_to_selected_dirs(path, row, selected_dirs, files)
+            for path in row.screenshot_paths
+        ]
+        row.txt_paths = [
+            _remap_file_to_selected_dirs(path, row, selected_dirs, files)
+            for path in row.txt_paths
+        ]
+        row.output_dir = _remap_output_dir_to_selected_dirs(row, selected_dirs, files)
+    return rows
+
+
+def _collect_selected_evidence_files(selected_dirs: list[Path]) -> list[Path]:
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for directory in selected_dirs:
+        for path in sorted(directory.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in IMAGE_EXTENSIONS and path.suffix.lower() != ".txt":
+                continue
+            resolved = path.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                files.append(resolved)
+    return files
+
+
+def _remap_file_to_selected_dirs(
+    path: Path,
+    row: ResultRow,
+    selected_dirs: list[Path],
+    files: list[Path],
+) -> Path:
+    old_path = path.resolve()
+    if any(_path_within(old_path, selected_dir) for selected_dir in selected_dirs):
+        return old_path
+
+    suffixes = _candidate_suffixes(old_path, row)
+    for suffix in suffixes:
+        for selected_dir in selected_dirs:
+            candidate = _candidate_under_selected_dir(selected_dir, suffix)
+            if candidate and candidate.exists() and candidate.is_file():
+                return candidate.resolve()
+
+    matches = [
+        candidate for candidate in files
+        if candidate.name == old_path.name and _evidence_file_matches_row(candidate, row)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+
+    matches = [candidate for candidate in files if candidate.name == old_path.name]
+    if len(matches) == 1:
+        return matches[0]
+
+    return old_path
+
+
+def _remap_output_dir_to_selected_dirs(
+    row: ResultRow,
+    selected_dirs: list[Path],
+    files: list[Path],
+) -> Path | None:
+    evidence_paths = [
+        path for path in [*row.screenshot_paths, *row.txt_paths]
+        if any(_path_within(path, selected_dir) for selected_dir in selected_dirs)
+    ]
+    if evidence_paths:
+        return evidence_paths[0].parent
+
+    output_dir = row.output_dir.resolve() if row.output_dir else None
+    if output_dir and any(_path_within(output_dir, selected_dir) for selected_dir in selected_dirs):
+        return output_dir
+
+    matching_files = [path for path in files if _evidence_file_matches_row(path, row)]
+    if matching_files:
+        return matching_files[0].parent
+    return output_dir
+
+
+def _candidate_suffixes(path: Path, row: ResultRow) -> list[Path]:
+    suffixes: list[Path] = []
+    parts = list(path.parts)
+    task_index = _task_part_index(parts, row)
+    if task_index is not None:
+        suffixes.append(Path(*parts[task_index:]))
+        if task_index + 1 < len(parts):
+            suffixes.append(Path(*parts[task_index + 1:]))
+        if task_index + 2 < len(parts):
+            suffixes.append(Path(*parts[task_index + 2:]))
+    if row.device_group:
+        for index, part in enumerate(parts):
+            if part == row.device_group and index + 1 < len(parts):
+                suffixes.append(Path(*parts[index:]))
+                suffixes.append(Path(*parts[index + 1:]))
+    suffixes.append(Path(path.name))
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for suffix in suffixes:
+        key = suffix.as_posix()
+        if key not in seen:
+            seen.add(key)
+            unique.append(suffix)
+    return unique
+
+
+def _task_part_index(parts: list[str], row: ResultRow) -> int | None:
+    sequence = row.task_sequence.strip()
+    task_name = row.task_name.strip()
+    for index, part in enumerate(parts):
+        parsed = _parse_task_dir_name(part)
+        if parsed:
+            part_sequence, part_task_name = parsed
+            sequence_matches = not sequence or part_sequence == sequence
+            task_matches = not task_name or _task_names_related(part_task_name, task_name)
+            if sequence_matches and task_matches:
+                return index
+        if sequence and task_name and part in {f"{sequence}.{task_name}", f"{sequence}_{task_name}"}:
+            return index
+        if sequence and _path_part_has_sequence(part, sequence):
+            return index
+        if task_name and part == task_name:
+            return index
+    for index, part in enumerate(parts):
+        if task_name and task_name in part:
+            return index
+    return None
+
+
+def _candidate_under_selected_dir(selected_dir: Path, suffix: Path) -> Path | None:
+    suffix_parts = suffix.parts
+    if not suffix_parts:
+        return None
+    selected_parts = selected_dir.resolve().parts
+    drop = 0
+    max_drop = min(len(suffix_parts), len(selected_parts))
+    while drop < max_drop and selected_parts[-drop - 1] == suffix_parts[drop]:
+        drop += 1
+    remaining = suffix_parts[drop:]
+    if not remaining:
+        return selected_dir.resolve()
+    return (selected_dir / Path(*remaining)).resolve()
+
+
+def _evidence_file_matches_row(path: Path, row: ResultRow) -> bool:
+    parts = path.resolve().parts
+    joined = "/".join(parts)
+    if row.task_name and row.task_name not in joined and row.task_name not in path.name:
+        return False
+    if row.task_sequence and not any(_path_part_has_sequence(part, row.task_sequence) for part in parts):
+        return False
+    if row.device_group and row.device_group not in parts:
+        return False
+    return True
 
 
 def _row_matches_selected_dirs(row: ResultRow, selected_dirs: list[Path]) -> bool:
@@ -287,13 +457,33 @@ def _infer_task_from_path(path: Path, run_root: Path) -> tuple[str, str, str]:
         parts = path.resolve().parts
 
     for index, part in enumerate(parts):
-        match = re.match(r"^(\d+(?:\.\d+)+)\.(.+)$", part)
-        if match:
+        parsed = _parse_task_dir_name(part)
+        if parsed:
             device_group = parts[index + 1] if index + 1 < len(parts) - 1 else ""
-            return match.group(1), match.group(2), device_group
+            return parsed[0], parsed[1], device_group
 
     parent = path.parent
     return "", parent.name, ""
+
+
+def _parse_task_dir_name(name: str) -> tuple[str, str] | None:
+    match = TASK_DIR_PATTERN.match(name)
+    if not match:
+        return None
+    return match.group(1), match.group(2).strip()
+
+
+def _path_part_has_sequence(part: str, sequence: str) -> bool:
+    parsed = _parse_task_dir_name(part)
+    if parsed:
+        return parsed[0] == sequence
+    return part.startswith(sequence + ".") or part.startswith(sequence + "_")
+
+
+def _task_names_related(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    return left.startswith(right + "-") or right.startswith(left + "-")
 
 
 def package_evidence(run_root: Path, rows: Iterable[ResultRow], evidence_zip_path: Path) -> dict:
@@ -419,12 +609,13 @@ def _case_id_from_table(table) -> str:
 def _result_cell_from_table(table):
     for row in table.rows:
         if len(row.cells) >= 2 and _norm(row.cells[0].text) == "测试结果":
-            return row.cells[1]
+            return row.cells[0].merge(row.cells[-1])
     return None
 
 
 def _fill_document(doc, cases: list[CaseBlock], rows: list[ResultRow]) -> dict:
     cases_report: list[dict] = []
+    used_row_ids: set[int] = set()
     matched = 0
     unmatched = 0
 
@@ -434,6 +625,7 @@ def _fill_document(doc, cases: list[CaseBlock], rows: list[ResultRow]) -> dict:
             unmatched += 1
             cases_report.append({
                 "case_id": case.case_id,
+                "category": case.category,
                 "title": case.title,
                 "status": "NO_MATCH",
                 "matched_tasks": [],
@@ -441,11 +633,13 @@ def _fill_document(doc, cases: list[CaseBlock], rows: list[ResultRow]) -> dict:
             continue
 
         matched += 1
+        used_row_ids.update(id(row) for row in case_rows)
         selected = _one_image_per_task(case_rows)
         verdict = _case_verdict(case_rows)
         _write_case_result(case.result_cell, verdict, selected)
         cases_report.append({
             "case_id": case.case_id,
+            "category": case.category,
             "title": case.title,
             "status": "MATCHED",
             "verdict": verdict,
@@ -454,10 +648,41 @@ def _fill_document(doc, cases: list[CaseBlock], rows: list[ResultRow]) -> dict:
         })
 
     _update_summary_table(doc, cases_report)
+    unmatched_case_details = [
+        {
+            "case_id": item["case_id"],
+            "category": item.get("category", ""),
+            "title": item["title"],
+        }
+        for item in cases_report
+        if item.get("status") == "NO_MATCH"
+    ]
     return {
         "matched_cases": matched,
         "unmatched_cases": unmatched,
+        "unmatched_case_details": unmatched_case_details,
+        "unmatched_result_tasks": [
+            _result_row_detail(row)
+            for row in rows
+            if id(row) not in used_row_ids
+        ],
         "cases": cases_report,
+    }
+
+
+def _result_row_detail(row: ResultRow) -> dict:
+    return {
+        "row_index": row.row_index,
+        "task_sequence": row.task_sequence,
+        "task_name": row.task_name,
+        "task_type": row.task_type,
+        "device_group": row.device_group,
+        "device_name": row.device_name,
+        "execution_status": row.execution_status,
+        "final_verdict": row.final_verdict,
+        "output_dir": str(row.output_dir) if row.output_dir else "",
+        "screenshot_paths": [str(path) for path in row.screenshot_paths],
+        "txt_paths": [str(path) for path in row.txt_paths],
     }
 
 
@@ -508,11 +733,14 @@ def _write_case_result(cell, verdict: str, rows: list[ResultRow]) -> None:
     from docx.shared import Inches
 
     cell.text = ""
+    _set_cell_left_margin(cell, 0)
     first = cell.paragraphs[0]
+    _left_align_paragraph(first)
     first.add_run(f"测试结果：{verdict}").bold = True
 
     for index, row in enumerate(rows, start=1):
         label = cell.add_paragraph()
+        _left_align_paragraph(label)
         label.add_run(f"证据{index}：{row.task_name}").bold = True
         device = " / ".join(part for part in (row.device_group, row.device_name) if part)
         if device:
@@ -520,14 +748,44 @@ def _write_case_result(cell, verdict: str, rows: list[ResultRow]) -> None:
 
         image = next((path for path in row.screenshot_paths if path.exists() and path.suffix.lower() in IMAGE_EXTENSIONS), None)
         if image is None:
-            cell.add_paragraph("未找到可插入的截图。")
+            missing = cell.add_paragraph("未找到可插入的截图。")
+            _left_align_paragraph(missing)
             continue
         picture_paragraph = cell.add_paragraph()
+        _left_align_paragraph(picture_paragraph)
         picture_paragraph.add_run().add_picture(str(image), width=Inches(5.1))
 
         reason = row.failure_reason.strip()
         if reason:
-            cell.add_paragraph(f"说明：{reason}")
+            reason_paragraph = cell.add_paragraph(f"说明：{reason}")
+            _left_align_paragraph(reason_paragraph)
+
+
+def _left_align_paragraph(paragraph) -> None:
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt
+
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    paragraph_format = paragraph.paragraph_format
+    paragraph_format.left_indent = Pt(0)
+    paragraph_format.first_line_indent = Pt(0)
+
+
+def _set_cell_left_margin(cell, dxa: int) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_mar = tc_pr.find(qn("w:tcMar"))
+    if tc_mar is None:
+        tc_mar = OxmlElement("w:tcMar")
+        tc_pr.append(tc_mar)
+    left = tc_mar.find(qn("w:left"))
+    if left is None:
+        left = OxmlElement("w:left")
+        tc_mar.append(left)
+    left.set(qn("w:w"), str(dxa))
+    left.set(qn("w:type"), "dxa")
 
 
 def _update_summary_table(doc, cases_report: list[dict]) -> None:
@@ -548,7 +806,38 @@ def _update_summary_table(doc, cases_report: list[dict]) -> None:
             title = _norm(row.cells[2].text)
             verdict = verdict_by_title.get(title)
             if verdict:
-                row.cells[3].text = verdict
+                _write_summary_verdict_cell(row.cells[3], verdict)
+
+
+def _write_summary_verdict_cell(cell, verdict: str) -> None:
+    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+
+    cell.text = ""
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+    _set_cell_left_margin(cell, 120)
+    _set_cell_no_wrap(cell)
+    paragraph = cell.paragraphs[0]
+    _apply_paragraph_style(paragraph, "TableText")
+    _left_align_paragraph(paragraph)
+    paragraph.add_run(verdict)
+
+
+def _apply_paragraph_style(paragraph, style_name: str) -> None:
+    for style in paragraph.part.document.styles:
+        if style.name == style_name or style.style_id == style_name:
+            paragraph.style = style
+            return
+
+
+def _set_cell_no_wrap(cell) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    no_wrap = tc_pr.find(qn("w:noWrap"))
+    if no_wrap is None:
+        no_wrap = OxmlElement("w:noWrap")
+        tc_pr.append(no_wrap)
 
 
 def _arcname_for(run_root: Path, path: Path) -> str:

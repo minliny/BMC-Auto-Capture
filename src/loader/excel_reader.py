@@ -418,7 +418,7 @@ def load_tasks(
 
         if is_simplified_or_extended:
             match_group = vals[3] if len(vals) > 3 else ""
-            output_dir_template = vals[4] if len(vals) > 4 else "{任务序号}.{任务名称}/{设备分类}"
+            output_dir_template = vals[4] if len(vals) > 4 else "{任务序号}_{任务名称}/{设备分类}"
             image_name_template = vals[5] if len(vals) > 5 else "{TaskIP}-{任务名称}"
             enabled = _bool(vals[6]) if len(vals) > 6 else True
             # Task definition overrides: actions_json, enabled (from JSON)
@@ -459,7 +459,7 @@ def load_tasks(
                 timeout_seconds = _int(vals[9], 60) if len(vals) > 9 else 60
             if not tdef.get("retry_count"):
                 retry_count = _int(vals[10], 0) if len(vals) > 10 else 0
-            output_dir_template = vals[7] if len(vals) > 7 else "{任务序号}.{任务名称}/{设备分类}"
+            output_dir_template = vals[7] if len(vals) > 7 else "{任务序号}_{任务名称}/{设备分类}"
             image_name_template = vals[8] if len(vals) > 8 else "{TaskIP}-{任务名称}"
             enabled = _bool(vals[11]) if len(vals) > 11 else True
 

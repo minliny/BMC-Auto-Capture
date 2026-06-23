@@ -10,7 +10,7 @@
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}",
       "capture_ready_conditions": [
         {
@@ -43,7 +43,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点远程上电和下电测试": {
@@ -53,7 +53,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点部件信息查询测试-资产摘要": {
@@ -63,7 +63,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点部件信息查询测试-网络适配器": {
@@ -73,7 +73,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点部件信息查询测试-门限传感器": {
@@ -83,7 +83,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点部件信息查询测试-电源信息": {
@@ -93,7 +93,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点部件信息查询测试-风扇信息": {
@@ -103,7 +103,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "风扇冗余测试": {
@@ -113,7 +113,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "A3 BMC首页截图": {
@@ -137,7 +137,7 @@
           "_note": "通用 BMC 页面无告警检查。需在真实设备验证后启用。"
         }
       ],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "操作系统安装测试": {
@@ -147,7 +147,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "NPU驱动和固件安装测试": {
@@ -157,7 +157,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "灵衢网络管理网口IP查询和设置测试": {
@@ -167,7 +167,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点电子标签查询测试": {
@@ -177,7 +177,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点灵衢总线板与灵衢总线和以太板CPLD版本信息查询测试": {
@@ -187,7 +187,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点光口状态查询测试": {
@@ -211,7 +211,7 @@
           "_note": "需在真实设备验证后启用。预期端口清单待业务方确认。"
         }
       ],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}",
       "capture_ready_conditions": [],
       "evidence_checkpoints": [
@@ -253,7 +253,7 @@
         "Permission denied"
       ],
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}",
       "per_group_no_split": {
         "A3": true
@@ -266,7 +266,7 @@
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点L1交换网络端口查询测试": {
@@ -294,7 +294,7 @@
           ]
         }
       ],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "模块拔插告警上报测试": {
@@ -318,7 +318,7 @@
           "_note": "需在真实设备验证后启用。拔插场景和目标端口未定义前不启用。"
         }
       ],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点上电测试-内存": {
@@ -330,7 +330,7 @@
       "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_page_capture wrapper, PAGE_MAP 映射缺失)",
       "_migrated_to": "BMC_URL — 旧版本仅打开 memory 页面截图，无点击交互",
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点上电测试-CPU": {
@@ -342,7 +342,7 @@
       "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_page_capture wrapper, PAGE_MAP 映射缺失)",
       "_migrated_to": "BMC_URL — 旧版本仅打开 processor 页面截图，无点击交互",
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点iBMC IP查询和设置测试": {
@@ -354,7 +354,7 @@
       "rules": [],
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_2_ibmc_ip_network_test)",
       "_migrated_to": "BMC_URL — 旧版本源码仅打开 network 页面截图，无实际 IP 设置动作",
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点部件信息查询测试-CPU": {
@@ -368,7 +368,7 @@
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_processor_cpu_test)",
       "_migrated_to": "BMC_ACTIONS — goto processor → click CPU tab → click expand → screenshot",
       "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。",
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点部件信息查询测试-NPU": {
@@ -382,7 +382,7 @@
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_processor_npu_test)",
       "_migrated_to": "BMC_ACTIONS — goto processor → click NPU tab → click expand → screenshot",
       "_note": "未在真实设备验证，默认禁用。selector 来源于旧版本源码。",
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "计算节点部件信息查询测试-内存": {
@@ -396,7 +396,7 @@
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_2_4_memory_info_test)",
       "_migrated_to": "BMC_ACTIONS — goto memory → click table expand icon → screenshot",
       "_note": "未在真实设备验证，默认禁用。使用 el-table 展开图标 selector。",
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "电源冗余测试": {
@@ -410,7 +410,7 @@
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_2_rm211_power_redundancy_system_event)",
       "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
       "_note": "未在真实设备验证，默认禁用。旧版同一脚本同时用于电源冗余和硬盘冗余-系统日志。",
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}",
       "capture_ready_conditions": [
         {
@@ -448,7 +448,7 @@
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_2_rm211_power_redundancy_system_event — 同脚本)",
       "_migrated_to": "BMC_ACTIONS — goto alarm → screenshot before → click 系统事件 tab → screenshot after",
       "_note": "未在真实设备验证，默认禁用。与电源冗余测试使用相同脚本。",
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     },
     "硬盘冗余测试": {
@@ -462,7 +462,7 @@
       "_migrated_from": "CUSTOM_SCRIPT (bmc_4_3_4_a3_disk_redundancy_logical_drive)",
       "_migrated_to": "BMC_ACTIONS — goto storage → expand tree → click Logical Drive 0 → screenshot",
       "_note": "未在真实设备验证，默认禁用。只读查看，不涉及 RAID 配置变更。UI 控件可能因 BMC 版本不同而异。",
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     }
   }

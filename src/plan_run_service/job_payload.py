@@ -77,8 +77,8 @@ class PlanRunJobPayloadBuilder:
             "timeout_seconds": int(getattr(task, "timeout_seconds", 60) or 60),
             "retry_count": int(getattr(task, "retry_count", 0) or 0),
             "output_dir_template": (
-                getattr(task, "output_dir_template", "{任务序号}.{任务名称}/{设备分类}")
-                or "{任务序号}.{任务名称}/{设备分类}"
+                getattr(task, "output_dir_template", "{任务序号}_{任务名称}/{设备分类}")
+                or "{任务序号}_{任务名称}/{设备分类}"
             ),
             "image_name_template": (
                 getattr(task, "image_name_template", "{TaskIP}-{任务名称}")

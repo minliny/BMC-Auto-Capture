@@ -279,7 +279,7 @@ class PlanCatalogPlanner:
             "retry_count": int(getattr(task, "retry_count", 0) or 0),
             "full_screenshot": bool(getattr(task, "full_screenshot", False)),
             "screenshot_mode": getattr(task, "screenshot_mode", "auto") or "auto",
-            "output_dir_template": getattr(task, "output_dir_template", "{任务序号}.{任务名称}/{设备分类}") or "{任务序号}.{任务名称}/{设备分类}",
+            "output_dir_template": getattr(task, "output_dir_template", "{任务序号}_{任务名称}/{设备分类}") or "{任务序号}_{任务名称}/{设备分类}",
             "image_name_template": getattr(task, "image_name_template", "{TaskIP}-{任务名称}") or "{TaskIP}-{任务名称}",
         }
 

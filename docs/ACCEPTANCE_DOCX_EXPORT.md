@@ -37,6 +37,8 @@ output/<timestamp>/
 1. 文档用例标题与执行结果 `任务名称` 完全一致。
 2. 如果一个文档用例拆成多个执行任务，匹配 `文档用例标题-子场景`。
 3. 不按用例编号模糊猜测；未匹配项写入 `fill_report.json`。
+   - `unmatched_case_details`：模板中有、执行结果未匹配到的用例。
+   - `unmatched_result_tasks`：执行结果中有、模板未匹配到的任务。
 
 例如文档用例 `计算节点部件信息查询测试` 会匹配：
 
@@ -53,8 +55,14 @@ output/<timestamp>/
 Excel 任务模板和任务默认值使用：
 
 ```text
-输出目录：{任务序号}.{任务名称}/{设备分类}
+输出目录：{任务序号}_{任务名称}/{设备分类}
 截图名称：{TaskIP}-{任务名称}
+```
+
+手动导入已有截图时，也兼容历史目录名：
+
+```text
+{任务序号}.{任务名称}/{设备分类}
 ```
 
 `{TaskIP}` 是智能 IP：
@@ -66,7 +74,7 @@ Excel 任务模板和任务默认值使用：
 
 ```text
 output/20260623_103000/
-└── 4.1.10.NPU驱动和固件安装测试/
+└── 4.1.10_NPU驱动和固件安装测试/
     └── A3/
         ├── 10.10.1.10-NPU驱动和固件安装测试.png
         └── 10.10.1.10-NPU驱动和固件安装测试.txt
@@ -77,8 +85,8 @@ output/20260623_103000/
 证据 ZIP 会剥掉 `output/<timestamp>/`，只保留执行目录下级结构：
 
 ```text
-4.1.10.NPU驱动和固件安装测试/A3/10.10.1.10-NPU驱动和固件安装测试.png
-4.1.10.NPU驱动和固件安装测试/A3/10.10.1.10-NPU驱动和固件安装测试.txt
+4.1.10_NPU驱动和固件安装测试/A3/10.10.1.10-NPU驱动和固件安装测试.png
+4.1.10_NPU驱动和固件安装测试/A3/10.10.1.10-NPU驱动和固件安装测试.txt
 ```
 
 ZIP 只包含：
@@ -101,22 +109,22 @@ python run.py --acceptance-docx --acceptance-run-output output/20260623_103000
 ```bash
 python run.py --acceptance-docx \
   --acceptance-evidence-dirs \
-  output/20260623_103000/4.2.4.计算节点部件信息查询测试-CPU/A3 \
-  output/20260623_103000/4.2.4.计算节点部件信息查询测试-NPU/A3
+  output/20260623_103000/4.2.4_计算节点部件信息查询测试-CPU/A3 \
+  output/20260623_103000/4.2.4_计算节点部件信息查询测试-NPU/A3
 ```
 
 也可以重复使用单目录参数：
 
 ```bash
 python run.py --acceptance-docx \
-  --acceptance-evidence-dir output/20260623_103000/4.2.4.计算节点部件信息查询测试-CPU/A3 \
-  --acceptance-evidence-dir output/20260623_103000/4.2.4.计算节点部件信息查询测试-NPU/A3
+  --acceptance-evidence-dir output/20260623_103000/4.2.4_计算节点部件信息查询测试-CPU/A3 \
+  --acceptance-evidence-dir output/20260623_103000/4.2.4_计算节点部件信息查询测试-NPU/A3
 ```
 
 选择的目录可以是：
 
 - 整个 `output/<timestamp>` 目录。
-- 某个 `任务序号.任务名称` 目录。
+- 某个 `任务序号_任务名称` 目录。
 - 某个任务下的 `设备分类` 目录。
 
 执行任务后自动生成：

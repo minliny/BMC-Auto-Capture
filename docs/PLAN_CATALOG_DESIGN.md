@@ -64,7 +64,7 @@ planner_version | excel_sha256 | validation_json_sha256 | device_group | device_
     "device_snapshot": {"device_name": "Switch-A", "oob_ip": "10.0.0.1", "oob_password_ref": "secret://bmc/Switch-A", ...},
     "task_snapshot": {"task_name": "BMC 登录检查", "url": "https://{oob_ip}/", "timeout_seconds": 60, ...},
     "resource_lock": {"lock_uri": "bmc://10.0.0.1", "lock_exclusive": true, "lock_type": "BMC"},
-    "output": {"output_dir_template": "{任务序号}.{任务名称}/{设备分类}"},
+    "output": {"output_dir_template": "{任务序号}_{任务名称}/{设备分类}"},
     "source_row_ref": "excel:Sheet=device=Switch-A:task=BMC 登录检查"
   }
 }

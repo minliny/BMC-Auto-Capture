@@ -24,7 +24,7 @@
 | 任务名称 | 必须和 `tasks.json` 的 key 完全一致 | `新增任务名称` |
 | 任务类型 | `SSH` 或 `BMC` | `SSH` |
 | 设备分组 | 匹配设备分组，支持 `/` 多分组 | `A3` 或 `L1/L2` |
-| 输出目录模板 | 任务输出子目录 | `{任务序号}.{任务名称}/{设备分类}` |
+| 输出目录模板 | 任务输出子目录 | `{任务序号}_{任务名称}/{设备分类}` |
 | 文件名模板 | 证据文件名 | `{TaskIP}-{任务名称}` |
 | 是否启用 | `是/否`、`true/false`、`1/0` | `是` |
 | 是否全量截图 | 可选，BMC/SSH 截图控制 | `是` |
@@ -93,7 +93,7 @@ SSH 当前按用户语义分两类：
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     }
   }
@@ -133,7 +133,7 @@ SSH 当前按用户语义分两类：
           ]
         }
       ],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     }
   }
@@ -175,7 +175,7 @@ SSH 当前按用户语义分两类：
         "Permission denied"
       ],
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}"
     }
   }
@@ -232,7 +232,7 @@ BMC 支持两种任务：
       "timeout_seconds": 60,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}",
       "capture_ready_conditions": [
         {
@@ -277,7 +277,7 @@ BMC 支持两种任务：
       "timeout_seconds": 120,
       "retry_count": 0,
       "rules": [],
-      "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+      "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
       "image_name_template": "{TaskIP}-{任务名称}",
       "capture_ready_conditions": [
         {

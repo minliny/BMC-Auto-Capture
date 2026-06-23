@@ -340,7 +340,7 @@ class RealRunnerAdapter:
             actions_json=snapshot.get("actions_json", ""),
             rules_json=snapshot.get("rules_json", ""),
             output_dir_template=snapshot.get(
-                "output_dir_template", "{任务序号}.{任务名称}/{设备分类}"
+                "output_dir_template", "{任务序号}_{任务名称}/{设备分类}"
             ),
             image_name_template=snapshot.get(
                 "image_name_template", "{TaskIP}-{任务名称}"

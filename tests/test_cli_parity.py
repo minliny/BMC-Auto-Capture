@@ -189,13 +189,13 @@ def test_build_parser_accepts_acceptance_evidence_dirs():
     args = parser.parse_args([
         "--acceptance-docx",
         "--acceptance-evidence-dirs",
-        "output/20260623_103000/4.2.4.计算节点部件信息查询测试-CPU",
-        "output/20260623_103000/4.2.4.计算节点部件信息查询测试-NPU",
+        "output/20260623_103000/4.2.4_计算节点部件信息查询测试-CPU",
+        "output/20260623_103000/4.2.4_计算节点部件信息查询测试-NPU",
     ])
     assert args.acceptance_docx is True
     assert args.acceptance_evidence_dirs == [
-        "output/20260623_103000/4.2.4.计算节点部件信息查询测试-CPU",
-        "output/20260623_103000/4.2.4.计算节点部件信息查询测试-NPU",
+        "output/20260623_103000/4.2.4_计算节点部件信息查询测试-CPU",
+        "output/20260623_103000/4.2.4_计算节点部件信息查询测试-NPU",
     ]
 
 

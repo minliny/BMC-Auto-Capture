@@ -105,7 +105,7 @@ v0.1 只覆盖**一个执行端与一个服务端之间的最小任务闭环**�
       ]
     }
   ],
-  "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+  "output_dir_template": "{任务序号}_{任务名称}/{设备分类}",
   "image_name_template": "{TaskIP}-{任务名称}",
   "timeout_seconds": 60,
   "per_group_timeout_seconds": {
