@@ -230,20 +230,9 @@ jobs:
 
           echo [OK] app layer assembled: app-layer/
 
-      - name: Generate app release manifest and release notes
+      - name: Generate app release notes
         shell: pwsh
         run: |
-          python scripts/generate_build_info.py app-layer `
-            --manifest-only `
-            --manifest-output app-layer/release_manifest.json `
-            --target win-x64 `
-            --channel $env:RELEASE_CHANNEL `
-            --version $env:RELEASE_TAG `
-            --runtime-package $env:RUNTIME_PACKAGE `
-            --app-package $env:APP_PACKAGE `
-            --full-package $env:FULL_PACKAGE `
-            --min-reusable-runtime-version $env:MIN_REUSABLE_RUNTIME_VERSION
-
           if ($env:RELEASE_CHANNEL -eq "rc") {
             @"
           BMC Auto-Capture RC package
@@ -267,8 +256,7 @@ jobs:
           requirements.txt、Python 版本、PyInstaller/frozen 配置、
           Playwright/Chromium 版本、runtime/_internal、
           runtime/playwright_browsers 或 bmc-engine.exe 构建输入。
-          "@ | Set-Content -Path app-layer/RC_RELEASE_NOTES.txt -Encoding utf8
-            Copy-Item app-layer/RC_RELEASE_NOTES.txt RC_RELEASE_NOTES.txt
+          "@ | Set-Content -Path RC_RELEASE_NOTES.txt -Encoding utf8
           } else {
             @"
           BMC Auto-Capture stable Windows package
