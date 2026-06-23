@@ -732,9 +732,9 @@ def _case_verdict(rows: list[ResultRow]) -> str:
 def _write_case_result(cell, verdict: str, rows: list[ResultRow]) -> None:
     from docx.shared import Inches
 
-    cell.text = ""
     _set_cell_left_margin(cell, 0)
-    first = cell.paragraphs[0]
+    _clear_cell_content(cell)
+    first = cell.add_paragraph()
     _left_align_paragraph(first)
     first.add_run(f"测试结果：{verdict}").bold = True
 
@@ -752,13 +752,17 @@ def _write_case_result(cell, verdict: str, rows: list[ResultRow]) -> None:
             _left_align_paragraph(missing)
             continue
         picture_paragraph = cell.add_paragraph()
-        _left_align_paragraph(picture_paragraph)
+        _left_align_picture_paragraph(picture_paragraph)
         picture_paragraph.add_run().add_picture(str(image), width=Inches(5.1))
 
         reason = row.failure_reason.strip()
         if reason:
             reason_paragraph = cell.add_paragraph(f"说明：{reason}")
             _left_align_paragraph(reason_paragraph)
+
+
+def _clear_cell_content(cell) -> None:
+    cell._tc.clear_content()
 
 
 def _left_align_paragraph(paragraph) -> None:
@@ -769,6 +773,15 @@ def _left_align_paragraph(paragraph) -> None:
     paragraph_format = paragraph.paragraph_format
     paragraph_format.left_indent = Pt(0)
     paragraph_format.first_line_indent = Pt(0)
+
+
+def _left_align_picture_paragraph(paragraph) -> None:
+    from docx.shared import Pt
+
+    _left_align_paragraph(paragraph)
+    # Real Word/LibreOffice rendering keeps a small inline-picture inset in
+    # this template; -8pt cancels it so the screenshot edge aligns with text.
+    paragraph.paragraph_format.left_indent = Pt(-8)
 
 
 def _set_cell_left_margin(cell, dxa: int) -> None:

@@ -25,7 +25,7 @@ v0.1 只覆盖**一个执行端与一个服务端之间的最小任务闭环**�
   "hostname": "WIN-PC-001",
   "ip": "10.0.1.100",
   "os": "Windows Server 2022",
-  "version": "0.2.5rc4",
+  "version": "0.2.5rc5",
   "status": "ONLINE",
   "capabilities": {
     "max_bmc_workers": 4,
@@ -296,7 +296,7 @@ PENDING → UPLOADING → STORED
   "hostname": "WIN-PC-001",
   "ip": "10.0.1.100",
   "os": "Windows Server 2022",
-  "version": "0.2.5rc4",
+  "version": "0.2.5rc5",
   "capabilities": {
     "max_bmc_workers": 4,
     "max_ssh_workers": 8,
@@ -530,7 +530,7 @@ file: <binary>
 {
   "executor_id": "exec-01",
   "status": "BUSY",
-  "version": "0.2.5rc4",
+  "version": "0.2.5rc5",
   "hostname": "WIN-PC-001",
   "uptime_seconds": 86400,
   "capabilities": {

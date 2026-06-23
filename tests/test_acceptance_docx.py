@@ -128,7 +128,7 @@ def test_generate_acceptance_docx_and_evidence_zip(tmp_path: Path):
     assert picture_paragraphs
     for paragraph in picture_paragraphs:
         assert paragraph.alignment == WD_ALIGN_PARAGRAPH.LEFT
-        assert paragraph.paragraph_format.left_indent.pt == 0
+        assert paragraph.paragraph_format.left_indent.pt == -8
         assert paragraph.paragraph_format.first_line_indent.pt == 0
     with zipfile.ZipFile(result.docx_path) as zf:
         import xml.etree.ElementTree as ET
@@ -139,6 +139,9 @@ def test_generate_acceptance_docx_and_evidence_zip(tmp_path: Path):
     drawing_cells = [tc for tc in root.findall(".//w:tc", ns) if tc.find(".//w:drawing", ns) is not None]
     assert drawing_cells
     for tc in drawing_cells:
+        texts = [text.text or "" for text in tc.findall(".//w:t", ns)]
+        assert "测试结果：PASS" in texts
+        assert " 测试结果：PASS" not in texts
         left = tc.find("./w:tcPr/w:tcMar/w:left", ns)
         assert left is not None
         assert left.attrib["{http://schemas.openxmlformats.org/wordprocessingml/2006/main}w"] == "0"
