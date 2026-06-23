@@ -63,6 +63,8 @@ jobs:
             --hidden-import aiofiles `
             --hidden-import python_multipart `
             --hidden-import multipart `
+            --hidden-import docx `
+            --hidden-import lxml `
             --collect-submodules playwright `
             --collect-submodules fastapi `
             --collect-submodules starlette `
@@ -72,6 +74,8 @@ jobs:
             --collect-submodules anyio `
             --collect-submodules multipart `
             --collect-submodules python_multipart `
+            --collect-submodules docx `
+            --collect-submodules lxml `
             --exclude-module src `
             --exclude-module tkinter `
             --exclude-module matplotlib `
@@ -190,6 +194,7 @@ jobs:
       #     src/
       #     config/
       #     examples/
+      #     templates/
       #     tasks.json
       #   run.py
       #   启动.bat
@@ -204,6 +209,7 @@ jobs:
           xcopy /E /I /Y src app-layer\app\src >nul
           xcopy /E /I /Y config app-layer\app\config >nul
           xcopy /E /I /Y examples app-layer\app\examples >nul
+          if exist templates xcopy /E /I /Y templates app-layer\app\templates >nul
           xcopy /E /I /Y api app-layer\app\api >nul
           xcopy /E /I /Y assets app-layer\app\assets >nul
           copy tasks.json app-layer\app\ >nul
@@ -295,7 +301,7 @@ jobs:
       #       _internal/
       #       playwright_browsers/
       #     app/
-      #       src/ config/ examples/ tasks.json
+      #       src/ config/ examples/ templates/ tasks.json
       #     run.py
       #     启动.bat
       #     README.txt
@@ -315,6 +321,7 @@ jobs:
           xcopy /E /I /Y src bmc-auto-capture\app\src >nul
           xcopy /E /I /Y config bmc-auto-capture\app\config >nul
           xcopy /E /I /Y examples bmc-auto-capture\app\examples >nul
+          if exist templates xcopy /E /I /Y templates bmc-auto-capture\app\templates >nul
           xcopy /E /I /Y api bmc-auto-capture\app\api >nul
           xcopy /E /I /Y assets bmc-auto-capture\app\assets >nul
           copy tasks.json bmc-auto-capture\app\ >nul
@@ -330,6 +337,7 @@ jobs:
           copy scripts\mock_plan_status_server.py bmc-auto-capture\scripts\ >nul
           copy scripts\submit_direct_job.py bmc-auto-capture\scripts\ >nul
           copy scripts\build_plan_manifest.py bmc-auto-capture\scripts\ >nul
+          copy scripts\fill_acceptance_docx.py bmc-auto-capture\scripts\ >nul
           copy scripts\mock_callback_server.py bmc-auto-capture\scripts\ >nul
           copy scripts\smoke_executor_runtime.ps1 bmc-auto-capture\scripts\ >nul
 
@@ -414,6 +422,23 @@ jobs:
           runtime\bmc-engine.exe --app-dir app --excel app\examples\task_template.xlsx --preflight-only
           if %ERRORLEVEL% NEQ 0 exit /b 1
           echo [OK] Preflight-only smoke test passed
+
+      - name: Smoke test — acceptance DOCX export from bundled template
+        shell: cmd
+        run: |
+          cd bmc-auto-capture
+          if not exist app\templates\acceptance (
+            echo [FAIL] app\templates\acceptance missing
+            exit /b 1
+          )
+          runtime\bmc-engine.exe --app-dir app --acceptance-docx --acceptance-evidence-dir app\examples
+          if %ERRORLEVEL% NEQ 0 exit /b 1
+          if not exist app\examples\*filled.docx (
+            echo [FAIL] acceptance DOCX smoke output missing
+            exit /b 1
+          )
+          del /q app\examples\*filled.docx app\examples\*evidence.zip app\examples\*fill_report.json >nul 2>nul
+          echo [OK] Acceptance DOCX export smoke test passed
 
       - name: Verify build_info.json
         shell: cmd

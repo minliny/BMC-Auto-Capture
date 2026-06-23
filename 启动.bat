@@ -299,34 +299,37 @@ if "%BMC_WORKERS%"=="" (set "BMC_DISP=默认") else (set "BMC_DISP=%BMC_WORKERS%")
 if "%SSH_WORKERS%"=="" (set "SSH_DISP=默认") else (set "SSH_DISP=%SSH_WORKERS%")
 echo(    并发  : BMC=!BMC_DISP! SSH=!SSH_DISP!
 echo.
-echo(    [0] 启动 Executor API
-echo(    [1] 顺序执行(逐台设备,最稳定)
-echo(    [2] 并发执行(多设备同时,高效)
-echo(    [3] 网络连通性预检
-echo(    [R] 直接测试 IP:端口(无需 Excel)
-echo(    [4] Debug 模式顺序执行
+echo(    [1] 执行任务 - 顺序模式(逐台设备,最稳定)
+echo(    [2] 执行任务 - 并发模式(多设备同时,高效)
+echo(    [3] 执行前检查 - 网络连通性/账号密码
+echo(    [4] 直接测试单个 IP:端口(无需 Excel)
 echo(    [5] 设定 Excel 配置文件路径
 echo(    [6] 调整 BMC/SSH 并发量
+echo(    [7] 启动 Executor API
 echo(    [8] 使用已有截图手动生成测试用例报告
 echo(    [9] 退出
 echo.
-echo(    Executor API: 启动.bat --server [--host 0.0.0.0] [--port 18000] [--enable-debug-callback-receiver]
+echo(    命令行: 启动.bat --server [--host 0.0.0.0] [--port 18000] [--enable-debug-callback-receiver]
 echo.
 
-set "CHOICE="
-set /p CHOICE="   请选择 [0-6,8,9,R]: "
+set "MENU_CHOICE="
+set /p MENU_CHOICE="   请选择 [1-9]: "
+set "MENU_CHOICE=!MENU_CHOICE:"=!"
+for /f "tokens=* delims= " %%a in ("!MENU_CHOICE!") do set "MENU_CHOICE=%%a"
 
-if "%CHOICE%"=="1" goto :run_seq
-if "%CHOICE%"=="2" goto :run_full
-if "%CHOICE%"=="3" goto :run_precheck
-if /i "%CHOICE%"=="R" goto :test_ip
-if /i "%CHOICE%"=="r" goto :test_ip
-if "%CHOICE%"=="4" goto :run_debug
-if "%CHOICE%"=="5" goto :set_excel
-if "%CHOICE%"=="6" goto :set_workers
-if "%CHOICE%"=="0" goto :run_server_menu
-if "%CHOICE%"=="8" goto :manual_acceptance_docx
-if "%CHOICE%"=="9" goto :end
+if "!MENU_CHOICE!"=="1" goto :run_seq
+if "!MENU_CHOICE!"=="2" goto :run_full
+if "!MENU_CHOICE!"=="3" goto :run_precheck
+if "!MENU_CHOICE!"=="4" goto :test_ip
+if "!MENU_CHOICE!"=="5" goto :set_excel
+if "!MENU_CHOICE!"=="6" goto :set_workers
+if "!MENU_CHOICE!"=="7" goto :run_server_menu
+if "!MENU_CHOICE!"=="8" goto :manual_acceptance_docx
+if "!MENU_CHOICE!"=="9" goto :end
+
+REM Backward-compatible hidden shortcuts from older menus.
+if "!MENU_CHOICE!"=="0" goto :run_server_menu
+if /i "!MENU_CHOICE!"=="R" goto :test_ip
 goto :menu
 
 :run_server_menu
@@ -432,9 +435,12 @@ pause >nul
 goto :menu
 
 :run_precheck
+set "PF_MODE="
+set "PF_TARGET="
+set "PF_CHOICE="
 cls
 echo( ============================================================
-echo(    预检选项
+echo(    执行前检查
 echo( ============================================================
 echo(
 echo(  --- 网络连通性检测(TCP端口) ---
@@ -450,6 +456,8 @@ echo(
 echo(    [7] 返回菜单
 echo.
 set /p PF_CHOICE="   请选择 [1-7]: "
+set "PF_CHOICE=!PF_CHOICE:"=!"
+for /f "tokens=* delims= " %%a in ("!PF_CHOICE!") do set "PF_CHOICE=%%a"
 
 :: 网络连通性检测
 if "!PF_CHOICE!"=="1" (set "PF_MODE=connect" & set "PF_TARGET=all")
@@ -462,20 +470,20 @@ if "!PF_CHOICE!"=="5" (set "PF_MODE=auth" & set "PF_TARGET=bmc")
 if "!PF_CHOICE!"=="6" (set "PF_MODE=auth" & set "PF_TARGET=ssh")
 
 if "!PF_CHOICE!"=="7" goto :menu
-if "%PF_MODE%"=="" goto :run_precheck
+if "!PF_MODE!"=="" goto :run_precheck
 
 cls
 echo( ============================================================
-if "%PF_MODE%"=="connect" echo(    网络连通性检测 (%PF_TARGET%)
-if "%PF_MODE%"=="auth" echo(    账户密码可用性检测 (%PF_TARGET%)
+if "!PF_MODE!"=="connect" echo(    网络连通性检测 (!PF_TARGET!)
+if "!PF_MODE!"=="auth" echo(    账户密码可用性检测 (!PF_TARGET!)
 echo( ============================================================
 echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
-if "%PF_MODE%"=="connect" echo(    正在检测网络连通性 target=%PF_TARGET% ...
-if "%PF_MODE%"=="auth" echo(    正在检测账户密码 target=%PF_TARGET% ...
+if "!PF_MODE!"=="connect" echo(    正在检测网络连通性 target=!PF_TARGET! ...
+if "!PF_MODE!"=="auth" echo(    正在检测账户密码 target=!PF_TARGET! ...
 echo.
-if "%PF_MODE%"=="connect" call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-only --preflight-target "%PF_TARGET%" %WORKER_ARGS%
-if "%PF_MODE%"=="auth" call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-auth "%PF_TARGET%" %WORKER_ARGS%
+if "!PF_MODE!"=="connect" call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-only --preflight-target "!PF_TARGET!" %WORKER_ARGS%
+if "!PF_MODE!"=="auth" call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --preflight-auth "!PF_TARGET!" %WORKER_ARGS%
 
 set "PF_EXIT=%ERRORLEVEL%"
 if %PF_EXIT% neq 0 (
@@ -539,6 +547,7 @@ echo(    使用已有截图手动生成测试用例报告
 echo( ============================================================
 echo.
 echo(    请填写一个或多个已执行的截图目录路径,也可以把目录拖拽进来。
+echo(    本功能只回填 DOCX 并打包证据,不会执行任务或网络连通性检查。
 echo(    示例路径:
 echo(      output\20260623_103000\4.2.4.计算节点部件信息查询测试-CPU\A3
 echo(      output\20260623_103000\4.2.4.计算节点部件信息查询测试-CPU
@@ -547,8 +556,10 @@ echo.
 set /p ACCEPTANCE_DIRS="   目录路径(可拖拽目录进来): "
 if "!ACCEPTANCE_DIRS!"=="" goto :menu
 echo.
+echo(    正在生成测试用例报告,不执行网络预检...
+echo.
 call :run_engine --app-dir "%APP_DIR%" --acceptance-docx --acceptance-evidence-dirs !ACCEPTANCE_DIRS!
-set "DOCX_EXIT=%ERRORLEVEL%"
+set "DOCX_EXIT=!ERRORLEVEL!"
 echo.
 if %DOCX_EXIT% neq 0 (echo    [报告] 生成失败,退出码: %DOCX_EXIT%) else (echo    [报告] 生成完成。)
 echo(    按任意键返回菜单...

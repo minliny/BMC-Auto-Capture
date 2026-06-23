@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bmc-auto-capture"
-version = "0.2.5rc1"
+version = "0.2.5rc2"
 description = "智算项目 BMC/SSH 自动化测试证据采集平台"
 requires-python = ">=3.11"
 dependencies = [
