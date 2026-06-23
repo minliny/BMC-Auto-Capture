@@ -15,6 +15,7 @@ from src.executor_api_server.service import DirectDispatchService
 from src.plan_run_service import PlanRunService
 from src.plan_run_service.service import _excel_store, _store_lock
 from src.plan_item_status_callback_client import FakeCallbackTransport
+from tests.wait_helpers import wait_for_client_plan, wait_for_service_plan
 
 EXCEL_FILE = str(Path(__file__).parent.parent / "examples" / "task_template.xlsx")
 
@@ -80,7 +81,7 @@ class TestCallbackOutboxIntegration:
         })
         assert resp.status_code == 200
         run_id = resp.json()["planId"]
-        time.sleep(3)
+        wait_for_client_plan(client, run_id)
 
         from src.callback_outbox import CallbackOutbox
         outbox = CallbackOutbox(str(run_id))
@@ -107,7 +108,7 @@ class TestCallbackOutboxIntegration:
         })
         assert resp.status_code == 200
         run_id = resp.json()["planId"]
-        time.sleep(5)  # Allow background thread to attempt delivery + fail
+        wait_for_client_plan(client, run_id)
 
         # Local plan is COMPLETED regardless of callback failure
         from src.callback_outbox import CallbackOutbox
@@ -136,7 +137,7 @@ class TestCallbackOutboxIntegration:
         })
         assert resp.status_code == 200
         run_id = resp.json()["planId"]
-        time.sleep(3)
+        wait_for_client_plan(client, run_id)
 
         from src.callback_outbox import CallbackOutbox
         outbox = CallbackOutbox(str(run_id))
@@ -342,7 +343,7 @@ class TestRunSnapshotGuard:
             "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
 
         # After run completes, verify it didn't crash due to snapshot issues
         run = svc._runs.get(str(r["planId"]))

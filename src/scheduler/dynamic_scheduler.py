@@ -197,7 +197,7 @@ class DynamicScheduler:
                                        now - last_progress_at)
 
                 # 4. Brief sleep
-                time.sleep(0.5)
+                time.sleep(max(0.001, float(self._config.scheduler_loop_interval)))
 
         except KeyboardInterrupt:
             logger.info("用户中断 — stopping scheduler")

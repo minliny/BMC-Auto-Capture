@@ -8,6 +8,7 @@ import os
 import time
 import pytest
 from pathlib import Path
+from tests.wait_helpers import wait_for_client_plan
 
 EXCEL_FILE = str(Path(__file__).resolve().parent / "fixtures" / "validation.json")
 
@@ -187,7 +188,7 @@ class TestQueryExternalPlan:
 
     def test_query_success(self, client):
         excel_hash, plan_id = self._start_plan(client)
-        time.sleep(3)
+        wait_for_client_plan(client, plan_id, excel_hash=excel_hash)
         resp = client.get(f"/executor/v1/plans/{plan_id}?excelHash={excel_hash}")
         assert resp.status_code == 200
         data = resp.json()
@@ -224,7 +225,7 @@ class TestQueryExternalPlan:
 
     def test_summary_fields(self, client):
         excel_hash, plan_id = self._start_plan(client)
-        time.sleep(3)
+        wait_for_client_plan(client, plan_id, excel_hash=excel_hash)
         resp = client.get(f"/executor/v1/plans/{plan_id}?excelHash={excel_hash}")
         data = resp.json()
         s = data["summary"]
@@ -253,7 +254,7 @@ class TestQueryExternalPlanItems:
 
     def test_items_success(self, client):
         excel_hash, plan_id = self._start_plan(client)
-        time.sleep(3)
+        wait_for_client_plan(client, plan_id, excel_hash=excel_hash)
         resp = client.get(f"/executor/v1/plans/{plan_id}/items?excelHash={excel_hash}")
         assert resp.status_code == 200
         data = resp.json()
@@ -266,7 +267,7 @@ class TestQueryExternalPlanItems:
 
     def test_items_status_enum(self, client):
         excel_hash, plan_id = self._start_plan(client)
-        time.sleep(3)
+        wait_for_client_plan(client, plan_id, excel_hash=excel_hash)
         resp = client.get(f"/executor/v1/plans/{plan_id}/items?excelHash={excel_hash}")
         data = resp.json()
         for item in data["items"]:
@@ -287,7 +288,7 @@ class TestQueryExternalPlanItems:
     def test_items_optical_module(self, client):
         """4.1.15 optical module items are queryable."""
         excel_hash, plan_id = self._start_plan(client)
-        time.sleep(3)
+        wait_for_client_plan(client, plan_id, excel_hash=excel_hash)
         resp = client.get(f"/executor/v1/plans/{plan_id}/items?excelHash={excel_hash}")
         data = resp.json()
         optical = [i for i in data["items"] if "光模块" in i["taskName"]]
@@ -338,7 +339,7 @@ class TestExternalPlanCallback:
         })
         assert resp.status_code == 200
         plan_id = resp.json()["planId"]
-        time.sleep(3)
+        wait_for_client_plan(c, plan_id, excel_hash=excel_hash)
 
         # Check the transport calls — should be batch format
         transport = c.app.extra.get("transport") if hasattr(c.app, "extra") else None
@@ -370,7 +371,7 @@ class TestExternalPlanCallback:
         })
         assert resp.status_code == 200
         plan_id = resp.json()["planId"]
-        time.sleep(3)
+        wait_for_client_plan(c, plan_id, excel_hash=upload["excelHash"])
 
         # Query external plan items to verify status values
         items_resp = c.get(f"/executor/v1/plans/{plan_id}/items?excelHash={upload['excelHash']}")

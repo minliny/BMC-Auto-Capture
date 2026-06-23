@@ -45,7 +45,7 @@ class ResourceMonitor:
 
         while not self._stop.is_set():
             try:
-                cpu = psutil.cpu_percent(interval=1.0)
+                cpu = psutil.cpu_percent(interval=min(1.0, max(0.0, self._interval)))
                 mem = psutil.virtual_memory().percent
                 with self._lock:
                     self._cpu = cpu

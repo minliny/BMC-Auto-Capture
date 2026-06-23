@@ -28,6 +28,7 @@ from src.executor_api_server.service import DirectDispatchService
 from src.plan_run_service import PlanRunService
 from src.plan_run_service.service import _excel_store, _store_lock
 from src.plan_item_status_callback_client import FakeCallbackTransport
+from tests.wait_helpers import wait_for_client_plan
 
 EXCEL_FILE = str(Path(__file__).parent.parent / "examples" / "task_template.xlsx")
 
@@ -282,7 +283,7 @@ class TestRunItems:
             "runner": "fake",
         })
         run_id = resp.json()["planId"]
-        time.sleep(3)
+        wait_for_client_plan(c, run_id)
 
         # Get items
         resp = c.get(f"/executor/v1/plans/1/items")
@@ -336,7 +337,7 @@ class TestRunItems:
             "runner": "fake",
         })
         run_id = resp.json()["planId"]
-        time.sleep(3)
+        wait_for_client_plan(c, run_id)
 
         resp_items = c.get(f"/executor/v1/plans/1/items")
         data = resp_items.json()
@@ -483,7 +484,7 @@ class TestOpticalModuleTask415:
         })
         assert resp2.status_code == 200
         run_id = resp2.json()["planId"]
-        time.sleep(3)
+        wait_for_client_plan(resp, run_id)
 
         # Get items
         resp3 = resp.get(f"/executor/v1/plans/1/items")
@@ -624,7 +625,7 @@ class TestDebugCallbackStillWorks:
             "runner": "fake",
         })
         assert resp.status_code == 200
-        time.sleep(3)
+        wait_for_client_plan(c, 1)
 
         resp = c.get("/debug/plan-item-statuses")
         data = resp.json()
@@ -667,7 +668,7 @@ class TestDebugCallbackStillWorks:
             "runner": "fake",
         })
         assert resp.status_code == 200
-        time.sleep(3)
+        wait_for_client_plan(c, 1)
 
         resp = c.get("/debug/plan-item-statuses")
         data = resp.json()
@@ -751,7 +752,7 @@ class TestOpticalModuleFakeRun:
         })
         assert resp.status_code == 200
         run_id = resp.json()["planId"]
-        time.sleep(3)
+        wait_for_client_plan(client, run_id)
 
         resp = client.get(f"/executor/v1/plans/1/items")
         data = resp.json()
@@ -854,7 +855,7 @@ class TestRunConfigSnapshot:
         hash_b = resp.json()["excelHash"]
 
         # Run1 still uses A's hash (retrieved from run query)
-        time.sleep(3)  # Wait for run1 to complete (fake runner)
+        wait_for_client_plan(client, run1_id)
         resp = client.get(f"/executor/v1/plans/{run1_id}")
         if resp.status_code == 200:
             run1_query = resp.json()
@@ -979,8 +980,7 @@ class TestRunConfigSnapshot:
         })
         assert resp.status_code == 200
         run_id = resp.json()["planId"]
-
-        time.sleep(3)
+        wait_for_client_plan(client, run_id)
 
         # Check debug callback store
         resp = client.get("/debug/plan-item-statuses")

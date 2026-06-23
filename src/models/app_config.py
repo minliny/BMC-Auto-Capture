@@ -25,6 +25,7 @@ class AppConfig:
     cpu_emergency_pct: float = 95.0
     mem_emergency_pct: float = 92.0
     resource_check_interval: float = 5.0
+    scheduler_loop_interval: float = 0.05
 
     # --- Dynamic scaling coefficients ---
     resource_scale_emergency: float = 0.3
@@ -118,6 +119,7 @@ class AppConfig:
             cpu_emergency_pct=float(data.get("cpu_emergency_pct", 95.0)),
             mem_emergency_pct=float(data.get("mem_emergency_pct", 92.0)),
             resource_check_interval=float(data.get("resource_check_interval", 5.0)),
+            scheduler_loop_interval=float(data.get("scheduler_loop_interval", 0.05)),
             resource_scale_emergency=float(data.get("resource_scale_emergency", 0.3)),
             resource_scale_down=float(data.get("resource_scale_down", 0.6)),
             resource_scale_up=float(data.get("resource_scale_up", 1.3)),

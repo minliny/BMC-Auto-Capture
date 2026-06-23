@@ -13,6 +13,7 @@ from src.models.task import Task
 from src.models.task_plan import TaskPlan
 from src.models.app_config import AppConfig
 from src.scheduler.dynamic_scheduler import DynamicScheduler
+from tests.fakes import make_fake_dynamic_scheduler, restore_session_runner
 
 
 def make_device(idx: int, group: str, has_bmc: bool = True, has_ssh: bool = True) -> Device:
@@ -112,12 +113,18 @@ def test_28_devices_128_plans():
         config.base_ssh_workers = 4
         config.max_ssh_workers = 4
         config.output_root = "/tmp/bmc_test_output"
+        config.resource_check_interval = 0.001
+        config.scheduler_loop_interval = 0.001
 
-        scheduler = DynamicScheduler(config)
+        FakeScheduler, restore_token = make_fake_dynamic_scheduler(config, sleep_seconds=0.001)
+        scheduler = FakeScheduler(config)
 
         t0 = time.time()
-        results = scheduler.run(plans)
-        elapsed = time.time() - t0
+        try:
+            results = scheduler.run(plans)
+            elapsed = time.time() - t0
+        finally:
+            restore_session_runner(restore_token)
 
         print(f"\nResults: {len(results)} completed, {exec_count[0]} executed")
         print(f"Elapsed: {elapsed:.1f}s")

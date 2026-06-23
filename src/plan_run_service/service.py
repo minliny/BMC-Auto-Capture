@@ -844,7 +844,6 @@ class PlanRunService:
         )
 
     def _execute_fake(self, item: PlanRunItem):
-        time.sleep(0.001)
         item.status = "SUCCESS"
         item.error_message = None
         item.add_info_event("INFO", f"Fake execution completed: device={item.device_name} task={item.task_name}")

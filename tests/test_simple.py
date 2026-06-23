@@ -12,6 +12,7 @@ from src.models.execution_result import ExecutionResult
 from src.models.app_config import AppConfig
 from src.scheduler.dynamic_scheduler import DynamicScheduler
 from src.scheduler.plan_generator import generate_plans
+from tests.fakes import make_fake_dynamic_scheduler, restore_session_runner
 
 
 # --- Helpers ---
@@ -45,6 +46,8 @@ def _make_config():
     config.base_ssh_workers = 1
     config.max_ssh_workers = 1
     config.output_root = "/tmp/bmc_test"
+    config.resource_check_interval = 0.001
+    config.scheduler_loop_interval = 0.001
     return config
 
 
@@ -55,8 +58,12 @@ def test_simple_scheduler_clean_shutdown():
     plans = _build_plans()
     assert len(plans) == 4, f"Expected 4 plans, got {len(plans)}"
 
-    s = _TestScheduler(_make_config())
-    results = s.run(plans)
+    FakeScheduler, restore_token = make_fake_dynamic_scheduler(_make_config(), sleep_seconds=0.001)
+    try:
+        s = FakeScheduler(_make_config())
+        results = s.run(plans)
+    finally:
+        restore_session_runner(restore_token)
 
     remaining = sum(len(q) for q in s._endpoint_queues.values())
     assert len(results) == len(plans), f"Missing results: {len(results)}/{len(plans)}"

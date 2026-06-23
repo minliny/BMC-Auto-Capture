@@ -111,10 +111,11 @@ class FakeBMCSessionRunner:
 
     def __init__(self, browser_manager=None, endpoint_key="", plans=None,
                  output_root="", connect_timeout=30, page_timeout=60,
-                 on_plan_done=None, on_group_done=None):
+                 artifact_profile="full", on_plan_done=None, on_group_done=None):
         self.plans = list(plans) if plans else []
         self.endpoint_key = endpoint_key
         self.output_root = output_root
+        self.artifact_profile = artifact_profile
         self.on_plan_done = on_plan_done
         self.on_group_done = on_group_done
         self.sleep_seconds = 0.05
@@ -177,12 +178,13 @@ def fake_bmc_session_runner_factory(
     """Return a factory that creates FakeBMCSessionRunners."""
     def factory(browser_manager=None, endpoint_key="", plans=None,
                 output_root="", connect_timeout=30, page_timeout=60,
-                on_plan_done=None, on_group_done=None):
+                artifact_profile="full", on_plan_done=None, on_group_done=None):
         runner = FakeBMCSessionRunner(
             browser_manager=browser_manager,
             endpoint_key=endpoint_key,
             plans=plans,
             output_root=output_root,
+            artifact_profile=artifact_profile,
             on_plan_done=on_plan_done,
             on_group_done=on_group_done,
         )
@@ -321,6 +323,7 @@ def make_fake_dynamic_scheduler(config: AppConfig, sleep_seconds: float = 0.05):
                 endpoint_key=kwargs.get('endpoint_key', ''),
                 plans=kwargs.get('plans', []),
                 output_root=kwargs.get('output_root', ''),
+                artifact_profile=kwargs.get('artifact_profile', 'full'),
                 on_plan_done=kwargs.get('on_plan_done'),
                 on_group_done=kwargs.get('on_group_done'),
             )

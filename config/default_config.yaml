@@ -15,6 +15,7 @@ mem_scale_up_pct: 50.0
 cpu_emergency_pct: 95.0
 mem_emergency_pct: 92.0
 resource_check_interval: 5.0
+scheduler_loop_interval: 0.05
 
 # --- Dynamic scaling coefficients ---
 resource_scale_emergency: 0.3

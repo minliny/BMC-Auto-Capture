@@ -16,6 +16,7 @@ from src.plan_item_status_callback_client import (
     PlanItemStatusCallbackClient,
     validate_callback_url,
 )
+from tests.wait_helpers import wait_for_service_plan, wait_until
 
 EXCEL_FILE = str(Path(__file__).parent.parent / "examples" / "task_template.xlsx")
 
@@ -94,7 +95,6 @@ class TestExcelConfig:
         """4. New upload overwrites old latest."""
         svc = PlanRunService()
         r1 = svc.set_latest_excel(EXCEL_FILE)
-        time.sleep(1.1)
         r2 = svc.set_latest_excel(EXCEL_FILE)
         # configVersion removed — both calls return without configVersion
         assert r1["excelHash"] == r2["excelHash"]  # Same content, same hash
@@ -159,8 +159,7 @@ class TestPlanRun:
         svc = PlanRunService(callback_transport=transport)
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb/items"}})
-        # Wait for background thread to complete
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         run = svc.get_plan(r["planId"])
         assert run is not None
         assert run["summary"]["total"] > 0
@@ -220,7 +219,7 @@ class TestPlanRun:
         svc = PlanRunService()
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {}})
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         run = svc.get_plan(r["planId"])
         assert "summary" in run
         assert run["summary"]["total"] > 0
@@ -802,8 +801,7 @@ class TestBatchModeIntegration:
         transport = FakeCallbackTransport()
         svc._cb_transport = transport
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
-        # Wait for background thread to complete; run_all_sync may re-execute
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         run = svc.get_plan(r["planId"])
         # With batch mode, transport receives the batch (at least once)
         assert len(transport.calls) >= 1
@@ -900,9 +898,14 @@ class TestBatchModeIntegration:
 
         run = svc.get_plan(r["planId"])
         output_root = Path(run["outputRoot"])
-        assert (output_root / "result.csv").is_file()
-        assert (output_root / "final_result.csv").is_file()
-        assert (output_root / "execution_summary.json").is_file()
+        wait_until(
+            lambda: (
+                (output_root / "result.csv").is_file()
+                and (output_root / "final_result.csv").is_file()
+                and (output_root / "execution_summary.json").is_file()
+            ),
+            message=f"batch report files were not written under {output_root}",
+        )
 
     def test_plan_run_reports_use_injected_result_writer(self, tmp_path):
         from src.plan_run_service.service import PlanRun, PlanRunItem
@@ -956,7 +959,7 @@ class TestBatchModeIntegration:
             "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         assert len(transport.calls) >= 1
         assert "items" in transport.calls[0]["payload"]
 
@@ -971,7 +974,7 @@ class TestBatchModeIntegration:
             "callback": {"planId": "1", "itemStatusUrl": "http://cb", "mode": "single"},
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         assert len(transport.calls) > 0
         for call in transport.calls:
             assert "planId" in call["payload"]
@@ -1025,7 +1028,7 @@ class TestPlanItemCountEdgeCases:
         transport = FakeCallbackTransport()
         svc._cb_transport = transport
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         run = svc.get_plan(r["planId"])
         batch_items = _transport_final_item_payloads(transport)
         assert len(batch_items) == run["summary"]["total"]
@@ -1085,7 +1088,7 @@ class TestCallbackPlanId:
             "callback": {"planId": 7, "itemStatusUrl": "http://cb"},  # int → str
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         batch_items = _transport_item_payloads(transport)
         for item in batch_items:
             assert item["planId"] == "7"
@@ -1102,7 +1105,7 @@ class TestCallbackPlanId:
             "callback": {"planId": 1, "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         for item in _transport_item_payloads(transport):
             assert isinstance(item["planId"], str)
 
@@ -1114,7 +1117,7 @@ class TestCallbackPlanId:
         svc._cb_transport = transport
         # plan_id=1 becomes the callback planId
         r = svc.start_plan_run(1, {"callback": {"itemStatusUrl": "http://cb"}})
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         assert len(transport.calls) > 0
         # Batch mode: planId inside items array
         for call in transport.calls:
@@ -1134,7 +1137,7 @@ class TestCallbackPlanId:
             "callback": {"planId": "service-plan-99", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         batch_items = _transport_item_payloads(transport)
         for item in batch_items:
             # planId in callback body equals the response planId (same single ID)
@@ -1147,12 +1150,12 @@ class TestCallbackPlanId:
         transport = FakeCallbackTransport()
         svc._cb_transport = transport
         excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
-        svc.start_external_plan({
+        r = svc.start_external_plan({
             "excelHash": excel_hash,
             "callback": {"planId": "1", "itemStatusUrl": "http://cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         payload_str = str(transport.calls[0]["payload"])
         assert "excelHash" not in payload_str
 
@@ -1166,29 +1169,29 @@ class TestPlanItemStatusAlignment:
     """PlanItem internal status uses PENDING/IN_PROGRESS/SUCCESS/FAILED."""
 
     def test_plan_item_initial_status_is_pending(self):
-        svc = PlanRunService()
+        svc = PlanRunService(callback_transport=FakeCallbackTransport())
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         items_data = svc.get_plan_items(r["planId"])
         # Initial status should be PENDING before execution, but after fake run all are SUCCESS
         for item in items_data["items"]:
             assert item["status"] in ("PENDING", "IN_PROGRESS", "SUCCESS", "FAILED")
 
     def test_plan_item_no_running_status(self):
-        svc = PlanRunService()
+        svc = PlanRunService(callback_transport=FakeCallbackTransport())
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         items_data = svc.get_plan_items(r["planId"])
         for item in items_data["items"]:
             assert item["status"] != "RUNNING", f"PlanItem should not use RUNNING, got {item['status']}"
 
     def test_summary_has_in_progress_not_running(self):
-        svc = PlanRunService()
+        svc = PlanRunService(callback_transport=FakeCallbackTransport())
         svc.set_latest_excel(EXCEL_FILE)
         r = svc.start_plan_run(1, {"callback": {"planId": "1", "itemStatusUrl": "http://cb"}})
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         run = svc.get_plan(r["planId"])
         s = run["summary"]
         assert "in_progress" in s
@@ -1383,12 +1386,12 @@ class TestCallbackUrlResolution:
         transport = FakeCallbackTransport()
         svc._cb_transport = transport
         excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
-        svc.start_external_plan({
+        r = svc.start_external_plan({
             "excelHash": excel_hash,
             "callback": {"planId": "1", "itemStatusUrl": "http://request-url/cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         # Registry wins → callback sent to registry URL
         assert len(transport.calls) >= 1
         url_used = transport.calls[0]["url"]
@@ -1403,12 +1406,12 @@ class TestCallbackUrlResolution:
         transport = FakeCallbackTransport()
         svc._cb_transport = transport
         excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
-        svc.start_external_plan({
+        r = svc.start_external_plan({
             "excelHash": excel_hash,
             "callback": {"planId": "1", "itemStatusUrl": "http://fallback-url/cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         assert len(transport.calls) >= 1
         assert transport.calls[0]["url"] == "http://fallback-url/cb"
 
@@ -1421,12 +1424,12 @@ class TestCallbackUrlResolution:
         transport = FakeCallbackTransport()
         svc._cb_transport = transport
         excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
-        svc.start_external_plan({
+        r = svc.start_external_plan({
             "excelHash": excel_hash,
             "callback": {"planId": "1"},  # no itemStatusUrl
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         assert len(transport.calls) >= 1
         assert transport.calls[0]["url"] == "http://env-url/cb"
 
@@ -1439,12 +1442,12 @@ class TestCallbackUrlResolution:
         transport = FakeCallbackTransport()
         svc._cb_transport = transport
         excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
-        svc.start_external_plan({
+        r = svc.start_external_plan({
             "excelHash": excel_hash,
             "callback": {"planId": "1"},  # no itemStatusUrl
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         # No URL configured → no callback
         assert len(transport.calls) == 0
 
@@ -1463,12 +1466,12 @@ class TestCallbackUrlResolution:
         transport = FakeCallbackTransport()
         svc._cb_transport = transport
         excel_hash = svc.set_latest_excel(EXCEL_FILE)["excelHash"]
-        svc.start_external_plan({
+        r = svc.start_external_plan({
             "excelHash": excel_hash,
             "callback": {"planId": "1", "itemStatusUrl": "http://request-url/cb"},
             "runner": "fake",
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
         # Registry failed → falls back to request URL
         assert transport.calls[0]["url"] == "http://request-url/cb"
 
@@ -1582,10 +1585,10 @@ class TestPlanIdConflict:
         transport = FakeCallbackTransport()
         svc._cb_transport = transport
 
-        svc.start_plan_run(99, {
+        r = svc.start_plan_run(99, {
             "callback": {"planId": "88", "itemStatusUrl": "http://cb/items"},
         })
-        time.sleep(3)
+        wait_for_service_plan(svc, r["planId"])
 
         for call in transport.calls:
             top_plan_id = call["payload"].get("planId")
