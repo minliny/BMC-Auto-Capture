@@ -7,13 +7,18 @@ from pathlib import Path
 
 from PIL import Image
 from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Pt
 
 from src.out.acceptance_docx import generate_acceptance_artifacts
 
 
 def _write_template(path: Path) -> None:
     doc = Document()
+    result_style = doc.styles.add_style("Acceptance Result Text", WD_STYLE_TYPE.PARAGRAPH)
+    result_style.base_style = doc.styles["Normal"]
+    result_style.font.size = Pt(9)
     doc.add_heading("测试用例及测试记录", level=1)
     doc.add_heading("管理功能测试", level=2)
     doc.add_heading("计算节点部件信息查询测试", level=3)
@@ -23,6 +28,7 @@ def _write_template(path: Path) -> None:
     for idx, label in enumerate(labels):
         table.rows[idx].cells[0].text = label
         table.rows[idx].cells[1].text = values[idx]
+    table.rows[6].cells[1].paragraphs[0].style = result_style
 
     doc.add_heading("测试结果分析", level=1)
     summary = doc.add_table(rows=2, cols=4)
@@ -35,6 +41,7 @@ def _write_template(path: Path) -> None:
 
 def _append_case_to_template(path: Path, case_id: str, title: str, category: str = "管理功能测试") -> None:
     doc = Document(path)
+    result_style = doc.styles["Acceptance Result Text"]
     doc.add_heading(category, level=2)
     doc.add_heading(title, level=3)
     table = doc.add_table(rows=8, cols=2)
@@ -43,6 +50,7 @@ def _append_case_to_template(path: Path, case_id: str, title: str, category: str
     for idx, label in enumerate(labels):
         table.rows[idx].cells[0].text = label
         table.rows[idx].cells[1].text = values[idx]
+    table.rows[6].cells[1].paragraphs[0].style = result_style
     doc.save(path)
 
 
@@ -70,6 +78,13 @@ def _summary_verdict_cells(doc: Document, verdict: str):
         for row in table.rows[1:]:
             if len(row.cells) >= 4 and " ".join(row.cells[3].text.split()) == verdict:
                 yield row.cells[3]
+
+
+def _case_result_rows(doc: Document):
+    for table in doc.tables:
+        for row in table.rows:
+            if len(row.cells) >= 2 and " ".join(row.cells[0].text.split()) == "测试结果":
+                yield row
 
 
 def test_generate_acceptance_docx_and_evidence_zip(tmp_path: Path):
@@ -114,9 +129,20 @@ def test_generate_acceptance_docx_and_evidence_zip(tmp_path: Path):
         for row in table.rows:
             for cell in row.cells:
                 text += "\n" + cell.text
-    assert "测试结果：PASS" in text
+    assert "测试结果：PASS" not in text
     assert "证据1：计算节点部件信息查询测试-CPU" in text
     assert "证据2：计算节点部件信息查询测试-NPU" in text
+    case_result_rows = list(_case_result_rows(filled))
+    assert case_result_rows
+    case_result_row = case_result_rows[0]
+    assert " ".join(case_result_row.cells[0].text.split()) == "测试结果"
+    assert case_result_row.cells[0]._tc.xpath(".//w:drawing") == []
+    assert case_result_row.cells[1].paragraphs[0].text == "PASS"
+    assert case_result_row.cells[1]._tc.xpath(".//w:drawing")
+    result_text_paragraphs = [p for p in case_result_row.cells[1].paragraphs if p.text.strip()]
+    assert result_text_paragraphs
+    assert {p.style.name for p in result_text_paragraphs} == {"Acceptance Result Text"}
+    assert all(run.bold is None for p in result_text_paragraphs for run in p.runs)
     summary_verdict_cells = list(_summary_verdict_cells(filled, "PASS"))
     assert summary_verdict_cells
     for cell in summary_verdict_cells:
@@ -136,18 +162,23 @@ def test_generate_acceptance_docx_and_evidence_zip(tmp_path: Path):
         xml = zf.read("word/document.xml")
     root = ET.fromstring(xml)
     ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-    drawing_cells = [tc for tc in root.findall(".//w:tc", ns) if tc.find(".//w:drawing", ns) is not None]
-    assert drawing_cells
-    for tc in drawing_cells:
-        texts = [text.text or "" for text in tc.findall(".//w:t", ns)]
-        assert "测试结果：PASS" in texts
-        assert " 测试结果：PASS" not in texts
-        left = tc.find("./w:tcPr/w:tcMar/w:left", ns)
-        assert left is not None
-        assert left.attrib["{http://schemas.openxmlformats.org/wordprocessingml/2006/main}w"] == "0"
-        grid_span = tc.find("./w:tcPr/w:gridSpan", ns)
-        assert grid_span is not None
-        assert int(grid_span.attrib["{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"]) >= 2
+    result_rows = []
+    for tr in root.findall(".//w:tr", ns):
+        cells = tr.findall("./w:tc", ns)
+        if len(cells) >= 2:
+            first_text = "".join(text.text or "" for text in cells[0].findall(".//w:t", ns))
+            if first_text == "测试结果":
+                result_rows.append(cells)
+    assert result_rows
+    left_tc = result_rows[0][0]
+    right_tc = result_rows[0][-1]
+    assert left_tc.find(".//w:drawing", ns) is None
+    assert right_tc.find(".//w:drawing", ns) is not None
+    texts = [text.text or "" for text in right_tc.findall(".//w:t", ns)]
+    assert "PASS" in texts
+    assert " PASS" not in texts
+    assert "测试结果：PASS" not in texts
+    assert right_tc.find("./w:tcPr/w:gridSpan", ns) is None
     nowrap_cells = [
         tc for tc in root.findall(".//w:tc", ns)
         if "".join(text.text or "" for text in tc.findall(".//w:t", ns)) == "PASS"

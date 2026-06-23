@@ -19,6 +19,7 @@ logger = logging.getLogger("bmc_auto_capture.acceptance_docx")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 TASK_DIR_PATTERN = re.compile(r"^(\d+(?:\.\d+)+)[._](.+)$")
+RESULT_IMAGE_WIDTH_INCHES = 4.1
 DEFAULT_TEMPLATE_RELATIVE_PATH = Path(
     "templates/acceptance/Atlas 900 A3 SuperPoD 超节点 验收测试指南 03.docx"
 )
@@ -609,7 +610,7 @@ def _case_id_from_table(table) -> str:
 def _result_cell_from_table(table):
     for row in table.rows:
         if len(row.cells) >= 2 and _norm(row.cells[0].text) == "测试结果":
-            return row.cells[0].merge(row.cells[-1])
+            return row.cells[-1]
     return None
 
 
@@ -732,33 +733,46 @@ def _case_verdict(rows: list[ResultRow]) -> str:
 def _write_case_result(cell, verdict: str, rows: list[ResultRow]) -> None:
     from docx.shared import Inches
 
-    _set_cell_left_margin(cell, 0)
+    text_style = _first_paragraph_style(cell)
     _clear_cell_content(cell)
-    first = cell.add_paragraph()
-    _left_align_paragraph(first)
-    first.add_run(f"测试结果：{verdict}").bold = True
+    first = _add_result_text_paragraph(cell, text_style)
+    first.add_run(verdict)
 
     for index, row in enumerate(rows, start=1):
-        label = cell.add_paragraph()
-        _left_align_paragraph(label)
-        label.add_run(f"证据{index}：{row.task_name}").bold = True
+        label = _add_result_text_paragraph(cell, text_style)
+        label.add_run(f"证据{index}：{row.task_name}")
         device = " / ".join(part for part in (row.device_group, row.device_name) if part)
         if device:
             label.add_run(f"（{device}）")
 
         image = next((path for path in row.screenshot_paths if path.exists() and path.suffix.lower() in IMAGE_EXTENSIONS), None)
         if image is None:
-            missing = cell.add_paragraph("未找到可插入的截图。")
-            _left_align_paragraph(missing)
+            missing = _add_result_text_paragraph(cell, text_style)
+            missing.add_run("未找到可插入的截图。")
             continue
         picture_paragraph = cell.add_paragraph()
         _left_align_picture_paragraph(picture_paragraph)
-        picture_paragraph.add_run().add_picture(str(image), width=Inches(5.1))
+        picture_paragraph.add_run().add_picture(str(image), width=Inches(RESULT_IMAGE_WIDTH_INCHES))
 
         reason = row.failure_reason.strip()
         if reason:
-            reason_paragraph = cell.add_paragraph(f"说明：{reason}")
-            _left_align_paragraph(reason_paragraph)
+            reason_paragraph = _add_result_text_paragraph(cell, text_style)
+            reason_paragraph.add_run(f"说明：{reason}")
+
+
+def _first_paragraph_style(cell):
+    for paragraph in cell.paragraphs:
+        if paragraph.style is not None:
+            return paragraph.style
+    return None
+
+
+def _add_result_text_paragraph(cell, style):
+    paragraph = cell.add_paragraph()
+    if style is not None:
+        paragraph.style = style
+    _left_align_paragraph(paragraph)
+    return paragraph
 
 
 def _clear_cell_content(cell) -> None:
@@ -779,8 +793,8 @@ def _left_align_picture_paragraph(paragraph) -> None:
     from docx.shared import Pt
 
     _left_align_paragraph(paragraph)
-    # Real Word/LibreOffice rendering keeps a small inline-picture inset in
-    # this template; -8pt cancels it so the screenshot edge aligns with text.
+    # Real Word/LibreOffice rendering keeps an inline-picture inset in this
+    # template; -8pt aligns the screenshot edge with the result text.
     paragraph.paragraph_format.left_indent = Pt(-8)
 
 
