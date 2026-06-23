@@ -132,8 +132,8 @@ try {
     # ======================================================================
     Write-Step "3. Checking /executor/v1/status"
     $status = Invoke-Api -Method GET -Path "/executor/v1/status"
-    if ($status.status -eq "ONLINE" -and $status.version -eq "0.2.4") {
-        Write-Pass "/executor/v1/status: ONLINE, version=0.2.4"
+    if ($status.status -eq "ONLINE" -and $status.version -eq "0.2.5rc1") {
+        Write-Pass "/executor/v1/status: ONLINE, version=0.2.5rc1"
     } else {
         Write-Fail "/executor/v1/status: unexpected response: $($status | ConvertTo-Json -Compress)"
     }

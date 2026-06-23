@@ -398,7 +398,7 @@ class TestPlanRunServicePerGroupCommands:
             str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx"),
             tasks_json_path=str(Path(__file__).resolve().parent.parent / "tasks.json"),
         )
-        task = next(t for t in tasks if getattr(t, "sequence_str", "") == "17")
+        task = next(t for t in tasks if t.task_name == "计算节点光模块信息查询测试")
         device = Device(
             row_index=1, device_name="redacted-device", device_group="A3",
             bmc_ip="", bmc_username="", bmc_password="",
@@ -436,7 +436,7 @@ class TestPlanRunServicePerGroupCommands:
             str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx"),
             tasks_json_path=str(Path(__file__).resolve().parent.parent / "tasks.json"),
         )
-        task = next(t for t in tasks if getattr(t, "sequence_str", "") == "1")
+        task = next(t for t in tasks if t.task_name == "RAID配置测试")
         device = Device(
             row_index=1, device_name="redacted-device", device_group="A3",
             bmc_ip="192.0.2.2", bmc_username="u", bmc_password="p",
@@ -465,7 +465,7 @@ class TestPlanRunServicePerGroupCommands:
             str(Path(__file__).resolve().parent.parent / "examples" / "task_template.xlsx"),
             tasks_json_path=str(Path(__file__).resolve().parent.parent / "tasks.json"),
         )
-        task = next(t for t in tasks if getattr(t, "sequence_str", "") == "16")
+        task = next(t for t in tasks if t.task_name == "计算节点L1交换网络端口查询测试")
         device = Device(
             row_index=1, device_name="redacted-device", device_group="L1",
             bmc_ip="", bmc_username="", bmc_password="",

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bmc-auto-capture"
-version = "0.2.4"
+version = "0.2.5rc1"
 description = "智算项目 BMC/SSH 自动化测试证据采集平台"
 requires-python = ">=3.11"
 dependencies = [
@@ -22,6 +22,7 @@ dependencies = [
     "aiofiles>=23.0",
     "Pillow>=10.0",
     "telnetlib3>=2.0",
+    "python-docx>=1.1",
 ]
 
 [project.optional-dependencies]

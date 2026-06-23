@@ -29,6 +29,8 @@ _runtime_hiddenimports = [
     "aiofiles",
     "python_multipart",
     "multipart",
+    "docx",
+    "lxml",
 ]
 
 for _package in (
@@ -41,6 +43,8 @@ for _package in (
     "anyio",
     "multipart",
     "python_multipart",
+    "docx",
+    "lxml",
 ):
     _runtime_hiddenimports += collect_submodules(_package)
 

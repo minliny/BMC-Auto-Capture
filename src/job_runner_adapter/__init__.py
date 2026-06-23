@@ -340,10 +340,10 @@ class RealRunnerAdapter:
             actions_json=snapshot.get("actions_json", ""),
             rules_json=snapshot.get("rules_json", ""),
             output_dir_template=snapshot.get(
-                "output_dir_template", "{device_name}/{task_name}"
+                "output_dir_template", "{任务序号}.{任务名称}/{设备分类}"
             ),
             image_name_template=snapshot.get(
-                "image_name_template", "{device_name}_{task_name}_{step}_{timestamp}"
+                "image_name_template", "{TaskIP}-{任务名称}"
             ),
             timeout_seconds=int(snapshot.get("timeout_seconds", 60)),
             retry_count=int(snapshot.get("retry_count", 0)),

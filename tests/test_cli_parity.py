@@ -98,6 +98,12 @@ REQUIRED_FLAGS = [
     "--bmc-page-timeout",
     "--ssh-command-timeout",
     "--ssh-idle-timeout",
+    "--acceptance-docx",
+    "--acceptance-run-output",
+    "--acceptance-evidence-dirs",
+    "--acceptance-evidence-dir",
+    "--acceptance-template",
+    "--acceptance-output-dir",
     "--host",
     "--port",
     "--verbose",
@@ -161,6 +167,36 @@ def test_build_parser_accepts_bmc_artifact_profile():
     parser = build_parser()
     args = parser.parse_args(["--excel", "x.xlsx", "--bmc-artifact-profile", "fast"])
     assert args.bmc_artifact_profile == "fast"
+
+
+def test_build_parser_accepts_acceptance_docx_export():
+    from src.cli.args import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "--acceptance-docx",
+        "--acceptance-run-output",
+        "output/20260623_103000",
+    ])
+    assert args.acceptance_docx is True
+    assert args.acceptance_run_output == "output/20260623_103000"
+
+
+def test_build_parser_accepts_acceptance_evidence_dirs():
+    from src.cli.args import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "--acceptance-docx",
+        "--acceptance-evidence-dirs",
+        "output/20260623_103000/4.2.4.计算节点部件信息查询测试-CPU",
+        "output/20260623_103000/4.2.4.计算节点部件信息查询测试-NPU",
+    ])
+    assert args.acceptance_docx is True
+    assert args.acceptance_evidence_dirs == [
+        "output/20260623_103000/4.2.4.计算节点部件信息查询测试-CPU",
+        "output/20260623_103000/4.2.4.计算节点部件信息查询测试-NPU",
+    ]
 
 
 def test_legacy_concurrency_implies_full_and_both_worker_pools():

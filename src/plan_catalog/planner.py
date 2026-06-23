@@ -279,8 +279,8 @@ class PlanCatalogPlanner:
             "retry_count": int(getattr(task, "retry_count", 0) or 0),
             "full_screenshot": bool(getattr(task, "full_screenshot", False)),
             "screenshot_mode": getattr(task, "screenshot_mode", "auto") or "auto",
-            "output_dir_template": getattr(task, "output_dir_template", "{device_name}/{task_name}") or "{device_name}/{task_name}",
-            "image_name_template": getattr(task, "image_name_template", "{device_name}_{task_name}_{step}_{timestamp}") or "{device_name}_{task_name}_{step}_{timestamp}",
+            "output_dir_template": getattr(task, "output_dir_template", "{任务序号}.{任务名称}/{设备分类}") or "{任务序号}.{任务名称}/{设备分类}",
+            "image_name_template": getattr(task, "image_name_template", "{TaskIP}-{任务名称}") or "{TaskIP}-{任务名称}",
         }
 
         resource_lock = {
@@ -358,7 +358,7 @@ class PlanCatalogPlanner:
             "command_or_url": cmd, "ssh_cmd": cmd,
             "timeout_seconds": nt.timeout_seconds, "retry_count": 0,
             "output_dir_template": "{device_name}/network_tests",
-            "image_name_template": "{device_name}_{task_name}_{timestamp}",
+            "image_name_template": "{TaskIP}-{任务名称}",
         }
 
         resource_lock = {

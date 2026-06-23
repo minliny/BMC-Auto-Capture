@@ -232,6 +232,7 @@ class BMCExecutor(AbstractExecutor):
             device_group=device.device_group,
             bmc_ip=device.bmc_ip,
             inband_ip=device.inband_ip,
+            task_sequence=task.sequence_str or str(task.sequence),
             task_name=task.task_name,
             task_type=task.task_type,
             execution_mode=task.execution_mode,

@@ -43,8 +43,8 @@ class TaskSnapshotPayload(BaseModel):
     actions_json: str = ""
     timeout_seconds: int = 60
     retry_count: int = 0
-    output_dir_template: str = "{device_name}/{task_name}"
-    image_name_template: str = "{device_name}_{task_name}_{step}_{timestamp}"
+    output_dir_template: str = "{任务序号}.{任务名称}/{设备分类}"
+    image_name_template: str = "{TaskIP}-{任务名称}"
     full_screenshot: bool = False
     screenshot_mode: str = "auto"
     artifact_profile: str = ""

@@ -237,10 +237,62 @@ def _run_launcher_mode(args_list: list[str]) -> int:
         return 1
 
 
+def _acceptance_evidence_dirs(args) -> list[str]:
+    dirs: list[str] = []
+    dirs.extend(getattr(args, "acceptance_evidence_dir", None) or [])
+    dirs.extend(getattr(args, "acceptance_evidence_dirs", None) or [])
+    return dirs
+
+
+def _run_acceptance_docx_export(args, app_dir: Path, run_output: str | Path | None) -> int:
+    """Generate acceptance DOCX artifacts for an existing run output directory."""
+    try:
+        generate_acceptance_artifacts = _import_attr(
+            "src.out.acceptance_docx",
+            "generate_acceptance_artifacts",
+        )
+        result = generate_acceptance_artifacts(
+            run_output=run_output,
+            evidence_dirs=_acceptance_evidence_dirs(args),
+            template_path=args.acceptance_template,
+            output_dir=args.acceptance_output_dir,
+            app_dir=app_dir,
+        )
+    except Exception as e:
+        print(f"ERROR: 验收文档生成失败: {e}", file=sys.stderr)
+        return 1
+
+    print("")
+    print("─" * 60)
+    print("  验收 DOCX 导出")
+    print("─" * 60)
+    print(f"  DOCX        : {result.docx_path}")
+    print(f"  evidence ZIP: {result.evidence_zip_path}")
+    print(f"  report      : {result.report_path}")
+    print(f"  matched     : {result.matched_cases}")
+    print(f"  unmatched   : {result.unmatched_cases}")
+    print(f"  packaged    : {result.packaged_files}")
+    print(f"  missing     : {result.missing_files}")
+    print("─" * 60)
+    return 0
+
+
 def main():
-    # Skip browser setup print if only doing auth preflight (no browser needed)
+    # Skip browser setup print for modes that do not use Playwright.
     _is_preflight_auth = "--preflight-auth" in sys.argv
-    if not _is_preflight_auth:
+    _is_acceptance_export_only = (
+        "--acceptance-docx" in sys.argv
+        and any(
+            arg == "--acceptance-run-output"
+            or arg.startswith("--acceptance-run-output=")
+            or arg == "--acceptance-evidence-dir"
+            or arg.startswith("--acceptance-evidence-dir=")
+            or arg == "--acceptance-evidence-dirs"
+            or arg.startswith("--acceptance-evidence-dirs=")
+            for arg in sys.argv
+        )
+    )
+    if not _is_preflight_auth and not _is_acceptance_export_only:
         _setup_browser_path()
     else:
         # Still set env var for browser path, but don't print
@@ -291,6 +343,9 @@ def main():
 
     if str(app_dir) not in sys.path:
         sys.path.insert(0, str(app_dir))
+
+    if args.acceptance_docx and (args.acceptance_run_output or _acceptance_evidence_dirs(args)):
+        return _run_acceptance_docx_export(args, app_dir, args.acceptance_run_output)
 
     AppConfig = _import_attr("src.models.app_config", "AppConfig")
     PipelineApp = _import_attr("src.app", "App")
@@ -560,6 +615,11 @@ def main():
         if batch_error.get("reason"):
             print(f"  {batch_error.get('message') or '批次执行失败。'}")
         sys.exit(1)
+
+    acceptance_export_failed = False
+    if args.acceptance_docx:
+        acceptance_export_failed = _run_acceptance_docx_export(args, app_dir, app.config.output_root) != 0
+
     batch_error = (
         app.current_batch_error_status()
         if hasattr(app, "current_batch_error_status")
@@ -568,6 +628,8 @@ def main():
     if batch_error.get("reason"):
         print(f"  {batch_error.get('message') or '批次执行失败。'}")
     failed = failed_result_count(results)
+    if acceptance_export_failed:
+        sys.exit(1)
     sys.exit(1 if failed > len(results) * 0.5 else 0)
 
 

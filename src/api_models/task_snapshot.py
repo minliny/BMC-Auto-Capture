@@ -61,8 +61,8 @@ class TaskSnapshot:
     command_or_url: str = ""
     actions_json: str = ""
     rules: list[TaskRule] = field(default_factory=list)
-    output_dir_template: str = "{device_name}/{task_name}"
-    image_name_template: str = "{device_name}_{task_name}_{step}_{timestamp}"
+    output_dir_template: str = "{任务序号}.{任务名称}/{设备分类}"
+    image_name_template: str = "{TaskIP}-{任务名称}"
     timeout_seconds: int = 60
     retry_count: int = 0
     full_screenshot: bool = False
@@ -114,8 +114,8 @@ class TaskSnapshot:
             command_or_url=d.get("command_or_url", ""),
             actions_json=d.get("actions_json", ""),
             rules=rules,
-            output_dir_template=d.get("output_dir_template", "{device_name}/{task_name}"),
-            image_name_template=d.get("image_name_template", "{device_name}_{task_name}_{step}_{timestamp}"),
+            output_dir_template=d.get("output_dir_template", "{任务序号}.{任务名称}/{设备分类}"),
+            image_name_template=d.get("image_name_template", "{TaskIP}-{任务名称}"),
             timeout_seconds=int(d.get("timeout_seconds", 60)),
             retry_count=int(d.get("retry_count", 0)),
             full_screenshot=bool(d.get("full_screenshot", False)),

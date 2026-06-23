@@ -207,6 +207,8 @@ if not exist "%EXCEL%" set "EXCEL=%ROOT%\examples\task_template.xlsx"
 set "BMC_WORKERS="
 set "SSH_WORKERS="
 set "WORKER_ARGS="
+set "ACCEPTANCE_DOCX=0"
+set "ACCEPTANCE_ARGS="
 
 :parse_args
 if "%~1"=="" goto :check_mode
@@ -293,8 +295,8 @@ echo( ============================================================
 echo.
 echo(    Excel : %EXCEL%
 echo(    引擎  : %ENGINE_DISPLAY%
-if "%BMC_WORKERS%"=="" (set "BMC_DISP=default") else (set "BMC_DISP=%BMC_WORKERS%")
-if "%SSH_WORKERS%"=="" (set "SSH_DISP=default") else (set "SSH_DISP=%SSH_WORKERS%")
+if "%BMC_WORKERS%"=="" (set "BMC_DISP=默认") else (set "BMC_DISP=%BMC_WORKERS%")
+if "%SSH_WORKERS%"=="" (set "SSH_DISP=默认") else (set "SSH_DISP=%SSH_WORKERS%")
 echo(    并发  : BMC=!BMC_DISP! SSH=!SSH_DISP!
 echo.
 echo(    [0] 启动 Executor API
@@ -305,13 +307,14 @@ echo(    [R] 直接测试 IP:端口(无需 Excel)
 echo(    [4] Debug 模式顺序执行
 echo(    [5] 设定 Excel 配置文件路径
 echo(    [6] 调整 BMC/SSH 并发量
-echo(    [7] 退出
+echo(    [8] 使用已有截图手动生成测试用例报告
+echo(    [9] 退出
 echo.
 echo(    Executor API: 启动.bat --server [--host 0.0.0.0] [--port 18000] [--enable-debug-callback-receiver]
 echo.
 
 set "CHOICE="
-set /p CHOICE="   请选择 [0-7]: "
+set /p CHOICE="   请选择 [0-6,8,9,R]: "
 
 if "%CHOICE%"=="1" goto :run_seq
 if "%CHOICE%"=="2" goto :run_full
@@ -322,7 +325,8 @@ if "%CHOICE%"=="4" goto :run_debug
 if "%CHOICE%"=="5" goto :set_excel
 if "%CHOICE%"=="6" goto :set_workers
 if "%CHOICE%"=="0" goto :run_server_menu
-if "%CHOICE%"=="7" goto :end
+if "%CHOICE%"=="8" goto :manual_acceptance_docx
+if "%CHOICE%"=="9" goto :end
 goto :menu
 
 :run_server_menu
@@ -398,9 +402,10 @@ echo(    顺序执行模式
 echo( ============================================================
 echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
+call :configure_acceptance_for_run
 echo(    执行中,请勿关闭此窗口...
 echo.
-call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode sequential %WORKER_ARGS%
+call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode sequential %WORKER_ARGS% %ACCEPTANCE_ARGS%
 set "SEQ_EXIT=%ERRORLEVEL%"
 echo.
 if %SEQ_EXIT% neq 0 (echo    [提示] 执行有错误,退出码: %SEQ_EXIT%)
@@ -415,9 +420,10 @@ echo(    动态并发执行模式
 echo( ============================================================
 echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
+call :configure_acceptance_for_run
 echo(    执行中,请勿关闭此窗口...
 echo.
-call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode full %WORKER_ARGS%
+call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode full %WORKER_ARGS% %ACCEPTANCE_ARGS%
 set "FULL_EXIT=%ERRORLEVEL%"
 echo.
 if %FULL_EXIT% neq 0 (echo    [提示] 执行有错误,退出码: %FULL_EXIT%)
@@ -477,7 +483,7 @@ if %PF_EXIT% neq 0 (
 ) else (
     echo    Preflight completed successfully.
 )
-echo    Press any key...
+echo    按任意键继续...
 pause >nul
 goto :menu
 
@@ -490,7 +496,7 @@ echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
 echo(    执行中,请勿关闭此窗口...
 echo.
-call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode sequential %WORKER_ARGS% --verbose
+call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode sequential %WORKER_ARGS% %ACCEPTANCE_ARGS% --verbose
 set "DBG_EXIT=%ERRORLEVEL%"
 echo.
 if %DBG_EXIT% neq 0 (echo    [DEBUG] 执行结束,退出码: %DBG_EXIT%) else (echo    [DEBUG] 执行成功完成)
@@ -499,6 +505,20 @@ pause >nul
 goto :menu
 
 :run_direct
+set "DIRECT_ACCEPTANCE_ONLY=0"
+echo(%RAW_ARGS% | findstr /i /c:"--acceptance-docx" >nul
+if !ERRORLEVEL! EQU 0 (
+    echo(%RAW_ARGS% | findstr /i /c:"--acceptance-run-output" /c:"--acceptance-evidence-dir" /c:"--acceptance-evidence-dirs" >nul
+    if !ERRORLEVEL! EQU 0 set "DIRECT_ACCEPTANCE_ONLY=1"
+)
+if "!DIRECT_ACCEPTANCE_ONLY!"=="1" (
+    call :run_engine --app-dir "%APP_DIR%" %RAW_ARGS%
+    set "EXITCODE=!ERRORLEVEL!"
+    echo(    执行完成,退出码: !EXITCODE!
+    if !EXITCODE! neq 0 (pause)
+    endlocal
+    exit /b !EXITCODE!
+)
 if not exist "%EXCEL%" (
     set "EXCEL=%APP_DIR%\examples\task_template.xlsx"
     if not exist "!EXCEL!" set "EXCEL=%ROOT%\examples\task_template.xlsx"
@@ -510,6 +530,30 @@ echo(    执行完成,退出码: %EXITCODE%
 if %EXITCODE% neq 0 (pause)
 endlocal
 exit /b %EXITCODE%
+
+
+:manual_acceptance_docx
+cls
+echo( ============================================================
+echo(    使用已有截图手动生成测试用例报告
+echo( ============================================================
+echo.
+echo(    请填写一个或多个已执行的截图目录路径,也可以把目录拖拽进来。
+echo(    示例路径:
+echo(      output\20260623_103000\4.2.4.计算节点部件信息查询测试-CPU\A3
+echo(      output\20260623_103000\4.2.4.计算节点部件信息查询测试-CPU
+echo(      output\20260623_103000
+echo.
+set /p ACCEPTANCE_DIRS="   目录路径(可拖拽目录进来): "
+if "!ACCEPTANCE_DIRS!"=="" goto :menu
+echo.
+call :run_engine --app-dir "%APP_DIR%" --acceptance-docx --acceptance-evidence-dirs !ACCEPTANCE_DIRS!
+set "DOCX_EXIT=%ERRORLEVEL%"
+echo.
+if %DOCX_EXIT% neq 0 (echo    [报告] 生成失败,退出码: %DOCX_EXIT%) else (echo    [报告] 生成完成。)
+echo(    按任意键返回菜单...
+pause >nul
+goto :menu
 
 :set_excel
 cls
@@ -535,6 +579,27 @@ goto :menu
 set "WORKER_ARGS="
 if not "%BMC_WORKERS%"=="" set "WORKER_ARGS=%WORKER_ARGS% --max-bmc-workers %BMC_WORKERS%"
 if not "%SSH_WORKERS%"=="" set "WORKER_ARGS=%WORKER_ARGS% --max-ssh-workers %SSH_WORKERS%"
+exit /b 0
+
+:configure_acceptance_for_run
+set "ACCEPTANCE_DOCX=0"
+set "ACCEPTANCE_ARGS="
+echo.
+set /p DOCX_CHOICE="   本次执行完成后是否生成测试用例报告(DOCX/ZIP)? [y/N]: "
+if /i "!DOCX_CHOICE!"=="Y" set "ACCEPTANCE_DOCX=1"
+if /i "!DOCX_CHOICE!"=="YES" set "ACCEPTANCE_DOCX=1"
+call :refresh_acceptance_args
+if "%ACCEPTANCE_DOCX%"=="1" (
+    echo(    已开启: 执行完成后生成测试用例报告。
+) else (
+    echo(    已关闭: 本次只执行任务,不生成测试用例报告。
+)
+echo.
+exit /b 0
+
+:refresh_acceptance_args
+set "ACCEPTANCE_ARGS="
+if "%ACCEPTANCE_DOCX%"=="1" set "ACCEPTANCE_ARGS=--acceptance-docx"
 exit /b 0
 
 :run_engine

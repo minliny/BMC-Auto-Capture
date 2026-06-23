@@ -74,6 +74,20 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--bmc-artifact-profile", choices=["full", "fast"], default=None,
                         help="BMC artifact profile: full saves PNG/HTML/evidence/MHTML/state JSON; fast saves PNG/HTML only")
 
+    # --- Acceptance DOCX export ---
+    parser.add_argument("--acceptance-docx", action="store_true",
+                        help="根据执行结果生成验收 DOCX、证据 ZIP 和回填报告")
+    parser.add_argument("--acceptance-run-output", default=None,
+                        help="已有执行输出目录；不指定时使用当前执行输出目录")
+    parser.add_argument("--acceptance-evidence-dirs", nargs="+", default=None,
+                        help="一个或多个已执行证据目录；支持拖拽任务目录或设备分类目录")
+    parser.add_argument("--acceptance-evidence-dir", action="append", default=[],
+                        help="一个已执行证据目录；可重复传入")
+    parser.add_argument("--acceptance-template", default=None,
+                        help="验收 DOCX 模板路径；默认使用项目内置模板")
+    parser.add_argument("--acceptance-output-dir", default=None,
+                        help="验收文档导出目录；默认使用执行输出目录")
+
     # --- Preflight ---
     parser.add_argument("--preflight-only", action="store_true",
                         help="Connectivity preflight only, no task execution")

@@ -25,7 +25,7 @@ v0.1 只覆盖**一个执行端与一个服务端之间的最小任务闭环**�
   "hostname": "WIN-PC-001",
   "ip": "10.0.1.100",
   "os": "Windows Server 2022",
-  "version": "0.2.4",
+  "version": "0.2.5rc1",
   "status": "ONLINE",
   "capabilities": {
     "max_bmc_workers": 4,
@@ -105,8 +105,8 @@ v0.1 只覆盖**一个执行端与一个服务端之间的最小任务闭环**�
       ]
     }
   ],
-  "output_dir_template": "{device_name}/{task_name}",
-  "image_name_template": "{device_name}_{task_name}_{step}_{timestamp}",
+  "output_dir_template": "{任务序号}.{任务名称}/{设备分类}",
+  "image_name_template": "{TaskIP}-{任务名称}",
   "timeout_seconds": 60,
   "per_group_timeout_seconds": {
     "A3": 900,
@@ -296,7 +296,7 @@ PENDING → UPLOADING → STORED
   "hostname": "WIN-PC-001",
   "ip": "10.0.1.100",
   "os": "Windows Server 2022",
-  "version": "0.2.4",
+  "version": "0.2.5rc1",
   "capabilities": {
     "max_bmc_workers": 4,
     "max_ssh_workers": 8,
@@ -530,7 +530,7 @@ file: <binary>
 {
   "executor_id": "exec-01",
   "status": "BUSY",
-  "version": "0.2.4",
+  "version": "0.2.5rc1",
   "hostname": "WIN-PC-001",
   "uptime_seconds": 86400,
   "capabilities": {

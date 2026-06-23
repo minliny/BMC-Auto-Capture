@@ -52,6 +52,8 @@ def execute_with_retry(executor, plan: TaskPlan, output_root: str) -> ExecutionR
 
         try:
             result = executor.execute(plan, output_root)
+            if not getattr(result, "task_sequence", ""):
+                setattr(result, "task_sequence", plan.task.sequence_str or str(plan.task.sequence))
         except Exception as e:
             # Executor threw an exception — wrap as EXEC_ERROR result
             now = time.time()
@@ -63,6 +65,7 @@ def execute_with_retry(executor, plan: TaskPlan, output_root: str) -> ExecutionR
                 device_group=plan.device.device_group,
                 bmc_ip=plan.device.bmc_ip,
                 inband_ip=plan.device.inband_ip,
+                task_sequence=plan.task.sequence_str or str(plan.task.sequence),
                 task_name=plan.task.task_name,
                 task_type=plan.task.task_type,
                 execution_mode=plan.task.execution_mode,

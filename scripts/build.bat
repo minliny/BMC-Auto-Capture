@@ -1,13 +1,13 @@
 @echo off
 REM ============================================================
-REM BMC Auto-Capture - Build Script
+REM BMC Auto-Capture v0.2.5-RC1 - Build Script
 REM Builds a self-contained one-directory distribution.
 REM ============================================================
 setlocal enabledelayedexpansion
 
 echo.
 echo ============================================================
-echo   BMC Auto-Capture - Build
+echo   BMC Auto-Capture v0.2.5-RC1 - Build
 echo ============================================================
 echo.
 
@@ -62,6 +62,7 @@ if not exist "%DIST%\app" mkdir "%DIST%\app"
 xcopy /E /I /Y "%ROOT%\src" "%DIST%\app\src" >nul
 xcopy /E /I /Y "%ROOT%\config" "%DIST%\app\config" >nul
 xcopy /E /I /Y "%ROOT%\examples" "%DIST%\app\examples" >nul
+if exist "%ROOT%\templates" xcopy /E /I /Y "%ROOT%\templates" "%DIST%\app\templates" >nul
 if exist "%ROOT%\api" xcopy /E /I /Y "%ROOT%\api" "%DIST%\app\api" >nul
 if exist "%ROOT%\assets" xcopy /E /I /Y "%ROOT%\assets" "%DIST%\app\assets" >nul
 copy "%ROOT%\tasks.json" "%DIST%\app\" >nul
@@ -77,7 +78,7 @@ echo @echo off
 echo set PLAYWRIGHT_BROWSERS_PATH=%%~dp0playwright_browsers
 echo set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 echo.
-echo BMC Auto-Capture
+echo BMC Auto-Capture v0.2.5-RC1
 echo ========================
 echo.
 echo Usage: bmc-auto-capture.exe --excel ^<path_to_xlsx^> [--config ^<path_to_yaml^>]
@@ -119,7 +120,7 @@ echo   Distribution: %DIST%
 echo ============================================================
 echo.
 echo To package for distribution:
-echo   7z a bmc-auto-capture-win-x64.7z "%DIST%"
+echo   7z a bmc-auto-capture-v0.2.5-RC1.7z "%DIST%"
 echo.
 
 endlocal

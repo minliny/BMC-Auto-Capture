@@ -41,6 +41,7 @@ def resolve_template(tmpl: str, device, task, extra: Optional[dict] = None) -> s
     result = result.replace("{任务序号}", seq)
     result = result.replace("{任务名称}", task.task_name)
     result = result.replace("{任务类型}", task.task_type)
+    result = result.replace("{设备分组}", device.device_group)
     result = result.replace("{设备分类}", device.device_group)
     result = result.replace("{设备名称}", device.device_name)
     result = result.replace("{带外管理IP}", device.bmc_ip)
