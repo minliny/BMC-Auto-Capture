@@ -209,6 +209,7 @@ set "SSH_WORKERS="
 set "WORKER_ARGS="
 set "ACCEPTANCE_DOCX=0"
 set "ACCEPTANCE_ARGS="
+set "PREFLIGHT_ARGS=--no-preflight"
 
 :parse_args
 if "%~1"=="" goto :check_mode
@@ -301,7 +302,7 @@ echo(    并发  : BMC=!BMC_DISP! SSH=!SSH_DISP!
 echo.
 echo(    [1] 执行任务 - 顺序模式(逐台设备,最稳定)
 echo(    [2] 执行任务 - 并发模式(多设备同时,高效)
-echo(    [3] 执行前检查 - 网络连通性/账号密码
+echo(    [3] 单独执行检查 - 网络连通性/账号密码
 echo(    [4] 直接测试单个 IP:端口(无需 Excel)
 echo(    [5] 设定 Excel 配置文件路径
 echo(    [6] 调整 BMC/SSH 并发量
@@ -405,10 +406,11 @@ echo(    顺序执行模式
 echo( ============================================================
 echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
+call :configure_preflight_for_run
 call :configure_acceptance_for_run
 echo(    执行中,请勿关闭此窗口...
 echo.
-call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode sequential %WORKER_ARGS% %ACCEPTANCE_ARGS%
+call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode sequential %WORKER_ARGS% %PREFLIGHT_ARGS% %ACCEPTANCE_ARGS%
 set "SEQ_EXIT=%ERRORLEVEL%"
 echo.
 if %SEQ_EXIT% neq 0 (echo    [提示] 执行有错误,退出码: %SEQ_EXIT%)
@@ -423,10 +425,11 @@ echo(    动态并发执行模式
 echo( ============================================================
 echo.
 if not exist "%EXCEL%" (echo [错误] Excel 文件不存在: %EXCEL% & pause & goto :menu)
+call :configure_preflight_for_run
 call :configure_acceptance_for_run
 echo(    执行中,请勿关闭此窗口...
 echo.
-call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode full %WORKER_ARGS% %ACCEPTANCE_ARGS%
+call :run_engine --app-dir "%APP_DIR%" --excel "%EXCEL%" --mode full %WORKER_ARGS% %PREFLIGHT_ARGS% %ACCEPTANCE_ARGS%
 set "FULL_EXIT=%ERRORLEVEL%"
 echo.
 if %FULL_EXIT% neq 0 (echo    [提示] 执行有错误,退出码: %FULL_EXIT%)
@@ -590,6 +593,22 @@ goto :menu
 set "WORKER_ARGS="
 if not "%BMC_WORKERS%"=="" set "WORKER_ARGS=%WORKER_ARGS% --max-bmc-workers %BMC_WORKERS%"
 if not "%SSH_WORKERS%"=="" set "WORKER_ARGS=%WORKER_ARGS% --max-ssh-workers %SSH_WORKERS%"
+exit /b 0
+
+:configure_preflight_for_run
+set "PREFLIGHT_ARGS=--no-preflight"
+echo.
+echo(   默认跳过自动网络预检,避免每次正式执行前等待。
+echo(   如需先检查网络/账号,建议使用主菜单 [3] 单独执行检查。
+set /p PREFLIGHT_CHOICE="   本次执行前是否仍要自动做网络连通性预检? [y/N]: "
+if /i "!PREFLIGHT_CHOICE!"=="Y" set "PREFLIGHT_ARGS="
+if /i "!PREFLIGHT_CHOICE!"=="YES" set "PREFLIGHT_ARGS="
+if "!PREFLIGHT_ARGS!"=="" (
+    echo(    已开启: 本次执行前自动网络预检。
+) else (
+    echo(    已跳过: 本次直接执行任务,不做自动网络预检。
+)
+echo.
 exit /b 0
 
 :configure_acceptance_for_run

@@ -28,7 +28,7 @@ def test_launcher_menu_is_contiguous_and_option_8_is_manual_report():
     expected_lines = [
         "[1] 执行任务 - 顺序模式",
         "[2] 执行任务 - 并发模式",
-        "[3] 执行前检查 - 网络连通性/账号密码",
+        "[3] 单独执行检查 - 网络连通性/账号密码",
         "[4] 直接测试单个 IP:端口",
         "[5] 设定 Excel 配置文件路径",
         "[6] 调整 BMC/SSH 并发量",
@@ -62,6 +62,21 @@ def test_launcher_precheck_clears_previous_mode_before_prompting():
     assert 'set "PF_TARGET="' in precheck
     assert 'set "PF_CHOICE="' in precheck
     assert 'if "!PF_MODE!"=="" goto :run_precheck' in precheck
+
+
+def test_launcher_task_runs_skip_automatic_preflight_by_default():
+    text = _bat_text()
+    seq = _section(text, ":run_seq", ":run_full")
+    full = _section(text, ":run_full", ":run_precheck")
+    config = _section(text, ":configure_preflight_for_run", ":configure_acceptance_for_run")
+
+    assert 'set "PREFLIGHT_ARGS=--no-preflight"' in config
+    assert "默认跳过自动网络预检" in config
+    assert "主菜单 [3] 单独执行检查" in config
+    assert "call :configure_preflight_for_run" in seq
+    assert "call :configure_preflight_for_run" in full
+    assert "%PREFLIGHT_ARGS%" in seq
+    assert "%PREFLIGHT_ARGS%" in full
 
 
 def test_windows_release_packages_acceptance_template_and_docx_runtime():
