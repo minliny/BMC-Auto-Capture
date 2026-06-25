@@ -19,7 +19,7 @@ logger = logging.getLogger("bmc_auto_capture.acceptance_docx")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 TASK_DIR_PATTERN = re.compile(r"^(\d+(?:\.\d+)+)[._](.+)$")
-RESULT_IMAGE_WIDTH_INCHES = 4.1
+RESULT_IMAGE_WIDTH_INCHES = 4.0
 DEFAULT_TEMPLATE_RELATIVE_PATH = Path(
     "templates/acceptance/Atlas 900 A3 SuperPoD 超节点 验收测试指南 03.docx"
 )
@@ -751,7 +751,7 @@ def _write_case_result(cell, verdict: str, rows: list[ResultRow]) -> None:
             missing.add_run("未找到可插入的截图。")
             continue
         picture_paragraph = cell.add_paragraph()
-        _left_align_picture_paragraph(picture_paragraph)
+        _center_picture_paragraph(picture_paragraph)
         picture_paragraph.add_run().add_picture(str(image), width=Inches(RESULT_IMAGE_WIDTH_INCHES))
 
         reason = row.failure_reason.strip()
@@ -789,13 +789,14 @@ def _left_align_paragraph(paragraph) -> None:
     paragraph_format.first_line_indent = Pt(0)
 
 
-def _left_align_picture_paragraph(paragraph) -> None:
+def _center_picture_paragraph(paragraph) -> None:
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Pt
 
-    _left_align_paragraph(paragraph)
-    # Real Word/LibreOffice rendering keeps an inline-picture inset in this
-    # template; -8pt aligns the screenshot edge with the result text.
-    paragraph.paragraph_format.left_indent = Pt(-8)
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    paragraph_format = paragraph.paragraph_format
+    paragraph_format.left_indent = Pt(0)
+    paragraph_format.first_line_indent = Pt(0)
 
 
 def _set_cell_left_margin(cell, dxa: int) -> None:

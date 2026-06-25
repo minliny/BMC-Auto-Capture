@@ -156,21 +156,19 @@ def test_full_mode_pause_resume():
 
     # PAUSE
     s.pause()
-    with s._results_lock:
-        before_pause = len(s._results)
+    before_pause = s._dispatched_count
 
-    # Wait — should NOT dispatch more
+    # Wait — should NOT dispatch more. Already-dispatched work may still finish,
+    # so completed result count is not a stable pause boundary.
     time.sleep(1.5)
-    with s._results_lock:
-        during_pause = len(s._results)
+    during_pause = s._dispatched_count
     assert during_pause == before_pause, \
         f"Pause should block dispatch: {before_pause} → {during_pause}"
 
     # RESUME
     s.resume()
     time.sleep(1.5)
-    with s._results_lock:
-        after_resume = len(s._results)
+    after_resume = s._dispatched_count
     assert after_resume > during_pause, \
         f"Resume should continue dispatch: {during_pause} → {after_resume}"
 

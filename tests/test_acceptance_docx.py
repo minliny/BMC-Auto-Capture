@@ -153,8 +153,8 @@ def test_generate_acceptance_docx_and_evidence_zip(tmp_path: Path):
     picture_paragraphs = list(_picture_paragraphs(filled))
     assert picture_paragraphs
     for paragraph in picture_paragraphs:
-        assert paragraph.alignment == WD_ALIGN_PARAGRAPH.LEFT
-        assert paragraph.paragraph_format.left_indent.pt == -8
+        assert paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
+        assert paragraph.paragraph_format.left_indent.pt == 0
         assert paragraph.paragraph_format.first_line_indent.pt == 0
     with zipfile.ZipFile(result.docx_path) as zf:
         import xml.etree.ElementTree as ET
